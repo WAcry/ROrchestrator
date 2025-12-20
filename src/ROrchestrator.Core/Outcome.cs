@@ -1,4 +1,4 @@
-namespace Flow.NET.Core;
+namespace ROrchestrator.Core;
 
 public readonly struct Outcome<T>
 {

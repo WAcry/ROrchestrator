@@ -21,7 +21,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Flow.NET.Core\Flow.NET.Core.csproj" />
+    <ProjectReference Include="..\..\src\ROrchestrator.Core\ROrchestrator.Core.csproj" />
   </ItemGroup>
 
 </Project>
