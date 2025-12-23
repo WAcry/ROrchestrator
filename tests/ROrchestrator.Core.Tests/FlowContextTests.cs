@@ -36,6 +36,49 @@ public sealed class FlowContextTests
         Assert.Equal("deadline", ex.ParamName);
     }
 
+    [Fact]
+    public void NodeOutcomes_ShouldSupportWriteAndRead()
+    {
+        var ctx = new FlowContext(
+            new DummyServiceProvider(),
+            CancellationToken.None,
+            new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+
+        ctx.RecordNodeOutcome("step_a", Outcome<int>.Ok(42));
+
+        Assert.True(ctx.TryGetNodeOutcome<int>("step_a", out var outcome));
+        Assert.True(outcome.IsOk);
+        Assert.Equal(42, outcome.Value);
+    }
+
+    [Fact]
+    public void NodeOutcomes_ShouldRejectDuplicateWrites()
+    {
+        var ctx = new FlowContext(
+            new DummyServiceProvider(),
+            CancellationToken.None,
+            new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+
+        ctx.RecordNodeOutcome("step_a", Outcome<int>.Ok(1));
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ctx.RecordNodeOutcome("step_a", Outcome<int>.Ok(2)));
+        Assert.Contains("step_a", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NodeOutcomes_ShouldRejectTypeMismatchOnRead()
+    {
+        var ctx = new FlowContext(
+            new DummyServiceProvider(),
+            CancellationToken.None,
+            new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+
+        ctx.RecordNodeOutcome("step_a", Outcome<int>.Ok(42));
+
+        var ex = Assert.Throws<InvalidOperationException>(() => ctx.TryGetNodeOutcome<string>("step_a", out _));
+        Assert.Contains("step_a", ex.Message, StringComparison.Ordinal);
+    }
+
     private sealed class DummyServiceProvider : IServiceProvider
     {
         public object? GetService(Type serviceType)
@@ -44,4 +87,3 @@ public sealed class FlowContextTests
         }
     }
 }
-
