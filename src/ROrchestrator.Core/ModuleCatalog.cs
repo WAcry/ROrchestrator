@@ -6,7 +6,7 @@ public sealed class ModuleCatalog
 
     public ModuleCatalog()
     {
-        _modules = new Dictionary<string, Entry>(StringComparer.Ordinal);
+        _modules = new Dictionary<string, Entry>();
     }
 
     public void Register<TArgs, TOut>(string typeName, Func<IServiceProvider, IModule<TArgs, TOut>> factory)

@@ -1,3 +1,4 @@
+using System.Reflection;
 using ROrchestrator.Core;
 using ROrchestrator.Core.Blueprint;
 
@@ -108,6 +109,36 @@ public sealed class ExecutionEngineTests
         Assert.Equal("error:" + ExecutionEngine.UnhandledExceptionCode, result.Value);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_ShouldEnsureNodeOutcomesCapacity_BeforeExecutingNodes()
+    {
+        var services = new DummyServiceProvider();
+        var flowContext = new FlowContext(
+            services,
+            CancellationToken.None,
+            new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var module = new ObservingOutcomesCapacityModule();
+        var catalog = new ModuleCatalog();
+        catalog.Register<int, int>("m.observe_outcomes_capacity", _ => module);
+
+        var blueprint = FlowBlueprint.Define<int, int>("TestFlow")
+            .Step("step_a", "m.observe_outcomes_capacity")
+            .Join<int>("final", _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(1)))
+            .Build();
+
+        module.ExpectedMinimumCapacity = blueprint.Nodes.Count;
+
+        var engine = new ExecutionEngine(catalog);
+
+        var result = await engine.ExecuteAsync(blueprint, request: 1, flowContext);
+
+        Assert.True(result.IsOk);
+        Assert.Null(module.ObservedException);
+        Assert.False(module.ObservedWasNull);
+        Assert.True(module.ObservedCapacity >= module.ExpectedMinimumCapacity);
+    }
+
     private sealed class DummyServiceProvider : IServiceProvider
     {
         public object? GetService(Type serviceType)
@@ -138,6 +169,45 @@ public sealed class ExecutionEngineTests
         public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<int> context)
         {
             throw new InvalidOperationException("boom");
+        }
+    }
+
+    private sealed class ObservingOutcomesCapacityModule : IModule<int, int>
+    {
+        private static readonly FieldInfo NodeOutcomesField =
+            typeof(FlowContext).GetField("_nodeOutcomes", BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+        public int ExpectedMinimumCapacity { get; set; }
+
+        public Exception? ObservedException { get; private set; }
+
+        public bool ObservedWasNull { get; private set; }
+
+        public int ObservedCapacity { get; private set; }
+
+        public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<int> context)
+        {
+            try
+            {
+                var outcomes = NodeOutcomesField.GetValue(context.FlowContext);
+
+                if (outcomes is null)
+                {
+                    ObservedWasNull = true;
+                    ObservedCapacity = -1;
+                }
+                else
+                {
+                    ObservedWasNull = false;
+                    ObservedCapacity = (int)outcomes.GetType().GetMethod("EnsureCapacity")!.Invoke(outcomes, [0])!;
+                }
+            }
+            catch (Exception ex)
+            {
+                ObservedException = ex;
+            }
+
+            return new ValueTask<Outcome<int>>(Outcome<int>.Ok(context.Args));
         }
     }
 }

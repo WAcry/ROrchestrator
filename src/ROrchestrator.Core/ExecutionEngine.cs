@@ -43,6 +43,8 @@ public sealed class ExecutionEngine
             throw new InvalidOperationException($"Flow '{blueprint.Name}' must contain at least one node.");
         }
 
+        flowContext.EnsureNodeOutcomesCapacity(nodeCount);
+
         for (var i = 0; i < nodeCount; i++)
         {
             var node = nodes[i];

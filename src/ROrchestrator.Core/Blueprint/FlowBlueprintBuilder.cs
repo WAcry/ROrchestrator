@@ -18,8 +18,8 @@ public sealed class FlowBlueprintBuilder<TReq, TResp>
 
         _name = name;
         _nodes = new List<BlueprintNode>();
-        _nodeNames = new HashSet<string>(StringComparer.Ordinal);
-        _stageNames = new HashSet<string>(StringComparer.Ordinal);
+        _nodeNames = new HashSet<string>();
+        _stageNames = new HashSet<string>();
     }
 
     public string Name => _name;

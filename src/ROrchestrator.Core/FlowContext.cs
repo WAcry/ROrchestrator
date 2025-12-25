@@ -36,12 +36,31 @@ public sealed class FlowContext
 
         lock (_nodeOutcomesLock)
         {
-            _nodeOutcomes ??= new Dictionary<string, NodeOutcomeEntry>(StringComparer.Ordinal);
+            _nodeOutcomes ??= new Dictionary<string, NodeOutcomeEntry>();
 
             if (!_nodeOutcomes.TryAdd(nodeName, entry))
             {
                 throw new InvalidOperationException($"Outcome for node '{nodeName}' has already been recorded.");
             }
+        }
+    }
+
+    internal void EnsureNodeOutcomesCapacity(int capacity)
+    {
+        if (capacity <= 0)
+        {
+            return;
+        }
+
+        lock (_nodeOutcomesLock)
+        {
+            if (_nodeOutcomes is null)
+            {
+                _nodeOutcomes = new Dictionary<string, NodeOutcomeEntry>(capacity);
+                return;
+            }
+
+            _nodeOutcomes.EnsureCapacity(capacity);
         }
     }
 
