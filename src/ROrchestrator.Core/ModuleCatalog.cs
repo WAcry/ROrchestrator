@@ -70,6 +70,25 @@ public sealed class ModuleCatalog
         return module;
     }
 
+    internal bool TryGetSignature(string typeName, out Type argsType, out Type outType)
+    {
+        if (string.IsNullOrEmpty(typeName))
+        {
+            throw new ArgumentException("TypeName must be non-empty.", nameof(typeName));
+        }
+
+        if (_modules.TryGetValue(typeName, out var entry))
+        {
+            argsType = entry.ArgsType;
+            outType = entry.OutType;
+            return true;
+        }
+
+        argsType = default!;
+        outType = default!;
+        return false;
+    }
+
     private readonly struct Entry
     {
         public Type ArgsType { get; }
@@ -86,4 +105,3 @@ public sealed class ModuleCatalog
         }
     }
 }
-
