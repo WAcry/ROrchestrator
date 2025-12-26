@@ -2,7 +2,7 @@ namespace ROrchestrator.Core;
 
 public sealed class FlowContext
 {
-    private readonly object _nodeOutcomesLock;
+    private readonly Lock _nodeOutcomesLock;
     private Dictionary<string, NodeOutcomeEntry>? _nodeOutcomes;
 
     public IServiceProvider Services { get; }
@@ -20,7 +20,7 @@ public sealed class FlowContext
             throw new ArgumentException("Deadline must be non-default.", nameof(deadline));
         }
 
-        _nodeOutcomesLock = new object();
+        _nodeOutcomesLock = new();
         CancellationToken = cancellationToken;
         Deadline = deadline;
     }

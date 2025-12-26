@@ -158,7 +158,7 @@ public sealed class ExecutionEngine
 
     private static class StepExecutorCache<TArgs>
     {
-        private static readonly object Lock = new object();
+        private static readonly Lock _gate = new();
         private static Dictionary<Type, Func<ExecutionEngine, BlueprintNode, TArgs, FlowContext, ValueTask>>? _cache;
         private static readonly MethodInfo CoreMethod =
             typeof(ExecutionEngine).GetMethod(nameof(ExecuteStepAsyncCore), BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -172,7 +172,7 @@ public sealed class ExecutionEngine
                 return executor;
             }
 
-            lock (Lock)
+            lock (_gate)
             {
                 cache = _cache;
                 if (cache is not null && cache.TryGetValue(outType, out executor))
@@ -210,7 +210,7 @@ public sealed class ExecutionEngine
 
     private static class JoinExecutorCache
     {
-        private static readonly object Lock = new object();
+        private static readonly Lock _gate = new();
         private static Dictionary<Type, Func<BlueprintNode, FlowContext, ValueTask>>? _cache;
         private static readonly MethodInfo CoreMethod =
             typeof(ExecutionEngine).GetMethod(nameof(ExecuteJoinAsyncCore), BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -224,7 +224,7 @@ public sealed class ExecutionEngine
                 return executor;
             }
 
-            lock (Lock)
+            lock (_gate)
             {
                 cache = _cache;
                 if (cache is not null && cache.TryGetValue(outType, out executor))
