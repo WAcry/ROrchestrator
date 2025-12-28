@@ -6,13 +6,20 @@ namespace ROrchestrator.Core;
 
 public sealed class ExecutionEngine
 {
+    public const string DeadlineExceededCode = "DEADLINE_EXCEEDED";
     public const string UnhandledExceptionCode = "UNHANDLED_EXCEPTION";
+    public const string UpstreamCanceledCode = "UPSTREAM_CANCELED";
 
     private readonly ModuleCatalog _catalog;
 
     public ExecutionEngine(ModuleCatalog catalog)
     {
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
+    }
+
+    private static bool IsDeadlineExceeded(DateTimeOffset deadline)
+    {
+        return DateTimeOffset.UtcNow >= deadline;
     }
 
     public async ValueTask<Outcome<TResp>> ExecuteAsync<TReq, TResp>(
@@ -43,10 +50,30 @@ public sealed class ExecutionEngine
             throw new InvalidOperationException($"Flow '{blueprint.Name}' must contain at least one node.");
         }
 
+        if (IsDeadlineExceeded(flowContext.Deadline))
+        {
+            return Outcome<TResp>.Timeout(DeadlineExceededCode);
+        }
+
+        if (flowContext.CancellationToken.IsCancellationRequested)
+        {
+            return Outcome<TResp>.Canceled(UpstreamCanceledCode);
+        }
+
         flowContext.EnsureNodeOutcomesCapacity(nodeCount);
 
         for (var i = 0; i < nodeCount; i++)
         {
+            if (IsDeadlineExceeded(flowContext.Deadline))
+            {
+                return Outcome<TResp>.Timeout(DeadlineExceededCode);
+            }
+
+            if (flowContext.CancellationToken.IsCancellationRequested)
+            {
+                return Outcome<TResp>.Canceled(UpstreamCanceledCode);
+            }
+
             var node = nodes[i];
 
             if (node.Kind == BlueprintNodeKind.Step)
@@ -77,6 +104,16 @@ public sealed class ExecutionEngine
             }
 
             throw new InvalidOperationException($"Unsupported node kind: '{node.Kind}'.");
+        }
+
+        if (IsDeadlineExceeded(flowContext.Deadline))
+        {
+            return Outcome<TResp>.Timeout(DeadlineExceededCode);
+        }
+
+        if (flowContext.CancellationToken.IsCancellationRequested)
+        {
+            return Outcome<TResp>.Canceled(UpstreamCanceledCode);
         }
 
         var lastNode = nodes[nodeCount - 1];
@@ -130,6 +167,12 @@ public sealed class ExecutionEngine
             outcome = await module.ExecuteAsync(new ModuleContext<TArgs>(node.Name, moduleType, args, flowContext))
                 .ConfigureAwait(false);
         }
+        catch (OperationCanceledException)
+        {
+            outcome = IsDeadlineExceeded(flowContext.Deadline)
+                ? Outcome<TOut>.Timeout(DeadlineExceededCode)
+                : Outcome<TOut>.Canceled(UpstreamCanceledCode);
+        }
         catch (Exception)
         {
             outcome = Outcome<TOut>.Error(UnhandledExceptionCode);
@@ -147,6 +190,12 @@ public sealed class ExecutionEngine
         try
         {
             outcome = await join(flowContext).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            outcome = IsDeadlineExceeded(flowContext.Deadline)
+                ? Outcome<TOut>.Timeout(DeadlineExceededCode)
+                : Outcome<TOut>.Canceled(UpstreamCanceledCode);
         }
         catch (Exception)
         {

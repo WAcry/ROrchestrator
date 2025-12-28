@@ -6,6 +6,8 @@ namespace ROrchestrator.Core.Tests;
 
 public sealed class ExecutionEngineTests
 {
+    private static readonly DateTimeOffset FutureDeadline = new DateTimeOffset(2100, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
     [Fact]
     public async Task ExecuteAsync_ShouldExecuteStepsAndJoinsSequentially_AndRecordOutcomes()
     {
@@ -13,7 +15,7 @@ public sealed class ExecutionEngineTests
         var flowContext = new FlowContext(
             services,
             CancellationToken.None,
-            new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+            FutureDeadline);
 
         var module = new AddOneModule();
         var catalog = new ModuleCatalog();
@@ -58,7 +60,7 @@ public sealed class ExecutionEngineTests
         var flowContext = new FlowContext(
             services,
             CancellationToken.None,
-            new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+            FutureDeadline);
 
         var blueprint = FlowBlueprint.Define<int, int>("TestFlow")
             .Step("step_a", "m.not_registered")
@@ -80,7 +82,7 @@ public sealed class ExecutionEngineTests
         var flowContext = new FlowContext(
             services,
             CancellationToken.None,
-            new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+            FutureDeadline);
 
         var catalog = new ModuleCatalog();
         catalog.Register<int, int>("m.boom", _ => new ThrowingModule());
@@ -110,13 +112,368 @@ public sealed class ExecutionEngineTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_ShouldShortCircuit_WhenCancellationIsAlreadyRequested()
+    {
+        var services = new DummyServiceProvider();
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var flowContext = new FlowContext(services, cts.Token, FutureDeadline);
+
+        var module = new CountingModule();
+        var catalog = new ModuleCatalog();
+        catalog.Register<int, int>("m.counting", _ => module);
+
+        var joinCalled = false;
+
+        var blueprint = FlowBlueprint.Define<int, int>("TestFlow")
+            .Step("step_a", "m.counting")
+            .Join<int>(
+                "final",
+                _ =>
+                {
+                    joinCalled = true;
+                    return new ValueTask<Outcome<int>>(Outcome<int>.Ok(123));
+                })
+            .Build();
+
+        var engine = new ExecutionEngine(catalog);
+
+        var result = await engine.ExecuteAsync(blueprint, request: 1, flowContext);
+
+        Assert.True(result.IsCanceled);
+        Assert.Equal(ExecutionEngine.UpstreamCanceledCode, result.Code);
+
+        Assert.Equal(0, module.ExecuteCallCount);
+        Assert.False(joinCalled);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShouldShortCircuit_WhenDeadlineIsAlreadyExceeded()
+    {
+        var services = new DummyServiceProvider();
+        var flowContext = new FlowContext(
+            services,
+            CancellationToken.None,
+            new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero));
+
+        var module = new CountingModule();
+        var catalog = new ModuleCatalog();
+        catalog.Register<int, int>("m.counting", _ => module);
+
+        var joinCalled = false;
+
+        var blueprint = FlowBlueprint.Define<int, int>("TestFlow")
+            .Step("step_a", "m.counting")
+            .Join<int>(
+                "final",
+                _ =>
+                {
+                    joinCalled = true;
+                    return new ValueTask<Outcome<int>>(Outcome<int>.Ok(123));
+                })
+            .Build();
+
+        var engine = new ExecutionEngine(catalog);
+
+        var result = await engine.ExecuteAsync(blueprint, request: 1, flowContext);
+
+        Assert.True(result.IsTimeout);
+        Assert.Equal(ExecutionEngine.DeadlineExceededCode, result.Code);
+
+        Assert.Equal(0, module.ExecuteCallCount);
+        Assert.False(joinCalled);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShouldConvertOperationCanceledException_FromModule_ToCanceledOutcome()
+    {
+        var services = new DummyServiceProvider();
+        var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<int, int>("m.cancel", _ => new CancelingModule());
+
+        var blueprint = FlowBlueprint.Define<int, string>("TestFlow")
+            .Step("step_a", "m.cancel")
+            .Join<string>("final", _ => new ValueTask<Outcome<string>>(Outcome<string>.Ok("done")))
+            .Build();
+
+        var engine = new ExecutionEngine(catalog);
+
+        var result = await engine.ExecuteAsync(blueprint, request: 1, flowContext);
+
+        Assert.True(result.IsOk);
+        Assert.Equal("done", result.Value);
+
+        Assert.True(flowContext.TryGetNodeOutcome<int>("step_a", out var stepOutcome));
+        Assert.True(stepOutcome.IsCanceled);
+        Assert.Equal(ExecutionEngine.UpstreamCanceledCode, stepOutcome.Code);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShouldConvertOperationCanceledException_FromJoin_ToCanceledOutcome()
+    {
+        var services = new DummyServiceProvider();
+        var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
+
+        var blueprint = FlowBlueprint.Define<int, int>("TestFlow")
+            .Join<int>("final", _ => throw new OperationCanceledException())
+            .Build();
+
+        var engine = new ExecutionEngine(new ModuleCatalog());
+
+        var result = await engine.ExecuteAsync(blueprint, request: 1, flowContext);
+
+        Assert.True(result.IsCanceled);
+        Assert.Equal(ExecutionEngine.UpstreamCanceledCode, result.Code);
+
+        Assert.True(flowContext.TryGetNodeOutcome<int>("final", out var recordedFinal));
+        Assert.True(recordedFinal.IsCanceled);
+        Assert.Equal(ExecutionEngine.UpstreamCanceledCode, recordedFinal.Code);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShouldShortCircuit_BeforeNextNode_WhenCancellationIsRequestedMidFlow()
+    {
+        var services = new DummyServiceProvider();
+
+        using var cts = new CancellationTokenSource();
+
+        var flowContext = new FlowContext(services, cts.Token, FutureDeadline);
+
+        var cancelingModule = new CancelingTokenModule(cts);
+        var countingModule = new CountingModule();
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<int, int>("m.cancel_token", _ => cancelingModule);
+        catalog.Register<int, int>("m.counting", _ => countingModule);
+
+        var joinCalled = false;
+
+        var blueprint = FlowBlueprint.Define<int, int>("TestFlow")
+            .Step("step_a", "m.cancel_token")
+            .Step("step_b", "m.counting")
+            .Join<int>(
+                "final",
+                _ =>
+                {
+                    joinCalled = true;
+                    return new ValueTask<Outcome<int>>(Outcome<int>.Ok(123));
+                })
+            .Build();
+
+        var engine = new ExecutionEngine(catalog);
+
+        var result = await engine.ExecuteAsync(blueprint, request: 1, flowContext);
+
+        Assert.True(result.IsCanceled);
+        Assert.Equal(ExecutionEngine.UpstreamCanceledCode, result.Code);
+
+        Assert.Equal(1, cancelingModule.ExecuteCallCount);
+        Assert.Equal(0, countingModule.ExecuteCallCount);
+        Assert.False(joinCalled);
+
+        Assert.True(flowContext.TryGetNodeOutcome<int>("step_a", out var stepAOutcome));
+        Assert.True(stepAOutcome.IsOk);
+
+        Assert.False(flowContext.TryGetNodeOutcome<int>("step_b", out _));
+        Assert.False(flowContext.TryGetNodeOutcome<int>("final", out _));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShouldShortCircuit_BeforeNextNode_WhenDeadlineIsExceededMidFlow()
+    {
+        var services = new DummyServiceProvider();
+
+        var delayingModule = new DelayingModule(delayMs: 750);
+        var countingModule = new CountingModule();
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<int, int>("m.delay", _ => delayingModule);
+        catalog.Register<int, int>("m.counting", _ => countingModule);
+
+        var joinCalled = false;
+
+        var blueprint = FlowBlueprint.Define<int, int>("TestFlow")
+            .Step("step_a", "m.delay")
+            .Step("step_b", "m.counting")
+            .Join<int>(
+                "final",
+                _ =>
+                {
+                    joinCalled = true;
+                    return new ValueTask<Outcome<int>>(Outcome<int>.Ok(123));
+                })
+            .Build();
+
+        var engine = new ExecutionEngine(catalog);
+        var flowContext = new FlowContext(services, CancellationToken.None, DateTimeOffset.UtcNow.AddMilliseconds(500));
+
+        var result = await engine.ExecuteAsync(blueprint, request: 1, flowContext);
+
+        Assert.True(result.IsTimeout);
+        Assert.Equal(ExecutionEngine.DeadlineExceededCode, result.Code);
+
+        Assert.Equal(1, delayingModule.ExecuteCallCount);
+        Assert.Equal(0, countingModule.ExecuteCallCount);
+        Assert.False(joinCalled);
+
+        Assert.True(flowContext.TryGetNodeOutcome<int>("step_a", out var stepAOutcome));
+        Assert.True(stepAOutcome.IsOk);
+
+        Assert.False(flowContext.TryGetNodeOutcome<int>("step_b", out _));
+        Assert.False(flowContext.TryGetNodeOutcome<int>("final", out _));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShouldConvertOperationCanceledException_FromModule_ToTimeout_WhenDeadlineExceeded()
+    {
+        var services = new DummyServiceProvider();
+
+        var cancelingModule = new DelayedCancelingModule(delayMs: 750);
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<int, int>("m.cancel", _ => cancelingModule);
+
+        var joinCalled = false;
+
+        var blueprint = FlowBlueprint.Define<int, int>("TestFlow")
+            .Step("step_a", "m.cancel")
+            .Join<int>(
+                "final",
+                _ =>
+                {
+                    joinCalled = true;
+                    return new ValueTask<Outcome<int>>(Outcome<int>.Ok(123));
+                })
+            .Build();
+
+        var engine = new ExecutionEngine(catalog);
+        var flowContext = new FlowContext(services, CancellationToken.None, DateTimeOffset.UtcNow.AddMilliseconds(500));
+
+        var result = await engine.ExecuteAsync(blueprint, request: 1, flowContext);
+
+        Assert.True(result.IsTimeout);
+        Assert.Equal(ExecutionEngine.DeadlineExceededCode, result.Code);
+
+        Assert.Equal(1, cancelingModule.ExecuteCallCount);
+        Assert.False(joinCalled);
+
+        Assert.True(flowContext.TryGetNodeOutcome<int>("step_a", out var recordedStep));
+        Assert.True(recordedStep.IsTimeout);
+        Assert.Equal(ExecutionEngine.DeadlineExceededCode, recordedStep.Code);
+
+        Assert.False(flowContext.TryGetNodeOutcome<int>("final", out _));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShouldConvertOperationCanceledException_FromJoin_ToTimeout_WhenDeadlineExceeded()
+    {
+        var services = new DummyServiceProvider();
+
+        var joinCalled = false;
+
+        var blueprint = FlowBlueprint.Define<int, int>("TestFlow")
+            .Join<int>(
+                "final",
+                async _ =>
+                {
+                    joinCalled = true;
+                    await Task.Delay(750);
+                    throw new OperationCanceledException();
+                })
+            .Build();
+
+        var engine = new ExecutionEngine(new ModuleCatalog());
+        var flowContext = new FlowContext(services, CancellationToken.None, DateTimeOffset.UtcNow.AddMilliseconds(500));
+
+        var result = await engine.ExecuteAsync(blueprint, request: 1, flowContext);
+
+        Assert.True(joinCalled);
+        Assert.True(result.IsTimeout);
+        Assert.Equal(ExecutionEngine.DeadlineExceededCode, result.Code);
+
+        Assert.True(flowContext.TryGetNodeOutcome<int>("final", out var recordedFinal));
+        Assert.True(recordedFinal.IsTimeout);
+        Assert.Equal(ExecutionEngine.DeadlineExceededCode, recordedFinal.Code);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShouldReturnTimeout_WhenDeadlineIsExceededDuringFinalJoin_EvenIfJoinReturnsOk()
+    {
+        var services = new DummyServiceProvider();
+
+        var joinCalled = false;
+
+        var blueprint = FlowBlueprint.Define<int, int>("TestFlow")
+            .Join<int>(
+                "final",
+                async _ =>
+                {
+                    joinCalled = true;
+                    await Task.Delay(750);
+                    return Outcome<int>.Ok(123);
+                })
+            .Build();
+
+        var engine = new ExecutionEngine(new ModuleCatalog());
+        var flowContext = new FlowContext(services, CancellationToken.None, DateTimeOffset.UtcNow.AddMilliseconds(500));
+
+        var result = await engine.ExecuteAsync(blueprint, request: 1, flowContext);
+
+        Assert.True(joinCalled);
+        Assert.True(result.IsTimeout);
+        Assert.Equal(ExecutionEngine.DeadlineExceededCode, result.Code);
+
+        Assert.True(flowContext.TryGetNodeOutcome<int>("final", out var recordedFinal));
+        Assert.True(recordedFinal.IsOk);
+        Assert.Equal(123, recordedFinal.Value);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShouldReturnCanceled_WhenCancellationIsRequestedDuringFinalJoin_EvenIfJoinReturnsOk()
+    {
+        var services = new DummyServiceProvider();
+
+        using var cts = new CancellationTokenSource();
+        var flowContext = new FlowContext(services, cts.Token, FutureDeadline);
+
+        var joinCalled = false;
+
+        var blueprint = FlowBlueprint.Define<int, int>("TestFlow")
+            .Join<int>(
+                "final",
+                _ =>
+                {
+                    joinCalled = true;
+                    cts.Cancel();
+                    return new ValueTask<Outcome<int>>(Outcome<int>.Ok(123));
+                })
+            .Build();
+
+        var engine = new ExecutionEngine(new ModuleCatalog());
+
+        var result = await engine.ExecuteAsync(blueprint, request: 1, flowContext);
+
+        Assert.True(joinCalled);
+        Assert.True(result.IsCanceled);
+        Assert.Equal(ExecutionEngine.UpstreamCanceledCode, result.Code);
+
+        Assert.True(flowContext.TryGetNodeOutcome<int>("final", out var recordedFinal));
+        Assert.True(recordedFinal.IsOk);
+        Assert.Equal(123, recordedFinal.Value);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ShouldEnsureNodeOutcomesCapacity_BeforeExecutingNodes()
     {
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(
             services,
             CancellationToken.None,
-            new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+            FutureDeadline);
 
         var module = new ObservingOutcomesCapacityModule();
         var catalog = new ModuleCatalog();
@@ -169,6 +526,92 @@ public sealed class ExecutionEngineTests
         public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<int> context)
         {
             throw new InvalidOperationException("boom");
+        }
+    }
+
+    private sealed class CountingModule : IModule<int, int>
+    {
+        public int ExecuteCallCount { get; private set; }
+
+        public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<int> context)
+        {
+            ExecuteCallCount++;
+            return new ValueTask<Outcome<int>>(Outcome<int>.Ok(context.Args));
+        }
+    }
+
+    private sealed class CancelingModule : IModule<int, int>
+    {
+        public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<int> context)
+        {
+            throw new OperationCanceledException();
+        }
+    }
+
+    private sealed class CancelingTokenModule : IModule<int, int>
+    {
+        private readonly CancellationTokenSource _cts;
+
+        public int ExecuteCallCount { get; private set; }
+
+        public CancelingTokenModule(CancellationTokenSource cts)
+        {
+            _cts = cts ?? throw new ArgumentNullException(nameof(cts));
+        }
+
+        public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<int> context)
+        {
+            ExecuteCallCount++;
+            _cts.Cancel();
+            return new ValueTask<Outcome<int>>(Outcome<int>.Ok(context.Args));
+        }
+    }
+
+    private sealed class DelayingModule : IModule<int, int>
+    {
+        private readonly int _delayMs;
+
+        public int ExecuteCallCount { get; private set; }
+
+        public DelayingModule(int delayMs)
+        {
+            if (delayMs < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(delayMs));
+            }
+
+            _delayMs = delayMs;
+        }
+
+        public async ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<int> context)
+        {
+            ExecuteCallCount++;
+            await Task.Delay(_delayMs);
+            return Outcome<int>.Ok(context.Args);
+        }
+    }
+
+    private sealed class DelayedCancelingModule : IModule<int, int>
+    {
+        private readonly int _delayMs;
+
+        public int ExecuteCallCount { get; private set; }
+
+        public DelayedCancelingModule(int delayMs)
+        {
+            if (delayMs < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(delayMs));
+            }
+
+            _delayMs = delayMs;
+        }
+
+        public async ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<int> context)
+        {
+            ExecuteCallCount++;
+            await Task.Delay(_delayMs);
+            throw new OperationCanceledException();
         }
     }
 
