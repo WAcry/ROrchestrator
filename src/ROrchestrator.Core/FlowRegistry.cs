@@ -35,6 +35,16 @@ public sealed class FlowRegistry
         _flows = new Dictionary<string, Entry>();
     }
 
+    public bool IsRegistered(string flowName)
+    {
+        if (string.IsNullOrEmpty(flowName))
+        {
+            throw new ArgumentException("FlowName must be non-empty.", nameof(flowName));
+        }
+
+        return _flows.ContainsKey(flowName);
+    }
+
     public void Register<TReq, TResp>(string flowName, FlowBlueprint<TReq, TResp> blueprint)
     {
         if (string.IsNullOrEmpty(flowName))
