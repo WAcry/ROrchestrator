@@ -6,6 +6,23 @@ public static class PlanCompiler
 {
     public static PlanTemplate<TReq, TResp> Compile<TReq, TResp>(FlowBlueprint<TReq, TResp> blueprint, ModuleCatalog catalog)
     {
+        return CompileCore(blueprint, catalog, includeExplain: false, out _);
+    }
+
+    public static (PlanTemplate<TReq, TResp> Template, PlanExplain Explain) CompileWithExplain<TReq, TResp>(
+        FlowBlueprint<TReq, TResp> blueprint,
+        ModuleCatalog catalog)
+    {
+        var template = CompileCore(blueprint, catalog, includeExplain: true, out var explain);
+        return (template, explain!);
+    }
+
+    private static PlanTemplate<TReq, TResp> CompileCore<TReq, TResp>(
+        FlowBlueprint<TReq, TResp> blueprint,
+        ModuleCatalog catalog,
+        bool includeExplain,
+        out PlanExplain? explain)
+    {
         if (blueprint is null)
         {
             throw new ArgumentNullException(nameof(blueprint));
@@ -30,6 +47,7 @@ public static class PlanCompiler
         }
 
         var planNodes = new PlanNodeTemplate[nodeCount];
+        var explainNodes = includeExplain ? new PlanExplainNode[nodeCount] : null;
 
         var hash = PlanHashBuilder.Create();
         PlanHashBuilder.AddString(ref hash, blueprint.Name);
@@ -68,6 +86,11 @@ public static class PlanCompiler
 
                 planNodes[i] = PlanNodeTemplate.CreateStep(node.Name, node.StageName, moduleType, outType);
 
+                if (explainNodes is not null)
+                {
+                    explainNodes[i] = PlanExplainNode.CreateStep(node.Name, node.StageName, moduleType, outType);
+                }
+
                 PlanHashBuilder.AddString(ref hash, moduleType);
                 PlanHashBuilder.AddType(ref hash, outType);
                 continue;
@@ -92,6 +115,11 @@ public static class PlanCompiler
 
                 planNodes[i] = PlanNodeTemplate.CreateJoin(node.Name, node.StageName, join, outType);
 
+                if (explainNodes is not null)
+                {
+                    explainNodes[i] = PlanExplainNode.CreateJoin(node.Name, node.StageName, outType);
+                }
+
                 PlanHashBuilder.AddType(ref hash, outType);
                 continue;
             }
@@ -100,6 +128,15 @@ public static class PlanCompiler
         }
 
         EnsureFinalOutputType<TResp>(blueprint.Name, planNodes[nodeCount - 1]);
+
+        if (explainNodes is null)
+        {
+            explain = null;
+        }
+        else
+        {
+            explain = new PlanExplain(blueprint.Name, planTemplateHash: hash, explainNodes);
+        }
 
         return new PlanTemplate<TReq, TResp>(blueprint.Name, planHash: hash, planNodes);
     }
