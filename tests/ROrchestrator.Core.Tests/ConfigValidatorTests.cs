@@ -60,6 +60,70 @@ public sealed class ConfigValidatorTests
         Assert.Equal("$.flows.NotAFlow", finding.Path);
     }
 
+    [Fact]
+    public void ValidatePatchJson_ShouldReportStageNotInBlueprint_WhenStageKeyIsNotInBlueprint()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var validator = new ConfigValidator(registry);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s2\":{}}}}}");
+
+        Assert.Single(report.Findings);
+
+        var finding = GetSingleFinding(report, "CFG_STAGE_NOT_IN_BLUEPRINT");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s2", finding.Path);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportStageNotInBlueprint_WhenFlowIsRegisteredWithParams()
+    {
+        var registry = new FlowRegistry();
+        var blueprint = CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0);
+        registry.Register<int, int, TestParams, TestPatch>("HomeFeed", blueprint, new TestParams());
+
+        var validator = new ConfigValidator(registry);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s2\":{}}}}}");
+
+        Assert.Single(report.Findings);
+
+        var finding = GetSingleFinding(report, "CFG_STAGE_NOT_IN_BLUEPRINT");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s2", finding.Path);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenStagesIsAbsent()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var validator = new ConfigValidator(registry);
+
+        var report = validator.ValidatePatchJson("{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{}}}");
+
+        Assert.True(report.IsValid);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenStageKeysExistInBlueprint()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var validator = new ConfigValidator(registry);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{}}}}}");
+
+        Assert.True(report.IsValid);
+    }
+
     private static ValidationFinding GetSingleFinding(ValidationReport report, string code)
     {
         if (report is null)
@@ -99,5 +163,26 @@ public sealed class ConfigValidatorTests
                 join: _ => new ValueTask<Outcome<TResp>>(Outcome<TResp>.Ok(okValue)))
             .Build();
     }
-}
 
+    private static FlowBlueprint<TReq, TResp> CreateBlueprintWithStage<TReq, TResp>(string name, string stageName, TResp okValue)
+    {
+        return FlowBlueprint.Define<TReq, TResp>(name)
+            .Stage(
+                stageName,
+                stage =>
+                {
+                    stage.Join<TResp>(
+                        name: "j1",
+                        join: _ => new ValueTask<Outcome<TResp>>(Outcome<TResp>.Ok(okValue)));
+                })
+            .Build();
+    }
+
+    private sealed class TestParams
+    {
+    }
+
+    private sealed class TestPatch
+    {
+    }
+}

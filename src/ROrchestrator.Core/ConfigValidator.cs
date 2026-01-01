@@ -10,6 +10,7 @@ public sealed class ConfigValidator
     private const string CodeSchemaVersionUnsupported = "CFG_SCHEMA_VERSION_UNSUPPORTED";
     private const string CodeUnknownField = "CFG_UNKNOWN_FIELD";
     private const string CodeFlowNotRegistered = "CFG_FLOW_NOT_REGISTERED";
+    private const string CodeStageNotInBlueprint = "CFG_STAGE_NOT_IN_BLUEPRINT";
 
     private readonly FlowRegistry _flowRegistry;
 
@@ -105,8 +106,15 @@ public sealed class ConfigValidator
                 foreach (var flowProperty in flowsElement.EnumerateObject())
                 {
                     var flowName = flowProperty.Name;
+                    string[] blueprintStageNameSet = Array.Empty<string>();
+                    var flowRegistered = false;
 
-                    if (flowName.Length == 0 || !_flowRegistry.IsRegistered(flowName))
+                    if (flowName.Length != 0)
+                    {
+                        flowRegistered = _flowRegistry.TryGetStageNameSet(flowName, out blueprintStageNameSet);
+                    }
+
+                    if (!flowRegistered)
                     {
                         findings.Add(
                             new ValidationFinding(
@@ -118,7 +126,12 @@ public sealed class ConfigValidator
 
                     if (flowProperty.Value.ValueKind == JsonValueKind.Object)
                     {
-                        ValidateFlowPatchTopLevelFields(flowName, flowProperty.Value, ref findings);
+                        ValidateFlowPatchTopLevelFields(flowName, flowProperty.Value, ref findings, out var stagesPatch);
+
+                        if (flowRegistered && stagesPatch.ValueKind == JsonValueKind.Object)
+                        {
+                            ValidateStagePatchKeys(flowName, stagesPatch, blueprintStageNameSet, ref findings);
+                        }
                     }
                 }
             }
@@ -127,15 +140,26 @@ public sealed class ConfigValidator
         }
     }
 
-    private static void ValidateFlowPatchTopLevelFields(string flowName, JsonElement flowPatch, ref FindingBuffer findings)
+    private static void ValidateFlowPatchTopLevelFields(
+        string flowName,
+        JsonElement flowPatch,
+        ref FindingBuffer findings,
+        out JsonElement stagesPatch)
     {
+        stagesPatch = default;
+
         foreach (var flowField in flowPatch.EnumerateObject())
         {
             if (flowField.NameEquals("params")
-                || flowField.NameEquals("stages")
                 || flowField.NameEquals("experiments")
                 || flowField.NameEquals("emergency"))
             {
+                continue;
+            }
+
+            if (flowField.NameEquals("stages"))
+            {
+                stagesPatch = flowField.Value;
                 continue;
             }
 
@@ -148,6 +172,43 @@ public sealed class ConfigValidator
                     path: string.Concat("$.flows.", flowName, ".", fieldName),
                     message: string.Concat("Unknown field: ", fieldName)));
         }
+    }
+
+    private static void ValidateStagePatchKeys(
+        string flowName,
+        JsonElement stagesPatch,
+        string[] blueprintStageNameSet,
+        ref FindingBuffer findings)
+    {
+        foreach (var stageProperty in stagesPatch.EnumerateObject())
+        {
+            var stageName = stageProperty.Name;
+
+            if (StageNameSetContains(blueprintStageNameSet, stageName))
+            {
+                continue;
+            }
+
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeStageNotInBlueprint,
+                    path: string.Concat("$.flows.", flowName, ".stages.", stageName),
+                    message: string.Concat("Stage is not in blueprint: ", stageName)));
+        }
+    }
+
+    private static bool StageNameSetContains(string[] blueprintStageNameSet, string stageName)
+    {
+        for (var i = 0; i < blueprintStageNameSet.Length; i++)
+        {
+            if (string.Equals(blueprintStageNameSet[i], stageName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static ValidationFinding CreateSchemaVersionUnsupportedFinding()

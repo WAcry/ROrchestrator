@@ -45,6 +45,23 @@ public sealed class FlowRegistry
         return _flows.ContainsKey(flowName);
     }
 
+    internal bool TryGetStageNameSet(string flowName, out string[] stageNameSet)
+    {
+        if (string.IsNullOrEmpty(flowName))
+        {
+            throw new ArgumentException("FlowName must be non-empty.", nameof(flowName));
+        }
+
+        if (_flows.TryGetValue(flowName, out var entry))
+        {
+            stageNameSet = entry.StageNameSet;
+            return true;
+        }
+
+        stageNameSet = Array.Empty<string>();
+        return false;
+    }
+
     public void Register<TReq, TResp>(string flowName, FlowBlueprint<TReq, TResp> blueprint)
     {
         if (string.IsNullOrEmpty(flowName))
@@ -57,7 +74,9 @@ public sealed class FlowRegistry
             throw new ArgumentNullException(nameof(blueprint));
         }
 
-        if (!_flows.TryAdd(flowName, new Entry(typeof(TReq), typeof(TResp), blueprint)))
+        var stageNameSet = BuildStageNameSet(blueprint);
+
+        if (!_flows.TryAdd(flowName, new Entry(typeof(TReq), typeof(TResp), blueprint, stageNameSet)))
         {
             throw new ArgumentException($"FlowName '{flowName}' is already registered.", nameof(flowName));
         }
@@ -84,6 +103,8 @@ public sealed class FlowRegistry
             throw new ArgumentNullException(nameof(defaultParams));
         }
 
+        var stageNameSet = BuildStageNameSet(blueprint);
+
         if (!_flows.TryAdd(
             flowName,
             new Entry(
@@ -92,7 +113,8 @@ public sealed class FlowRegistry
                 paramsType: typeof(TParams),
                 patchType: typeof(TPatch),
                 blueprint: blueprint,
-                defaultParams: defaultParams)))
+                defaultParams: defaultParams,
+                stageNameSet: stageNameSet)))
         {
             throw new ArgumentException($"FlowName '{flowName}' is already registered.", nameof(flowName));
         }
@@ -214,7 +236,9 @@ public sealed class FlowRegistry
 
         public object? DefaultParams { get; }
 
-        public Entry(Type requestType, Type responseType, object blueprint)
+        public string[] StageNameSet { get; }
+
+        public Entry(Type requestType, Type responseType, object blueprint, string[] stageNameSet)
         {
             RequestType = requestType;
             ResponseType = responseType;
@@ -222,6 +246,7 @@ public sealed class FlowRegistry
             PatchType = null;
             Blueprint = blueprint;
             DefaultParams = null;
+            StageNameSet = stageNameSet;
         }
 
         public Entry(
@@ -230,7 +255,8 @@ public sealed class FlowRegistry
             Type paramsType,
             Type patchType,
             object blueprint,
-            object defaultParams)
+            object defaultParams,
+            string[] stageNameSet)
         {
             RequestType = requestType;
             ResponseType = responseType;
@@ -238,6 +264,79 @@ public sealed class FlowRegistry
             PatchType = patchType;
             Blueprint = blueprint;
             DefaultParams = defaultParams;
+            StageNameSet = stageNameSet;
         }
+    }
+
+    private static string[] BuildStageNameSet<TReq, TResp>(FlowBlueprint<TReq, TResp> blueprint)
+    {
+        var nodes = blueprint.Nodes;
+
+        string[]? stageNames = null;
+        var stageNameCount = 0;
+
+        for (var i = 0; i < nodes.Count; i++)
+        {
+            var stageName = nodes[i].StageName;
+            if (stageName is null)
+            {
+                continue;
+            }
+
+            if (stageName.Length == 0)
+            {
+                continue;
+            }
+
+            if (stageNameCount != 0)
+            {
+                var found = false;
+                var buffer = stageNames!;
+
+                for (var j = 0; j < stageNameCount; j++)
+                {
+                    if (string.Equals(buffer[j], stageName, StringComparison.Ordinal))
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (found)
+                {
+                    continue;
+                }
+            }
+
+            if (stageNames is null)
+            {
+                stageNames = new string[4];
+            }
+            else if ((uint)stageNameCount >= (uint)stageNames.Length)
+            {
+                var newItems = new string[stageNames.Length * 2];
+                Array.Copy(stageNames, 0, newItems, 0, stageNames.Length);
+                stageNames = newItems;
+            }
+
+            stageNames[stageNameCount] = stageName;
+            stageNameCount++;
+        }
+
+        if (stageNameCount == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var items = stageNames!;
+
+        if (stageNameCount == items.Length)
+        {
+            return items;
+        }
+
+        var trimmed = new string[stageNameCount];
+        Array.Copy(items, 0, trimmed, 0, stageNameCount);
+        return trimmed;
     }
 }
