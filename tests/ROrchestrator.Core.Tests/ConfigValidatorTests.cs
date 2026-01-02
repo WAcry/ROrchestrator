@@ -11,7 +11,8 @@ public sealed class ConfigValidatorTests
     public void ValidatePatchJson_ShouldReportParseError_WhenJsonIsInvalid()
     {
         var registry = new FlowRegistry();
-        var validator = new ConfigValidator(registry);
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson("{");
 
@@ -25,7 +26,8 @@ public sealed class ConfigValidatorTests
     public void ValidatePatchJson_ShouldReportSchemaVersionUnsupported_WhenSchemaVersionIsMissing()
     {
         var registry = new FlowRegistry();
-        var validator = new ConfigValidator(registry);
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson("{\"flows\":{}}");
 
@@ -38,7 +40,8 @@ public sealed class ConfigValidatorTests
     public void ValidatePatchJson_ShouldReportUnknownField_WhenTopLevelFieldIsUnknown()
     {
         var registry = new FlowRegistry();
-        var validator = new ConfigValidator(registry);
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson("{\"schemaVersion\":\"v1\",\"flows\":{},\"unknown\":123}");
 
@@ -53,7 +56,8 @@ public sealed class ConfigValidatorTests
         var registry = new FlowRegistry();
         registry.Register("HomeFeed", CreateBlueprint<int, int>("TestFlow", okValue: 0));
 
-        var validator = new ConfigValidator(registry);
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson("{\"schemaVersion\":\"v1\",\"flows\":{\"NotAFlow\":{}}}");
 
@@ -68,7 +72,8 @@ public sealed class ConfigValidatorTests
         var registry = new FlowRegistry();
         registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
 
-        var validator = new ConfigValidator(registry);
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
             "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s2\":{}}}}}");
@@ -87,7 +92,8 @@ public sealed class ConfigValidatorTests
         var blueprint = CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0);
         registry.Register<int, int, TestParams, TestPatch>("HomeFeed", blueprint, new TestParams());
 
-        var validator = new ConfigValidator(registry);
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
             "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s2\":{}}}}}");
@@ -105,7 +111,8 @@ public sealed class ConfigValidatorTests
         var registry = new FlowRegistry();
         registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
 
-        var validator = new ConfigValidator(registry);
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson("{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{}}}");
 
@@ -118,7 +125,8 @@ public sealed class ConfigValidatorTests
         var registry = new FlowRegistry();
         registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
 
-        var validator = new ConfigValidator(registry);
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
             "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{}}}}}");
@@ -133,7 +141,8 @@ public sealed class ConfigValidatorTests
         var blueprint = CreateBlueprint<int, int>("TestFlow", okValue: 0);
         registry.Register<int, int, TestParams, ParamsPatchWithMaxCandidate>("HomeFeed", blueprint, new TestParams());
 
-        var validator = new ConfigValidator(registry);
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
             "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":10}}}}");
@@ -148,7 +157,8 @@ public sealed class ConfigValidatorTests
         var blueprint = CreateBlueprint<int, int>("TestFlow", okValue: 0);
         registry.Register<int, int, TestParams, ParamsPatchWithJsonIgnoreWhenWritingNull>("HomeFeed", blueprint, new TestParams());
 
-        var validator = new ConfigValidator(registry);
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
             "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":10}}}}");
@@ -163,7 +173,8 @@ public sealed class ConfigValidatorTests
         var blueprint = CreateBlueprint<int, int>("TestFlow", okValue: 0);
         registry.Register<int, int, TestParams, ParamsPatchWithMaxCandidate>("HomeFeed", blueprint, new TestParams());
 
-        var validator = new ConfigValidator(registry);
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
             "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":\"oops\"}}}}");
@@ -181,7 +192,8 @@ public sealed class ConfigValidatorTests
         var blueprint = CreateBlueprint<int, int>("TestFlow", okValue: 0);
         registry.Register<int, int, TestParams, ParamsPatchWithMaxCandidates>("HomeFeed", blueprint, new TestParams());
 
-        var validator = new ConfigValidator(registry);
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
             "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":10}}}}");
@@ -198,7 +210,8 @@ public sealed class ConfigValidatorTests
         var registry = new FlowRegistry();
         registry.Register("HomeFeed", CreateBlueprint<int, int>("TestFlow", okValue: 0));
 
-        var validator = new ConfigValidator(registry);
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
             "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":10}}}}");
@@ -216,7 +229,8 @@ public sealed class ConfigValidatorTests
         var blueprint = CreateBlueprint<int, int>("TestFlow", okValue: 0);
         registry.Register<int, int, TestParams, ParamsPatchWithThrowingConverter>("HomeFeed", blueprint, new TestParams());
 
-        var validator = new ConfigValidator(registry);
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
             "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":10}}}}");
@@ -224,6 +238,138 @@ public sealed class ConfigValidatorTests
         var finding = GetSingleFinding(report, "CFG_PARAMS_BIND_FAILED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
         Assert.Equal("$.flows.HomeFeed.params", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenModulesPatchIsValid()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\"}]}}}}}");
+
+        Assert.True(report.IsValid);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportModulesNotArray_WhenModulesIsNotArray()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":{}}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_MODULES_NOT_ARRAY");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportModuleIdMissing_WhenModuleIdIsMissing()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"use\":\"test.module\"}]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_MODULE_ID_MISSING");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].id", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportModuleIdDuplicate_WhenModuleIdsDuplicateWithinStage()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\"},{\"id\":\"m1\",\"use\":\"test.module\"}]}}}}}");
+
+        var pathsFound = 0;
+        var findings = report.Findings;
+
+        for (var i = 0; i < findings.Count; i++)
+        {
+            var finding = findings[i];
+            if (!string.Equals("CFG_MODULE_ID_DUPLICATE", finding.Code, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (string.Equals("$.flows.HomeFeed.stages.s1.modules[0].id", finding.Path, StringComparison.Ordinal)
+                || string.Equals("$.flows.HomeFeed.stages.s1.modules[1].id", finding.Path, StringComparison.Ordinal))
+            {
+                pathsFound++;
+            }
+        }
+
+        Assert.Equal(2, pathsFound);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportModuleTypeMissing_WhenModuleUseIsMissing()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\"}]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_MODULE_TYPE_MISSING");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].use", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportModuleTypeNotRegistered_WhenModuleUseIsNotInCatalog()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"not.registered\"}]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_MODULE_TYPE_NOT_REGISTERED");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].use", finding.Path);
         Assert.False(string.IsNullOrEmpty(finding.Message));
     }
 
@@ -321,6 +467,18 @@ public sealed class ConfigValidatorTests
         public override void Write(Utf8JsonWriter writer, int value, JsonSerializerOptions options)
         {
             writer.WriteNumberValue(value);
+        }
+    }
+
+    private sealed class ModuleArgs
+    {
+    }
+
+    private sealed class TestModule : IModule<ModuleArgs, int>
+    {
+        public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<ModuleArgs> context)
+        {
+            return new ValueTask<Outcome<int>>(Outcome<int>.Ok(0));
         }
     }
 }

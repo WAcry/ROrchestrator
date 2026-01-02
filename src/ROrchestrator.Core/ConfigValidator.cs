@@ -15,12 +15,19 @@ public sealed class ConfigValidator
     private const string CodeStageNotInBlueprint = "CFG_STAGE_NOT_IN_BLUEPRINT";
     private const string CodeParamsBindFailed = "CFG_PARAMS_BIND_FAILED";
     private const string CodeParamsUnknownField = "CFG_PARAMS_UNKNOWN_FIELD";
+    private const string CodeModulesNotArray = "CFG_MODULES_NOT_ARRAY";
+    private const string CodeModuleIdMissing = "CFG_MODULE_ID_MISSING";
+    private const string CodeModuleIdDuplicate = "CFG_MODULE_ID_DUPLICATE";
+    private const string CodeModuleTypeMissing = "CFG_MODULE_TYPE_MISSING";
+    private const string CodeModuleTypeNotRegistered = "CFG_MODULE_TYPE_NOT_REGISTERED";
 
     private readonly FlowRegistry _flowRegistry;
+    private readonly ModuleCatalog _moduleCatalog;
 
-    public ConfigValidator(FlowRegistry flowRegistry)
+    public ConfigValidator(FlowRegistry flowRegistry, ModuleCatalog moduleCatalog)
     {
         _flowRegistry = flowRegistry ?? throw new ArgumentNullException(nameof(flowRegistry));
+        _moduleCatalog = moduleCatalog ?? throw new ArgumentNullException(nameof(moduleCatalog));
     }
 
     public ValidationReport ValidatePatchJson(string patchJson)
@@ -145,7 +152,7 @@ public sealed class ConfigValidator
 
                             if (stagesPatch.ValueKind == JsonValueKind.Object)
                             {
-                                ValidateStagePatchKeys(flowName, stagesPatch, blueprintStageNameSet, ref findings);
+                                ValidateStagePatches(flowName, stagesPatch, blueprintStageNameSet, _moduleCatalog, ref findings);
                             }
                         }
                     }
@@ -308,27 +315,201 @@ public sealed class ConfigValidator
         }
     }
 
-    private static void ValidateStagePatchKeys(
+    private static void ValidateStagePatches(
         string flowName,
         JsonElement stagesPatch,
         string[] blueprintStageNameSet,
+        ModuleCatalog moduleCatalog,
         ref FindingBuffer findings)
     {
         foreach (var stageProperty in stagesPatch.EnumerateObject())
         {
             var stageName = stageProperty.Name;
 
-            if (StageNameSetContains(blueprintStageNameSet, stageName))
+            if (!StageNameSetContains(blueprintStageNameSet, stageName))
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeStageNotInBlueprint,
+                        path: string.Concat("$.flows.", flowName, ".stages.", stageName),
+                        message: string.Concat("Stage is not in blueprint: ", stageName)));
+                continue;
+            }
+
+            if (stageProperty.Value.ValueKind != JsonValueKind.Object)
             {
                 continue;
             }
 
+            ValidateStagePatch(flowName, stageName, stageProperty.Value, moduleCatalog, ref findings);
+        }
+    }
+
+    private static void ValidateStagePatch(
+        string flowName,
+        string stageName,
+        JsonElement stagePatch,
+        ModuleCatalog moduleCatalog,
+        ref FindingBuffer findings)
+    {
+        var hasModules = false;
+        JsonElement modulesPatch = default;
+
+        foreach (var stageField in stagePatch.EnumerateObject())
+        {
+            if (stageField.NameEquals("modules"))
+            {
+                hasModules = true;
+                modulesPatch = stageField.Value;
+            }
+        }
+
+        if (!hasModules)
+        {
+            return;
+        }
+
+        var modulesPathPrefix = string.Concat("$.flows.", flowName, ".stages.", stageName, ".modules");
+
+        if (modulesPatch.ValueKind != JsonValueKind.Array)
+        {
             findings.Add(
                 new ValidationFinding(
                     ValidationSeverity.Error,
-                    code: CodeStageNotInBlueprint,
-                    path: string.Concat("$.flows.", flowName, ".stages.", stageName),
-                    message: string.Concat("Stage is not in blueprint: ", stageName)));
+                    code: CodeModulesNotArray,
+                    path: modulesPathPrefix,
+                    message: "modules must be an array."));
+            return;
+        }
+
+        ValidateModulesPatch(flowName, stageName, modulesPathPrefix, modulesPatch, moduleCatalog, ref findings);
+    }
+
+    private static void ValidateModulesPatch(
+        string flowName,
+        string stageName,
+        string modulesPathPrefix,
+        JsonElement modulesPatch,
+        ModuleCatalog moduleCatalog,
+        ref FindingBuffer findings)
+    {
+        _ = flowName;
+        _ = stageName;
+
+        Dictionary<string, int>? moduleIdIndexMap = null;
+
+        var index = 0;
+
+        foreach (var modulePatch in modulesPatch.EnumerateArray())
+        {
+            if (modulePatch.ValueKind != JsonValueKind.Object)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeModulesNotArray,
+                        path: string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "]"),
+                        message: "modules must be an array of objects."));
+                index++;
+                continue;
+            }
+
+            string? moduleId = null;
+            string? moduleUse = null;
+
+            foreach (var moduleField in modulePatch.EnumerateObject())
+            {
+                if (moduleField.NameEquals("id"))
+                {
+                    if (moduleField.Value.ValueKind == JsonValueKind.String)
+                    {
+                        moduleId = moduleField.Value.GetString();
+                    }
+
+                    continue;
+                }
+
+                if (moduleField.NameEquals("use"))
+                {
+                    if (moduleField.Value.ValueKind == JsonValueKind.String)
+                    {
+                        moduleUse = moduleField.Value.GetString();
+                    }
+
+                    continue;
+                }
+            }
+
+            if (string.IsNullOrEmpty(moduleId))
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeModuleIdMissing,
+                        path: string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].id"),
+                        message: "modules[].id is required."));
+            }
+            else
+            {
+                moduleIdIndexMap ??= new Dictionary<string, int>();
+
+                if (moduleIdIndexMap.TryGetValue(moduleId, out var firstIndex))
+                {
+                    var normalizedFirstIndex = firstIndex;
+                    if (normalizedFirstIndex < 0)
+                    {
+                        normalizedFirstIndex = -normalizedFirstIndex - 1;
+                    }
+
+                    if (firstIndex >= 0)
+                    {
+                        findings.Add(
+                            new ValidationFinding(
+                                ValidationSeverity.Error,
+                                code: CodeModuleIdDuplicate,
+                                path: string.Concat(modulesPathPrefix, "[", normalizedFirstIndex.ToString(System.Globalization.CultureInfo.InvariantCulture), "].id"),
+                                message: string.Concat("Duplicate module id: ", moduleId)));
+
+                        moduleIdIndexMap[moduleId] = -normalizedFirstIndex - 1;
+                    }
+
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Error,
+                            code: CodeModuleIdDuplicate,
+                            path: string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].id"),
+                            message: string.Concat("Duplicate module id: ", moduleId)));
+                }
+                else
+                {
+                    moduleIdIndexMap.Add(moduleId, index);
+                }
+            }
+
+            if (string.IsNullOrEmpty(moduleUse))
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeModuleTypeMissing,
+                        path: string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].use"),
+                        message: "modules[].use is required."));
+            }
+            else
+            {
+                if (!moduleCatalog.TryGetSignature(moduleUse, out _, out _))
+                {
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Error,
+                            code: CodeModuleTypeNotRegistered,
+                            path: string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].use"),
+                            message: string.Concat("Module type is not registered: ", moduleUse)));
+                }
+            }
+
+            index++;
         }
     }
 
