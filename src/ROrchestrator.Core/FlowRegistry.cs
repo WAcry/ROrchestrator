@@ -62,6 +62,25 @@ public sealed class FlowRegistry
         return false;
     }
 
+    internal bool TryGetStageNameSetAndPatchType(string flowName, out string[] stageNameSet, out Type? patchType)
+    {
+        if (string.IsNullOrEmpty(flowName))
+        {
+            throw new ArgumentException("FlowName must be non-empty.", nameof(flowName));
+        }
+
+        if (_flows.TryGetValue(flowName, out var entry))
+        {
+            stageNameSet = entry.StageNameSet;
+            patchType = entry.PatchType;
+            return true;
+        }
+
+        stageNameSet = Array.Empty<string>();
+        patchType = null;
+        return false;
+    }
+
     public void Register<TReq, TResp>(string flowName, FlowBlueprint<TReq, TResp> blueprint)
     {
         if (string.IsNullOrEmpty(flowName))

@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using ROrchestrator.Core;
 using ROrchestrator.Core.Blueprint;
 
@@ -124,6 +126,107 @@ public sealed class ConfigValidatorTests
         Assert.True(report.IsValid);
     }
 
+    [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenParamsPatchIsValid()
+    {
+        var registry = new FlowRegistry();
+        var blueprint = CreateBlueprint<int, int>("TestFlow", okValue: 0);
+        registry.Register<int, int, TestParams, ParamsPatchWithMaxCandidate>("HomeFeed", blueprint, new TestParams());
+
+        var validator = new ConfigValidator(registry);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":10}}}}");
+
+        Assert.True(report.IsValid);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenParamsPatchPropertyIsJsonIgnoredOnWrite()
+    {
+        var registry = new FlowRegistry();
+        var blueprint = CreateBlueprint<int, int>("TestFlow", okValue: 0);
+        registry.Register<int, int, TestParams, ParamsPatchWithJsonIgnoreWhenWritingNull>("HomeFeed", blueprint, new TestParams());
+
+        var validator = new ConfigValidator(registry);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":10}}}}");
+
+        Assert.True(report.IsValid);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportParamsBindFailed_WhenParamsPatchHasTypeMismatch()
+    {
+        var registry = new FlowRegistry();
+        var blueprint = CreateBlueprint<int, int>("TestFlow", okValue: 0);
+        registry.Register<int, int, TestParams, ParamsPatchWithMaxCandidate>("HomeFeed", blueprint, new TestParams());
+
+        var validator = new ConfigValidator(registry);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":\"oops\"}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_PARAMS_BIND_FAILED");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.StartsWith("$.flows.HomeFeed.params", finding.Path, StringComparison.Ordinal);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportParamsUnknownField_WhenParamsPatchContainsUnknownField()
+    {
+        var registry = new FlowRegistry();
+        var blueprint = CreateBlueprint<int, int>("TestFlow", okValue: 0);
+        registry.Register<int, int, TestParams, ParamsPatchWithMaxCandidates>("HomeFeed", blueprint, new TestParams());
+
+        var validator = new ConfigValidator(registry);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":10}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_PARAMS_UNKNOWN_FIELD");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.params.MaxCandidate", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportParamsBindFailed_WhenFlowIsRegisteredWithoutPatchType_ButParamsPresent()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprint<int, int>("TestFlow", okValue: 0));
+
+        var validator = new ConfigValidator(registry);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":10}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_PARAMS_BIND_FAILED");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.params", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportParamsBindFailed_WhenParamsPatchConverterThrows()
+    {
+        var registry = new FlowRegistry();
+        var blueprint = CreateBlueprint<int, int>("TestFlow", okValue: 0);
+        registry.Register<int, int, TestParams, ParamsPatchWithThrowingConverter>("HomeFeed", blueprint, new TestParams());
+
+        var validator = new ConfigValidator(registry);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":10}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_PARAMS_BIND_FAILED");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.params", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
     private static ValidationFinding GetSingleFinding(ValidationReport report, string code)
     {
         if (report is null)
@@ -184,5 +287,40 @@ public sealed class ConfigValidatorTests
 
     private sealed class TestPatch
     {
+    }
+
+    private sealed class ParamsPatchWithMaxCandidate
+    {
+        public int MaxCandidate { get; set; }
+    }
+
+    private sealed class ParamsPatchWithMaxCandidates
+    {
+        public int MaxCandidates { get; set; }
+    }
+
+    private sealed class ParamsPatchWithJsonIgnoreWhenWritingNull
+    {
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public int? MaxCandidate { get; set; }
+    }
+
+    private sealed class ParamsPatchWithThrowingConverter
+    {
+        [JsonConverter(typeof(ThrowingInt32Converter))]
+        public int MaxCandidate { get; set; }
+    }
+
+    private sealed class ThrowingInt32Converter : JsonConverter<int>
+    {
+        public override int Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            throw new FormatException("Invalid value.");
+        }
+
+        public override void Write(Utf8JsonWriter writer, int value, JsonSerializerOptions options)
+        {
+            writer.WriteNumberValue(value);
+        }
     }
 }

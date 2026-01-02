@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Reflection;
 
 namespace ROrchestrator.Core;
 
@@ -11,6 +13,8 @@ public sealed class ConfigValidator
     private const string CodeUnknownField = "CFG_UNKNOWN_FIELD";
     private const string CodeFlowNotRegistered = "CFG_FLOW_NOT_REGISTERED";
     private const string CodeStageNotInBlueprint = "CFG_STAGE_NOT_IN_BLUEPRINT";
+    private const string CodeParamsBindFailed = "CFG_PARAMS_BIND_FAILED";
+    private const string CodeParamsUnknownField = "CFG_PARAMS_UNKNOWN_FIELD";
 
     private readonly FlowRegistry _flowRegistry;
 
@@ -108,10 +112,11 @@ public sealed class ConfigValidator
                     var flowName = flowProperty.Name;
                     string[] blueprintStageNameSet = Array.Empty<string>();
                     var flowRegistered = false;
+                    Type? patchType = null;
 
                     if (flowName.Length != 0)
                     {
-                        flowRegistered = _flowRegistry.TryGetStageNameSet(flowName, out blueprintStageNameSet);
+                        flowRegistered = _flowRegistry.TryGetStageNameSetAndPatchType(flowName, out blueprintStageNameSet, out patchType);
                     }
 
                     if (!flowRegistered)
@@ -126,11 +131,22 @@ public sealed class ConfigValidator
 
                     if (flowProperty.Value.ValueKind == JsonValueKind.Object)
                     {
-                        ValidateFlowPatchTopLevelFields(flowName, flowProperty.Value, ref findings, out var stagesPatch);
+                        ValidateFlowPatchTopLevelFields(
+                            flowName,
+                            flowProperty.Value,
+                            ref findings,
+                            out var stagesPatch,
+                            out var paramsPatch,
+                            out var hasParamsPatch);
 
-                        if (flowRegistered && stagesPatch.ValueKind == JsonValueKind.Object)
+                        if (flowRegistered)
                         {
-                            ValidateStagePatchKeys(flowName, stagesPatch, blueprintStageNameSet, ref findings);
+                            ValidateFlowParamsPatch(flowName, hasParamsPatch, paramsPatch, patchType, ref findings);
+
+                            if (stagesPatch.ValueKind == JsonValueKind.Object)
+                            {
+                                ValidateStagePatchKeys(flowName, stagesPatch, blueprintStageNameSet, ref findings);
+                            }
                         }
                     }
                 }
@@ -144,14 +160,24 @@ public sealed class ConfigValidator
         string flowName,
         JsonElement flowPatch,
         ref FindingBuffer findings,
-        out JsonElement stagesPatch)
+        out JsonElement stagesPatch,
+        out JsonElement paramsPatch,
+        out bool hasParamsPatch)
     {
         stagesPatch = default;
+        paramsPatch = default;
+        hasParamsPatch = false;
 
         foreach (var flowField in flowPatch.EnumerateObject())
         {
-            if (flowField.NameEquals("params")
-                || flowField.NameEquals("experiments")
+            if (flowField.NameEquals("params"))
+            {
+                hasParamsPatch = true;
+                paramsPatch = flowField.Value;
+                continue;
+            }
+
+            if (flowField.NameEquals("experiments")
                 || flowField.NameEquals("emergency"))
             {
                 continue;
@@ -171,6 +197,114 @@ public sealed class ConfigValidator
                     code: CodeUnknownField,
                     path: string.Concat("$.flows.", flowName, ".", fieldName),
                     message: string.Concat("Unknown field: ", fieldName)));
+        }
+    }
+
+    private static void ValidateFlowParamsPatch(
+        string flowName,
+        bool hasParamsPatch,
+        JsonElement paramsPatch,
+        Type? patchType,
+        ref FindingBuffer findings)
+    {
+        if (!hasParamsPatch)
+        {
+            return;
+        }
+
+        var paramsPath = string.Concat("$.flows.", flowName, ".params");
+
+        if (patchType is null)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeParamsBindFailed,
+                    path: paramsPath,
+                    message: "params is not allowed for this flow."));
+            return;
+        }
+
+        if (paramsPatch.ValueKind == JsonValueKind.Object
+            && patchType != typeof(JsonElement)
+            && patchType != typeof(JsonDocument)
+            && !typeof(System.Collections.IDictionary).IsAssignableFrom(patchType))
+        {
+            var knownFieldNameSet = BuildJsonPropertyNameSet(patchType);
+
+            foreach (var property in paramsPatch.EnumerateObject())
+            {
+                var name = property.Name;
+
+                if (NameSetContains(knownFieldNameSet, name))
+                {
+                    continue;
+                }
+
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeParamsUnknownField,
+                        path: string.Concat(paramsPath, ".", name),
+                        message: string.Concat("Unknown params field: ", name)));
+            }
+        }
+
+        if (paramsPatch.ValueKind == JsonValueKind.Null)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeParamsBindFailed,
+                    path: paramsPath,
+                    message: "params must not be null."));
+            return;
+        }
+
+        try
+        {
+            _ = paramsPatch.Deserialize(patchType);
+        }
+        catch (JsonException ex)
+        {
+            var path = BuildParamsBindFailedPath(paramsPath, ex.Path);
+
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeParamsBindFailed,
+                    path: path,
+                    message: ex.Message));
+        }
+        catch (NotSupportedException ex)
+        {
+            var message = ex.Message;
+            if (string.IsNullOrEmpty(message))
+            {
+                message = "params binding is not supported.";
+            }
+
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeParamsBindFailed,
+                    path: paramsPath,
+                    message: message));
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            var message = ex.Message;
+            if (string.IsNullOrEmpty(message))
+            {
+                message = "params binding failed.";
+            }
+
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeParamsBindFailed,
+                    path: paramsPath,
+                    message: message));
         }
     }
 
@@ -209,6 +343,106 @@ public sealed class ConfigValidator
         }
 
         return false;
+    }
+
+    private static bool NameSetContains(string[] nameSet, string name)
+    {
+        for (var i = 0; i < nameSet.Length; i++)
+        {
+            if (string.Equals(nameSet[i], name, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string[] BuildJsonPropertyNameSet(Type type)
+    {
+        var properties = type.GetProperties(BindingFlags.Instance | BindingFlags.Public);
+        if (properties.Length == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var buffer = new string[properties.Length];
+        var count = 0;
+
+        for (var i = 0; i < properties.Length; i++)
+        {
+            var property = properties[i];
+
+            if (property.GetIndexParameters().Length != 0)
+            {
+                continue;
+            }
+
+            var ignoreAttribute = property.GetCustomAttribute<JsonIgnoreAttribute>(inherit: true);
+            if (ignoreAttribute is not null && ignoreAttribute.Condition == JsonIgnoreCondition.Always)
+            {
+                continue;
+            }
+
+            var jsonNameAttribute = property.GetCustomAttribute<JsonPropertyNameAttribute>(inherit: true);
+            var name = jsonNameAttribute is null ? property.Name : jsonNameAttribute.Name;
+
+            if (string.IsNullOrEmpty(name))
+            {
+                continue;
+            }
+
+            if (count != 0)
+            {
+                var found = false;
+
+                for (var j = 0; j < count; j++)
+                {
+                    if (string.Equals(buffer[j], name, StringComparison.Ordinal))
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (found)
+                {
+                    continue;
+                }
+            }
+
+            buffer[count] = name;
+            count++;
+        }
+
+        if (count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        if (count == buffer.Length)
+        {
+            return buffer;
+        }
+
+        var trimmed = new string[count];
+        Array.Copy(buffer, 0, trimmed, 0, count);
+        return trimmed;
+    }
+
+    private static string BuildParamsBindFailedPath(string paramsPath, string? exceptionPath)
+    {
+        if (string.IsNullOrEmpty(exceptionPath) || string.Equals(exceptionPath, "$", StringComparison.Ordinal))
+        {
+            return paramsPath;
+        }
+
+        if (exceptionPath![0] != '$')
+        {
+            return paramsPath;
+        }
+
+        return string.Concat(paramsPath.AsSpan(), exceptionPath.AsSpan(1));
     }
 
     private static ValidationFinding CreateSchemaVersionUnsupportedFinding()
