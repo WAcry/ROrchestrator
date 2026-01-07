@@ -31,7 +31,7 @@ public sealed class FlowContext
         Deadline = deadline;
     }
 
-    public void RecordNodeOutcome<T>(string nodeName, Outcome<T> outcome)
+    internal void RecordNodeOutcome<T>(string nodeName, Outcome<T> outcome)
     {
         if (string.IsNullOrEmpty(nodeName))
         {
@@ -42,6 +42,7 @@ public sealed class FlowContext
         RecordNodeOutcome(index, nodeName, outcome);
     }
 
+    // Must be called by the execution engine before recording outcomes for a compiled plan.
     internal void PrepareForExecution(IReadOnlyDictionary<string, int> nodeNameToIndex, int nodeCount)
     {
         if (nodeNameToIndex is null)
