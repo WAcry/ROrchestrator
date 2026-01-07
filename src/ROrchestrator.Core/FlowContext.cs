@@ -2,8 +2,14 @@ namespace ROrchestrator.Core;
 
 public sealed class FlowContext
 {
-    private readonly Lock _nodeOutcomesLock;
-    private Dictionary<string, NodeOutcomeEntry>? _nodeOutcomes;
+    private readonly Lock _nodeOutcomeGate;
+    private Dictionary<string, int>? _nodeNameToIndex;
+    private IReadOnlyDictionary<string, int>? _nodeNameToIndexView;
+    private NodeOutcomeEntry[]? _nodeOutcomes;
+    private int[]? _nodeOutcomeStates;
+    private int _nodeCount;
+    private int _nextDynamicIndex;
+    private bool _hasRecordedOutcomes;
 
     public IServiceProvider Services { get; }
 
@@ -20,7 +26,7 @@ public sealed class FlowContext
             throw new ArgumentException("Deadline must be non-default.", nameof(deadline));
         }
 
-        _nodeOutcomesLock = new();
+        _nodeOutcomeGate = new();
         CancellationToken = cancellationToken;
         Deadline = deadline;
     }
@@ -32,35 +38,34 @@ public sealed class FlowContext
             throw new ArgumentException("Node name must be non-empty.", nameof(nodeName));
         }
 
-        var entry = NodeOutcomeEntry.Create(outcome);
-
-        lock (_nodeOutcomesLock)
-        {
-            _nodeOutcomes ??= new Dictionary<string, NodeOutcomeEntry>();
-
-            if (!_nodeOutcomes.TryAdd(nodeName, entry))
-            {
-                throw new InvalidOperationException($"Outcome for node '{nodeName}' has already been recorded.");
-            }
-        }
+        var index = GetOrAddNodeIndex(nodeName);
+        RecordNodeOutcome(index, nodeName, outcome);
     }
 
-    internal void EnsureNodeOutcomesCapacity(int capacity)
+    internal void PrepareForExecution(IReadOnlyDictionary<string, int> nodeNameToIndex, int nodeCount)
     {
-        if (capacity <= 0)
+        if (nodeNameToIndex is null)
         {
-            return;
+            throw new ArgumentNullException(nameof(nodeNameToIndex));
         }
 
-        lock (_nodeOutcomesLock)
+        if (nodeCount <= 0)
         {
-            if (_nodeOutcomes is null)
-            {
-                _nodeOutcomes = new Dictionary<string, NodeOutcomeEntry>(capacity);
-                return;
-            }
+            throw new ArgumentOutOfRangeException(nameof(nodeCount), nodeCount, "NodeCount must be greater than zero.");
+        }
 
-            _nodeOutcomes.EnsureCapacity(capacity);
+        lock (_nodeOutcomeGate)
+        {
+            _nodeNameToIndexView = nodeNameToIndex;
+            _nodeCount = nodeCount;
+            EnsureOutcomeCapacity(nodeCount);
+
+            if (_hasRecordedOutcomes)
+            {
+                Array.Clear(_nodeOutcomeStates!, 0, nodeCount);
+                Array.Clear(_nodeOutcomes!, 0, nodeCount);
+                _hasRecordedOutcomes = false;
+            }
         }
     }
 
@@ -71,16 +76,26 @@ public sealed class FlowContext
             throw new ArgumentException("Node name must be non-empty.", nameof(nodeName));
         }
 
-        NodeOutcomeEntry entry;
-
-        lock (_nodeOutcomesLock)
+        if (!TryGetNodeIndex(nodeName, out var index))
         {
-            if (_nodeOutcomes is null || !_nodeOutcomes.TryGetValue(nodeName, out entry))
-            {
-                outcome = default;
-                return false;
-            }
+            outcome = default;
+            return false;
         }
+
+        var states = _nodeOutcomeStates;
+        if (states is null || (uint)index >= (uint)states.Length)
+        {
+            outcome = default;
+            return false;
+        }
+
+        if (Volatile.Read(ref states[index]) != 2)
+        {
+            outcome = default;
+            return false;
+        }
+
+        var entry = _nodeOutcomes![index];
 
         if (entry.OutputType != typeof(T))
         {
@@ -90,6 +105,136 @@ public sealed class FlowContext
 
         outcome = entry.ToOutcome<T>();
         return true;
+    }
+
+    internal void RecordNodeOutcome<T>(int nodeIndex, string nodeName, Outcome<T> outcome)
+    {
+        if (nodeIndex < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(nodeIndex), nodeIndex, "NodeIndex must be non-negative.");
+        }
+
+        if (_nodeNameToIndexView is not null && nodeIndex >= _nodeCount)
+        {
+            throw new InvalidOperationException($"Node index '{nodeIndex}' is out of range for the current execution plan.");
+        }
+
+        var entry = NodeOutcomeEntry.Create(outcome);
+
+        var states = _nodeOutcomeStates;
+        var entries = _nodeOutcomes;
+
+        if (states is null || entries is null || (uint)nodeIndex >= (uint)states.Length)
+        {
+            lock (_nodeOutcomeGate)
+            {
+                states = _nodeOutcomeStates;
+                entries = _nodeOutcomes;
+
+                if (states is null || entries is null || (uint)nodeIndex >= (uint)states.Length)
+                {
+                    EnsureOutcomeCapacity(nodeIndex + 1);
+                    states = _nodeOutcomeStates!;
+                    entries = _nodeOutcomes!;
+                }
+            }
+        }
+
+        if (Interlocked.CompareExchange(ref states[nodeIndex], 1, 0) != 0)
+        {
+            throw new InvalidOperationException($"Outcome for node '{nodeName}' has already been recorded.");
+        }
+
+        entries[nodeIndex] = entry;
+        Volatile.Write(ref states[nodeIndex], 2);
+        _hasRecordedOutcomes = true;
+    }
+
+    private int GetOrAddNodeIndex(string nodeName)
+    {
+        var view = _nodeNameToIndexView;
+        if (view is not null)
+        {
+            if (view.TryGetValue(nodeName, out var index))
+            {
+                return index;
+            }
+
+            // fixed layout: only allow nodes that are part of the compiled plan
+            throw new InvalidOperationException($"Node '{nodeName}' is not part of the current execution plan.");
+        }
+
+        lock (_nodeOutcomeGate)
+        {
+            _nodeNameToIndex ??= new Dictionary<string, int>();
+
+            if (_nodeNameToIndex.TryGetValue(nodeName, out var index))
+            {
+                return index;
+            }
+
+            index = _nextDynamicIndex;
+            _nextDynamicIndex++;
+            _nodeCount = _nextDynamicIndex;
+            _nodeNameToIndex.Add(nodeName, index);
+            EnsureOutcomeCapacity(_nodeCount);
+            return index;
+        }
+    }
+
+    private bool TryGetNodeIndex(string nodeName, out int index)
+    {
+        var view = _nodeNameToIndexView;
+        if (view is not null)
+        {
+            return view.TryGetValue(nodeName, out index);
+        }
+
+        lock (_nodeOutcomeGate)
+        {
+            if (_nodeNameToIndex is null || !_nodeNameToIndex.TryGetValue(nodeName, out index))
+            {
+                index = default;
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    private void EnsureOutcomeCapacity(int requiredCount)
+    {
+        if (requiredCount <= 0)
+        {
+            return;
+        }
+
+        if (_nodeOutcomes is null || _nodeOutcomeStates is null)
+        {
+            _nodeOutcomes = new NodeOutcomeEntry[requiredCount];
+            _nodeOutcomeStates = new int[requiredCount];
+            return;
+        }
+
+        if (_nodeOutcomes.Length >= requiredCount)
+        {
+            return;
+        }
+
+        var newSize = _nodeOutcomes.Length;
+        while (newSize < requiredCount)
+        {
+            newSize = newSize < 256 ? newSize * 2 : newSize + (newSize >> 1);
+        }
+
+        var newOutcomes = new NodeOutcomeEntry[newSize];
+        var newStates = new int[newSize];
+
+        Array.Copy(_nodeOutcomes, newOutcomes, _nodeOutcomes.Length);
+        Array.Copy(_nodeOutcomeStates, newStates, _nodeOutcomeStates.Length);
+
+        _nodeOutcomes = newOutcomes;
+        _nodeOutcomeStates = newStates;
     }
 
     private readonly struct NodeOutcomeEntry

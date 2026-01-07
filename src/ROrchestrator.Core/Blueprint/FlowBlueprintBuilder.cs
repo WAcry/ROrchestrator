@@ -88,7 +88,15 @@ public sealed class FlowBlueprintBuilder<TReq, TResp>
             throw new InvalidOperationException($"Flow '{_name}' must contain at least one node.");
         }
 
-        return new FlowBlueprint<TReq, TResp>(_name, _nodes.ToArray());
+        var nodes = _nodes.ToArray();
+        var nameToIndex = new Dictionary<string, int>(nodes.Length);
+
+        for (var i = 0; i < nodes.Length; i++)
+        {
+            nameToIndex.Add(nodes[i].Name, i);
+        }
+
+        return new FlowBlueprint<TReq, TResp>(_name, nodes, nameToIndex);
     }
 
     internal void AddStep(string name, string? stageName, string moduleType)
@@ -108,7 +116,8 @@ public sealed class FlowBlueprintBuilder<TReq, TResp>
             throw new ArgumentException($"Flow '{_name}' already contains node '{name}'.", nameof(name));
         }
 
-        _nodes.Add(BlueprintNode.CreateStep(name, stageName, moduleType));
+        var index = _nodes.Count;
+        _nodes.Add(BlueprintNode.CreateStep(index, name, stageName, moduleType));
     }
 
     internal void AddJoin<TOut>(
@@ -131,7 +140,8 @@ public sealed class FlowBlueprintBuilder<TReq, TResp>
             throw new ArgumentException($"Flow '{_name}' already contains node '{name}'.", nameof(name));
         }
 
-        _nodes.Add(BlueprintNode.CreateJoin(name, stageName, join));
+        var index = _nodes.Count;
+        _nodes.Add(BlueprintNode.CreateJoin(index, name, stageName, join));
     }
 
     public readonly struct StageBuilder

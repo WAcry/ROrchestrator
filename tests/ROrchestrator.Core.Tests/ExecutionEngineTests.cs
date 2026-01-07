@@ -642,7 +642,7 @@ public sealed class ExecutionEngineTests
                 else
                 {
                     ObservedWasNull = false;
-                    ObservedCapacity = (int)outcomes.GetType().GetMethod("EnsureCapacity")!.Invoke(outcomes, [0])!;
+                    ObservedCapacity = ((Array)outcomes).Length;
                 }
             }
             catch (Exception ex)

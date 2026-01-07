@@ -5,6 +5,7 @@ namespace ROrchestrator.Core;
 public sealed class PlanTemplate<TReq, TResp>
 {
     private readonly PlanNodeTemplate[] _nodes;
+    private readonly IReadOnlyDictionary<string, int> _nodeNameToIndex;
 
     public string Name { get; }
 
@@ -12,7 +13,9 @@ public sealed class PlanTemplate<TReq, TResp>
 
     public IReadOnlyList<PlanNodeTemplate> Nodes => _nodes;
 
-    internal PlanTemplate(string name, ulong planHash, PlanNodeTemplate[] nodes)
+    internal IReadOnlyDictionary<string, int> NodeNameToIndex => _nodeNameToIndex;
+
+    internal PlanTemplate(string name, ulong planHash, PlanNodeTemplate[] nodes, IReadOnlyDictionary<string, int> nodeNameToIndex)
     {
         if (string.IsNullOrEmpty(name))
         {
@@ -32,12 +35,15 @@ public sealed class PlanTemplate<TReq, TResp>
         Name = name;
         PlanHash = planHash;
         _nodes = nodes;
+        _nodeNameToIndex = nodeNameToIndex;
     }
 }
 
 public readonly struct PlanNodeTemplate
 {
     public BlueprintNodeKind Kind { get; }
+
+    public int Index { get; }
 
     public string Name { get; }
 
@@ -51,6 +57,7 @@ public readonly struct PlanNodeTemplate
 
     private PlanNodeTemplate(
         BlueprintNodeKind kind,
+        int index,
         string name,
         string? stageName,
         string? moduleType,
@@ -58,6 +65,7 @@ public readonly struct PlanNodeTemplate
         Type outputType)
     {
         Kind = kind;
+        Index = index;
         Name = name;
         StageName = stageName;
         ModuleType = moduleType;
@@ -65,10 +73,11 @@ public readonly struct PlanNodeTemplate
         OutputType = outputType;
     }
 
-    internal static PlanNodeTemplate CreateStep(string name, string? stageName, string moduleType, Type outputType)
+    internal static PlanNodeTemplate CreateStep(int index, string name, string? stageName, string moduleType, Type outputType)
     {
         return new PlanNodeTemplate(
             BlueprintNodeKind.Step,
+            index,
             name,
             stageName,
             moduleType,
@@ -76,10 +85,11 @@ public readonly struct PlanNodeTemplate
             outputType);
     }
 
-    internal static PlanNodeTemplate CreateJoin(string name, string? stageName, Delegate join, Type outputType)
+    internal static PlanNodeTemplate CreateJoin(int index, string name, string? stageName, Delegate join, Type outputType)
     {
         return new PlanNodeTemplate(
             BlueprintNodeKind.Join,
+            index,
             name,
             stageName,
             moduleType: null,

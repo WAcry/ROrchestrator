@@ -60,7 +60,7 @@ public sealed class ExecutionEngine
             return Outcome<TResp>.Canceled(UpstreamCanceledCode);
         }
 
-        flowContext.EnsureNodeOutcomesCapacity(nodeCount);
+        flowContext.PrepareForExecution(blueprint.NodeNameToIndex, nodeCount);
 
         for (var i = 0; i < nodeCount; i++)
         {
@@ -166,7 +166,7 @@ public sealed class ExecutionEngine
             return Outcome<TResp>.Canceled(UpstreamCanceledCode);
         }
 
-        context.EnsureNodeOutcomesCapacity(nodeCount);
+        context.PrepareForExecution(template.NodeNameToIndex, nodeCount);
 
         for (var i = 0; i < nodeCount; i++)
         {
@@ -296,7 +296,7 @@ public sealed class ExecutionEngine
             outcome = Outcome<TOut>.Error(UnhandledExceptionCode);
         }
 
-        flowContext.RecordNodeOutcome(node.Name, outcome);
+        flowContext.RecordNodeOutcome(node.Index, node.Name, outcome);
     }
 
     private static async ValueTask ExecuteStepTemplateAsyncCore<TArgs, TOut>(
@@ -326,7 +326,7 @@ public sealed class ExecutionEngine
             outcome = Outcome<TOut>.Error(UnhandledExceptionCode);
         }
 
-        flowContext.RecordNodeOutcome(node.Name, outcome);
+        flowContext.RecordNodeOutcome(node.Index, node.Name, outcome);
     }
 
     private static async ValueTask ExecuteJoinAsyncCore<TOut>(BlueprintNode node, FlowContext flowContext)
@@ -350,7 +350,7 @@ public sealed class ExecutionEngine
             outcome = Outcome<TOut>.Error(UnhandledExceptionCode);
         }
 
-        flowContext.RecordNodeOutcome(node.Name, outcome);
+        flowContext.RecordNodeOutcome(node.Index, node.Name, outcome);
     }
 
     private static async ValueTask ExecuteJoinTemplateAsyncCore<TOut>(PlanNodeTemplate node, FlowContext flowContext)
@@ -374,7 +374,7 @@ public sealed class ExecutionEngine
             outcome = Outcome<TOut>.Error(UnhandledExceptionCode);
         }
 
-        flowContext.RecordNodeOutcome(node.Name, outcome);
+        flowContext.RecordNodeOutcome(node.Index, node.Name, outcome);
     }
 
     private static class StepExecutorCache<TArgs>

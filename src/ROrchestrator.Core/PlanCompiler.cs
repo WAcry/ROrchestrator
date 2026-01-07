@@ -48,6 +48,7 @@ public static class PlanCompiler
 
         var planNodes = new PlanNodeTemplate[nodeCount];
         var explainNodes = includeExplain ? new PlanExplainNode[nodeCount] : null;
+        var nodeNameToIndex = new Dictionary<string, int>(nodeCount);
 
         var hash = PlanHashBuilder.Create();
         PlanHashBuilder.AddString(ref hash, blueprint.Name);
@@ -57,6 +58,7 @@ public static class PlanCompiler
         for (var i = 0; i < nodeCount; i++)
         {
             var node = nodes[i];
+            nodeNameToIndex.Add(node.Name, i);
 
             PlanHashBuilder.AddInt32(ref hash, (int)node.Kind);
             PlanHashBuilder.AddString(ref hash, node.Name);
@@ -84,7 +86,7 @@ public static class PlanCompiler
                         $"Flow '{blueprint.Name}' node '{node.Name}' module type '{moduleType}' has a different signature.");
                 }
 
-                planNodes[i] = PlanNodeTemplate.CreateStep(node.Name, node.StageName, moduleType, outType);
+                planNodes[i] = PlanNodeTemplate.CreateStep(i, node.Name, node.StageName, moduleType, outType);
 
                 if (explainNodes is not null)
                 {
@@ -113,7 +115,7 @@ public static class PlanCompiler
                         $"Flow '{blueprint.Name}' node '{node.Name}' must specify a non-null join output type.");
                 }
 
-                planNodes[i] = PlanNodeTemplate.CreateJoin(node.Name, node.StageName, join, outType);
+                planNodes[i] = PlanNodeTemplate.CreateJoin(i, node.Name, node.StageName, join, outType);
 
                 if (explainNodes is not null)
                 {
@@ -138,7 +140,7 @@ public static class PlanCompiler
             explain = new PlanExplain(blueprint.Name, planTemplateHash: hash, explainNodes);
         }
 
-        return new PlanTemplate<TReq, TResp>(blueprint.Name, planHash: hash, planNodes);
+        return new PlanTemplate<TReq, TResp>(blueprint.Name, planHash: hash, planNodes, nodeNameToIndex);
     }
 
     private static void EnsureFinalOutputType<TResp>(string flowName, PlanNodeTemplate lastNode)

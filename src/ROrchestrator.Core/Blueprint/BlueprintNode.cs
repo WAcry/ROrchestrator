@@ -6,6 +6,8 @@ public readonly struct BlueprintNode
 {
     public BlueprintNodeKind Kind { get; }
 
+    public int Index { get; }
+
     public string Name { get; }
 
     public string? StageName { get; }
@@ -18,6 +20,7 @@ public readonly struct BlueprintNode
 
     private BlueprintNode(
         BlueprintNodeKind kind,
+        int index,
         string name,
         string? stageName,
         string? moduleType,
@@ -25,6 +28,7 @@ public readonly struct BlueprintNode
         Type? joinOutputType)
     {
         Kind = kind;
+        Index = index;
         Name = name;
         StageName = stageName;
         ModuleType = moduleType;
@@ -32,17 +36,18 @@ public readonly struct BlueprintNode
         JoinOutputType = joinOutputType;
     }
 
-    internal static BlueprintNode CreateStep(string name, string? stageName, string moduleType)
+    internal static BlueprintNode CreateStep(int index, string name, string? stageName, string moduleType)
     {
-        return new BlueprintNode(BlueprintNodeKind.Step, name, stageName, moduleType, join: null, joinOutputType: null);
+        return new BlueprintNode(BlueprintNodeKind.Step, index, name, stageName, moduleType, join: null, joinOutputType: null);
     }
 
     internal static BlueprintNode CreateJoin<TOut>(
+        int index,
         string name,
         string? stageName,
         Func<FlowContext, ValueTask<Outcome<TOut>>> join)
     {
-        return new BlueprintNode(BlueprintNodeKind.Join, name, stageName, moduleType: null, join, typeof(TOut));
+        return new BlueprintNode(BlueprintNodeKind.Join, index, name, stageName, moduleType: null, join, typeof(TOut));
     }
 }
 
