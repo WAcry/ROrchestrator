@@ -18,6 +18,7 @@ public sealed class ConfigValidator
     private const string CodeModulesNotArray = "CFG_MODULES_NOT_ARRAY";
     private const string CodeModuleIdMissing = "CFG_MODULE_ID_MISSING";
     private const string CodeModuleIdDuplicate = "CFG_MODULE_ID_DUPLICATE";
+    private const string CodeModuleIdInvalidFormat = "CFG_MODULE_ID_INVALID_FORMAT";
     private const string CodeModuleTypeMissing = "CFG_MODULE_TYPE_MISSING";
     private const string CodeModuleTypeNotRegistered = "CFG_MODULE_TYPE_NOT_REGISTERED";
 
@@ -452,6 +453,16 @@ public sealed class ConfigValidator
             }
             else
             {
+                if (!IsValidModuleIdFormat(moduleId))
+                {
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Warn,
+                            code: CodeModuleIdInvalidFormat,
+                            path: string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].id"),
+                            message: "modules[].id must match [a-z0-9_]+ and length <= 64."));
+                }
+
                 moduleIdIndexMap ??= new Dictionary<string, int>();
 
                 if (moduleIdIndexMap.TryGetValue(moduleId, out var firstIndex))
@@ -511,6 +522,28 @@ public sealed class ConfigValidator
 
             index++;
         }
+    }
+
+    private static bool IsValidModuleIdFormat(string moduleId)
+    {
+        if (moduleId.Length == 0 || moduleId.Length > 64)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < moduleId.Length; i++)
+        {
+            var c = moduleId[i];
+
+            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        return true;
     }
 
     private static bool StageNameSetContains(string[] blueprintStageNameSet, string stageName)

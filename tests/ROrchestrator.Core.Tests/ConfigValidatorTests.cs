@@ -259,6 +259,29 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
+    public void ValidatePatchJson_ShouldReportModuleIdInvalidFormat_WhenModuleIdIsInvalid()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"M1\",\"use\":\"test.module\"}]}}}}}");
+
+        Assert.True(report.IsValid);
+        Assert.Single(report.Findings);
+
+        var finding = GetSingleFinding(report, "CFG_MODULE_ID_INVALID_FORMAT");
+        Assert.Equal(ValidationSeverity.Warn, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].id", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
     public void ValidatePatchJson_ShouldReportModulesNotArray_WhenModulesIsNotArray()
     {
         var registry = new FlowRegistry();
