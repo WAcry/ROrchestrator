@@ -213,6 +213,148 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
+    public void ValidatePatchJson_ShouldReportExperimentMappingInvalid_WhenExperimentsIsNotArray()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprint<int, int>("TestFlow", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":123}}}");
+
+        var finding = GetSingleFinding(report, "CFG_EXPERIMENT_MAPPING_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportExperimentMappingInvalid_WhenExperimentEntryIsNotObject()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprint<int, int>("TestFlow", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[123]}}}");
+
+        var finding = GetSingleFinding(report, "CFG_EXPERIMENT_MAPPING_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0]", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportExperimentMappingInvalid_WhenExperimentLayerIsMissing()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprint<int, int>("TestFlow", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"variant\":\"A\",\"patch\":{}}]}}}");
+
+        var finding = GetSingleFinding(report, "CFG_EXPERIMENT_MAPPING_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].layer", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportExperimentMappingInvalid_WhenExperimentVariantIsEmpty()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprint<int, int>("TestFlow", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"recall_layer\",\"variant\":\"\",\"patch\":{}}]}}}");
+
+        var finding = GetSingleFinding(report, "CFG_EXPERIMENT_MAPPING_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].variant", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportExperimentMappingDuplicate_WhenLayerAndVariantDuplicateWithinFlow()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprint<int, int>("TestFlow", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"recall_layer\",\"variant\":\"B\",\"patch\":{}},{\"layer\":\"recall_layer\",\"variant\":\"B\",\"patch\":{}}]}}}");
+
+        var pathsFound = 0;
+        var findings = report.Findings;
+
+        for (var i = 0; i < findings.Count; i++)
+        {
+            var finding = findings[i];
+            if (!string.Equals("CFG_EXPERIMENT_MAPPING_DUPLICATE", finding.Code, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (string.Equals("$.flows.HomeFeed.experiments[0]", finding.Path, StringComparison.Ordinal)
+                || string.Equals("$.flows.HomeFeed.experiments[1]", finding.Path, StringComparison.Ordinal))
+            {
+                pathsFound++;
+            }
+        }
+
+        Assert.Equal(2, pathsFound);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportExperimentPatchInvalid_WhenExperimentPatchIsNull()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprint<int, int>("TestFlow", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"recall_layer\",\"variant\":\"B\",\"patch\":null}]}}}");
+
+        var finding = GetSingleFinding(report, "CFG_EXPERIMENT_PATCH_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportExperimentPatchInvalid_WhenExperimentPatchContainsInvalidParamsPatch()
+    {
+        var registry = new FlowRegistry();
+        var blueprint = CreateBlueprint<int, int>("TestFlow", okValue: 0);
+        registry.Register<int, int, TestParams, ParamsPatchWithMaxCandidates>("HomeFeed", blueprint, new TestParams());
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"recall_layer\",\"variant\":\"B\",\"patch\":{\"params\":{\"MaxCandidate\":10}}}]}}}");
+
+        var finding = GetSingleFinding(report, "CFG_EXPERIMENT_PATCH_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.params.MaxCandidate", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
     public void ValidatePatchJson_ShouldBeValid_WhenParamsPatchIsValid()
     {
         var registry = new FlowRegistry();

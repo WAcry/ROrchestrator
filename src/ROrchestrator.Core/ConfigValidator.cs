@@ -27,6 +27,9 @@ public sealed class ConfigValidator
     private const string CodeModuleTypeNotRegistered = "CFG_MODULE_TYPE_NOT_REGISTERED";
     private const string CodeModuleArgsMissing = "CFG_MODULE_ARGS_MISSING";
     private const string CodeModuleArgsBindFailed = "CFG_MODULE_ARGS_BIND_FAILED";
+    private const string CodeExperimentMappingInvalid = "CFG_EXPERIMENT_MAPPING_INVALID";
+    private const string CodeExperimentMappingDuplicate = "CFG_EXPERIMENT_MAPPING_DUPLICATE";
+    private const string CodeExperimentPatchInvalid = "CFG_EXPERIMENT_PATCH_INVALID";
 
     private readonly FlowRegistry _flowRegistry;
     private readonly ModuleCatalog _moduleCatalog;
@@ -170,7 +173,9 @@ public sealed class ConfigValidator
                         out var hasStagesPatch,
                         out var stagesPatch,
                         out var paramsPatch,
-                        out var hasParamsPatch);
+                        out var hasParamsPatch,
+                        out var hasExperimentsPatch,
+                        out var experimentsPatch);
 
                     if (flowRegistered)
                     {
@@ -190,6 +195,16 @@ public sealed class ConfigValidator
                     {
                         ValidateStagePatches(flowName, stagesPatch, blueprintStageNameSet, _moduleCatalog, ref findings);
                     }
+
+                    ValidateExperiments(
+                        flowName,
+                        hasExperimentsPatch,
+                        experimentsPatch,
+                        patchType,
+                        blueprintStageNameSet,
+                        _moduleCatalog,
+                        flowRegistered,
+                        ref findings);
                 }
             }
 
@@ -204,12 +219,16 @@ public sealed class ConfigValidator
         out bool hasStagesPatch,
         out JsonElement stagesPatch,
         out JsonElement paramsPatch,
-        out bool hasParamsPatch)
+        out bool hasParamsPatch,
+        out bool hasExperimentsPatch,
+        out JsonElement experimentsPatch)
     {
         hasStagesPatch = false;
         stagesPatch = default;
         paramsPatch = default;
         hasParamsPatch = false;
+        hasExperimentsPatch = false;
+        experimentsPatch = default;
 
         foreach (var flowField in flowPatch.EnumerateObject())
         {
@@ -220,8 +239,14 @@ public sealed class ConfigValidator
                 continue;
             }
 
-            if (flowField.NameEquals("experiments")
-                || flowField.NameEquals("emergency"))
+            if (flowField.NameEquals("experiments"))
+            {
+                hasExperimentsPatch = true;
+                experimentsPatch = flowField.Value;
+                continue;
+            }
+
+            if (flowField.NameEquals("emergency"))
             {
                 continue;
             }
@@ -240,7 +265,291 @@ public sealed class ConfigValidator
                     ValidationSeverity.Error,
                     code: CodeUnknownField,
                     path: string.Concat("$.flows.", flowName, ".", fieldName),
-                    message: string.Concat("Unknown field: ", fieldName)));
+                        message: string.Concat("Unknown field: ", fieldName)));
+        }
+    }
+
+    private static void ValidateExperiments(
+        string flowName,
+        bool hasExperimentsPatch,
+        JsonElement experimentsPatch,
+        Type? patchType,
+        string[] blueprintStageNameSet,
+        ModuleCatalog moduleCatalog,
+        bool flowRegistered,
+        ref FindingBuffer findings)
+    {
+        if (!hasExperimentsPatch)
+        {
+            return;
+        }
+
+        var experimentsPathPrefix = string.Concat("$.flows.", flowName, ".experiments");
+
+        if (experimentsPatch.ValueKind != JsonValueKind.Array)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeExperimentMappingInvalid,
+                    path: experimentsPathPrefix,
+                    message: "experiments must be an array."));
+            return;
+        }
+
+        Dictionary<(string Layer, string Variant), int>? experimentKeyIndexMap = null;
+
+        var index = 0;
+
+        foreach (var experimentMapping in experimentsPatch.EnumerateArray())
+        {
+            var indexString = index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var itemPathPrefix = string.Concat(experimentsPathPrefix, "[", indexString, "]");
+
+            if (experimentMapping.ValueKind != JsonValueKind.Object)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeExperimentMappingInvalid,
+                        path: itemPathPrefix,
+                        message: "experiments must be an array of objects."));
+                index++;
+                continue;
+            }
+
+            string? layer = null;
+            var hasLayer = false;
+
+            string? variant = null;
+            var hasVariant = false;
+
+            var hasPatch = false;
+            JsonElement patch = default;
+
+            foreach (var field in experimentMapping.EnumerateObject())
+            {
+                if (field.NameEquals("layer"))
+                {
+                    hasLayer = true;
+
+                    if (field.Value.ValueKind == JsonValueKind.String)
+                    {
+                        layer = field.Value.GetString();
+                    }
+                    else
+                    {
+                        layer = null;
+                    }
+
+                    continue;
+                }
+
+                if (field.NameEquals("variant"))
+                {
+                    hasVariant = true;
+
+                    if (field.Value.ValueKind == JsonValueKind.String)
+                    {
+                        variant = field.Value.GetString();
+                    }
+                    else
+                    {
+                        variant = null;
+                    }
+
+                    continue;
+                }
+
+                if (field.NameEquals("patch"))
+                {
+                    hasPatch = true;
+                    patch = field.Value;
+                    continue;
+                }
+
+                var fieldName = field.Name;
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeUnknownField,
+                        path: string.Concat(itemPathPrefix, ".", fieldName),
+                        message: string.Concat("Unknown field: ", fieldName)));
+            }
+
+            if (!hasLayer || string.IsNullOrEmpty(layer))
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeExperimentMappingInvalid,
+                        path: string.Concat(itemPathPrefix, ".layer"),
+                        message: "experiments[].layer is required and must be a non-empty string."));
+            }
+
+            if (!hasVariant || string.IsNullOrEmpty(variant))
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeExperimentMappingInvalid,
+                        path: string.Concat(itemPathPrefix, ".variant"),
+                        message: "experiments[].variant is required and must be a non-empty string."));
+            }
+
+            if (hasLayer
+                && hasVariant
+                && !string.IsNullOrEmpty(layer)
+                && !string.IsNullOrEmpty(variant))
+            {
+                experimentKeyIndexMap ??= new Dictionary<(string Layer, string Variant), int>();
+
+                var key = (layer: layer!, variant: variant!);
+
+                if (experimentKeyIndexMap.TryGetValue(key, out var firstIndex))
+                {
+                    var normalizedFirstIndex = firstIndex;
+                    if (normalizedFirstIndex < 0)
+                    {
+                        normalizedFirstIndex = -normalizedFirstIndex - 1;
+                    }
+
+                    if (firstIndex >= 0)
+                    {
+                        findings.Add(
+                            new ValidationFinding(
+                                ValidationSeverity.Error,
+                                code: CodeExperimentMappingDuplicate,
+                                path: string.Concat(
+                                    experimentsPathPrefix,
+                                    "[",
+                                    normalizedFirstIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                    "]"),
+                                message: string.Concat("Duplicate experiment mapping: ", layer, " / ", variant)));
+
+                        experimentKeyIndexMap[key] = -normalizedFirstIndex - 1;
+                    }
+
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Error,
+                            code: CodeExperimentMappingDuplicate,
+                            path: itemPathPrefix,
+                            message: string.Concat("Duplicate experiment mapping: ", layer, " / ", variant)));
+                }
+                else
+                {
+                    experimentKeyIndexMap.Add(key, index);
+                }
+            }
+
+            var patchPath = string.Concat(itemPathPrefix, ".patch");
+
+            if (!hasPatch)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeExperimentPatchInvalid,
+                        path: patchPath,
+                        message: "experiments[].patch is required."));
+                index++;
+                continue;
+            }
+
+            if (patch.ValueKind != JsonValueKind.Object)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeExperimentPatchInvalid,
+                        path: patchPath,
+                        message: "experiments[].patch must be a non-null object."));
+                index++;
+                continue;
+            }
+
+            if (flowRegistered)
+            {
+                var patchFlowName = string.Concat(flowName, ".experiments[", indexString, "].patch");
+                ValidateExperimentPatch(patchFlowName, patchType, blueprintStageNameSet, moduleCatalog, patch, ref findings);
+            }
+
+            index++;
+        }
+    }
+
+    private static void ValidateExperimentPatch(
+        string patchFlowName,
+        Type? patchType,
+        string[] blueprintStageNameSet,
+        ModuleCatalog moduleCatalog,
+        JsonElement patch,
+        ref FindingBuffer findings)
+    {
+        var patchFindings = new FindingBuffer();
+
+        ValidateFlowPatchTopLevelFields(
+            patchFlowName,
+            patch,
+            ref patchFindings,
+            out var hasStagesPatch,
+            out var stagesPatch,
+            out var paramsPatch,
+            out var hasParamsPatch,
+            out var hasExperimentsPatch,
+            out var experimentsPatch);
+
+        ValidateFlowParamsPatch(patchFlowName, hasParamsPatch, paramsPatch, patchType, ref patchFindings);
+
+        if (hasStagesPatch && stagesPatch.ValueKind != JsonValueKind.Object)
+        {
+            patchFindings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeStagesNotObject,
+                    path: string.Concat("$.flows.", patchFlowName, ".stages"),
+                    message: "stages must be an object."));
+        }
+        else if (stagesPatch.ValueKind == JsonValueKind.Object)
+        {
+            ValidateStagePatches(patchFlowName, stagesPatch, blueprintStageNameSet, moduleCatalog, ref patchFindings);
+        }
+
+        ValidateExperiments(
+            patchFlowName,
+            hasExperimentsPatch,
+            experimentsPatch,
+            patchType,
+            blueprintStageNameSet,
+            moduleCatalog,
+            flowRegistered: true,
+            ref patchFindings);
+
+        if (patchFindings.IsEmpty)
+        {
+            return;
+        }
+
+        var items = patchFindings.ToArray();
+
+        for (var i = 0; i < items.Length; i++)
+        {
+            var item = items[i];
+
+            if (item.Severity == ValidationSeverity.Error)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeExperimentPatchInvalid,
+                        path: item.Path,
+                        message: item.Message));
+            }
+            else
+            {
+                findings.Add(item);
+            }
         }
     }
 
