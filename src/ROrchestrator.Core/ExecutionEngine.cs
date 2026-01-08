@@ -152,6 +152,8 @@ public sealed class ExecutionEngine
         }
 
         var flowName = template.Name;
+        var execExplainCollector = context.ExecExplainCollector;
+        execExplainCollector?.Clear();
         var recordFlowMetrics = FlowMetricsV1.IsFlowEnabled;
         var recordStepMetrics = FlowMetricsV1.IsStepEnabled;
         var recordStepSkipReasonMetrics = FlowMetricsV1.IsStepSkipReasonEnabled;
@@ -160,6 +162,7 @@ public sealed class ExecutionEngine
 
         Outcome<TResp> ReturnWithFlowMetrics(Outcome<TResp> outcome)
         {
+            execExplainCollector?.Finish(context);
             if (recordFlowMetrics)
             {
                 FlowMetricsV1.RecordFlow(flowStartTimestamp, flowName, outcome.Kind);
@@ -187,6 +190,7 @@ public sealed class ExecutionEngine
         }
 
         context.PrepareForExecution(template.NodeNameToIndex, nodeCount);
+        execExplainCollector?.Start(flowName, template.PlanHash, nodes);
 
         var activitySource = FlowActivitySource.Instance;
 
@@ -223,6 +227,7 @@ public sealed class ExecutionEngine
                     var nodeStartTimestamp = 0L;
                     var recordNodeMetrics = false;
                     var recordSkipReasonMetric = false;
+                    var execExplainNodeStartTimestamp = 0L;
 
                     Activity? nodeActivity;
 
@@ -266,6 +271,11 @@ public sealed class ExecutionEngine
 
                     try
                     {
+                        if (execExplainCollector is not null)
+                        {
+                            execExplainNodeStartTimestamp = Stopwatch.GetTimestamp();
+                        }
+
                         if (recordNodeMetrics)
                         {
                             nodeStartTimestamp = node.Kind == BlueprintNodeKind.Step
@@ -287,9 +297,19 @@ public sealed class ExecutionEngine
                     }
                     finally
                     {
-                        if ((nodeActivity is not null || recordNodeMetrics || recordSkipReasonMetric)
-                            && context.TryGetNodeOutcomeMetadata(node.Index, out var kind, out var code))
+                        var needsOutcomeMetadata = nodeActivity is not null
+                            || recordNodeMetrics
+                            || recordSkipReasonMetric
+                            || execExplainCollector is not null;
+
+                        if (needsOutcomeMetadata && context.TryGetNodeOutcomeMetadata(node.Index, out var kind, out var code))
                         {
+                            if (execExplainCollector is not null)
+                            {
+                                var execExplainNodeEndTimestamp = Stopwatch.GetTimestamp();
+                                execExplainCollector.RecordNode(node, execExplainNodeStartTimestamp, execExplainNodeEndTimestamp, kind, code);
+                            }
+
                             if (nodeActivity is not null)
                             {
                                 nodeActivity.SetTag(FlowActivitySource.TagOutcomeKind, FlowActivitySource.GetOutcomeKindTagValue(kind));
@@ -312,6 +332,16 @@ public sealed class ExecutionEngine
                             {
                                 FlowMetricsV1.RecordStepSkipReason(flowName, code);
                             }
+                        }
+                        else if (execExplainCollector is not null)
+                        {
+                            var execExplainNodeEndTimestamp = Stopwatch.GetTimestamp();
+                            execExplainCollector.RecordNode(
+                                node,
+                                execExplainNodeStartTimestamp,
+                                execExplainNodeEndTimestamp,
+                                OutcomeKind.Unspecified,
+                                string.Empty);
                         }
 
                         nodeActivity?.Dispose();
@@ -358,12 +388,17 @@ public sealed class ExecutionEngine
             if (node.Kind == BlueprintNodeKind.Step)
             {
                 var nodeStartTimestamp = recordStepMetrics ? FlowMetricsV1.StartStepTimer() : 0;
+                var execExplainNodeStartTimestamp = execExplainCollector is not null ? Stopwatch.GetTimestamp() : 0;
                 var outType = node.OutputType;
                 var executor = StepTemplateExecutorCache<TReq>.Get(outType);
                 await executor(this, node, request, context).ConfigureAwait(false);
+                var execExplainNodeEndTimestamp = execExplainCollector is not null ? Stopwatch.GetTimestamp() : 0;
 
-                if ((recordStepMetrics || recordStepSkipReasonMetrics)
-                    && context.TryGetNodeOutcomeMetadata(node.Index, out var kind, out var code))
+                var needsOutcomeMetadata = recordStepMetrics
+                    || recordStepSkipReasonMetrics
+                    || execExplainCollector is not null;
+
+                if (needsOutcomeMetadata && context.TryGetNodeOutcomeMetadata(node.Index, out var kind, out var code))
                 {
                     if (recordStepMetrics)
                     {
@@ -374,6 +409,20 @@ public sealed class ExecutionEngine
                     {
                         FlowMetricsV1.RecordStepSkipReason(flowName, code);
                     }
+
+                    if (execExplainCollector is not null)
+                    {
+                        execExplainCollector.RecordNode(node, execExplainNodeStartTimestamp, execExplainNodeEndTimestamp, kind, code);
+                    }
+                }
+                else if (execExplainCollector is not null)
+                {
+                    execExplainCollector.RecordNode(
+                        node,
+                        execExplainNodeStartTimestamp,
+                        execExplainNodeEndTimestamp,
+                        OutcomeKind.Unspecified,
+                        string.Empty);
                 }
 
                 continue;
@@ -382,13 +431,34 @@ public sealed class ExecutionEngine
             if (node.Kind == BlueprintNodeKind.Join)
             {
                 var nodeStartTimestamp = recordJoinMetrics ? FlowMetricsV1.StartJoinTimer() : 0;
+                var execExplainNodeStartTimestamp = execExplainCollector is not null ? Stopwatch.GetTimestamp() : 0;
                 var joinOutType = node.OutputType;
                 var executor = JoinTemplateExecutorCache.Get(joinOutType);
                 await executor(node, context).ConfigureAwait(false);
+                var execExplainNodeEndTimestamp = execExplainCollector is not null ? Stopwatch.GetTimestamp() : 0;
 
-                if (recordJoinMetrics && context.TryGetNodeOutcomeMetadata(node.Index, out var kind, out _))
+                var needsOutcomeMetadata = recordJoinMetrics || execExplainCollector is not null;
+
+                if (needsOutcomeMetadata && context.TryGetNodeOutcomeMetadata(node.Index, out var kind, out var code))
                 {
-                    FlowMetricsV1.RecordJoin(nodeStartTimestamp, flowName, kind);
+                    if (recordJoinMetrics)
+                    {
+                        FlowMetricsV1.RecordJoin(nodeStartTimestamp, flowName, kind);
+                    }
+
+                    if (execExplainCollector is not null)
+                    {
+                        execExplainCollector.RecordNode(node, execExplainNodeStartTimestamp, execExplainNodeEndTimestamp, kind, code);
+                    }
+                }
+                else if (execExplainCollector is not null)
+                {
+                    execExplainCollector.RecordNode(
+                        node,
+                        execExplainNodeStartTimestamp,
+                        execExplainNodeEndTimestamp,
+                        OutcomeKind.Unspecified,
+                        string.Empty);
                 }
 
                 continue;

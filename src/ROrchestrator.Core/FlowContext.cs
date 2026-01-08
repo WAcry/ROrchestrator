@@ -4,6 +4,7 @@ public sealed class FlowContext
 {
     private readonly Lock _configSnapshotGate;
     private readonly Lock _nodeOutcomeGate;
+    private ExecExplainCollectorV1? _execExplainCollector;
     private ConfigSnapshot _configSnapshot;
     private Task<ConfigSnapshot>? _configSnapshotTask;
     private int _configSnapshotState;
@@ -35,6 +36,25 @@ public sealed class FlowContext
         CancellationToken = cancellationToken;
         Deadline = deadline;
     }
+
+    public void EnableExecExplain()
+    {
+        _execExplainCollector ??= new ExecExplainCollectorV1();
+    }
+
+    public bool TryGetExecExplain(out ExecExplain explain)
+    {
+        var collector = _execExplainCollector;
+        if (collector is null)
+        {
+            explain = null!;
+            return false;
+        }
+
+        return collector.TryGetExplain(out explain);
+    }
+
+    internal ExecExplainCollectorV1? ExecExplainCollector => _execExplainCollector;
 
     public bool TryGetConfigVersion(out ulong configVersion)
     {
