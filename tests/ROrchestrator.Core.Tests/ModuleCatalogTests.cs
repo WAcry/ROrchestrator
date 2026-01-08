@@ -64,6 +64,18 @@ public sealed class ModuleCatalogTests
         Assert.Equal("DI failed.", ex.InnerException.Message);
     }
 
+    [Fact]
+    public void Create_ShouldRethrowFatalException_FromFactory()
+    {
+        var catalog = new ModuleCatalog();
+        catalog.Register<int, string>(
+            "cg.fatal_factory",
+            _ => throw new OutOfMemoryException("fatal"));
+
+        Assert.Throws<OutOfMemoryException>(
+            () => catalog.Create<int, string>("cg.fatal_factory", new DummyServiceProvider()));
+    }
+
     private sealed class DummyServiceProvider : IServiceProvider
     {
         public object? GetService(Type serviceType)
@@ -80,4 +92,3 @@ public sealed class ModuleCatalogTests
         }
     }
 }
-

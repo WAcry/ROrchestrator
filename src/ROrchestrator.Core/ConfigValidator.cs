@@ -298,7 +298,7 @@ public sealed class ConfigValidator
                     path: paramsPath,
                     message: message));
         }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
+        catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
         {
             var message = ex.Message;
             if (string.IsNullOrEmpty(message))

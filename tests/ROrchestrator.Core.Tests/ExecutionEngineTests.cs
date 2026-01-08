@@ -112,6 +112,29 @@ public sealed class ExecutionEngineTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_ShouldRethrowFatalException_FromModule()
+    {
+        var services = new DummyServiceProvider();
+        var flowContext = new FlowContext(
+            services,
+            CancellationToken.None,
+            FutureDeadline);
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<int, int>("m.fatal", _ => new FatalModule());
+
+        var blueprint = FlowBlueprint.Define<int, int>("TestFlow")
+            .Step("step_a", "m.fatal")
+            .Join<int>("final", _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(1)))
+            .Build();
+
+        var engine = new ExecutionEngine(catalog);
+
+        await Assert.ThrowsAsync<OutOfMemoryException>(
+            async () => await engine.ExecuteAsync(blueprint, request: 1, flowContext));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ShouldShortCircuit_WhenCancellationIsAlreadyRequested()
     {
         var services = new DummyServiceProvider();
@@ -526,6 +549,14 @@ public sealed class ExecutionEngineTests
         public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<int> context)
         {
             throw new InvalidOperationException("boom");
+        }
+    }
+
+    private sealed class FatalModule : IModule<int, int>
+    {
+        public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<int> context)
+        {
+            throw new OutOfMemoryException("fatal");
         }
     }
 

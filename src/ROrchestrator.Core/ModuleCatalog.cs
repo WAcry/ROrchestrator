@@ -57,7 +57,7 @@ public sealed class ModuleCatalog
         {
             module = factory(services);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
         {
             throw new InvalidOperationException($"Failed to create module type '{typeName}'.", ex);
         }

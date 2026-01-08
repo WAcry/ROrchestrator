@@ -475,7 +475,7 @@ public sealed class ExecutionEngine
                 ? Outcome<TOut>.Timeout(DeadlineExceededCode)
                 : Outcome<TOut>.Canceled(UpstreamCanceledCode);
         }
-        catch (Exception)
+        catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
         {
             outcome = Outcome<TOut>.Error(UnhandledExceptionCode);
         }
@@ -505,7 +505,7 @@ public sealed class ExecutionEngine
                 ? Outcome<TOut>.Timeout(DeadlineExceededCode)
                 : Outcome<TOut>.Canceled(UpstreamCanceledCode);
         }
-        catch (Exception)
+        catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
         {
             outcome = Outcome<TOut>.Error(UnhandledExceptionCode);
         }
@@ -529,7 +529,7 @@ public sealed class ExecutionEngine
                 ? Outcome<TOut>.Timeout(DeadlineExceededCode)
                 : Outcome<TOut>.Canceled(UpstreamCanceledCode);
         }
-        catch (Exception)
+        catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
         {
             outcome = Outcome<TOut>.Error(UnhandledExceptionCode);
         }
@@ -553,7 +553,7 @@ public sealed class ExecutionEngine
                 ? Outcome<TOut>.Timeout(DeadlineExceededCode)
                 : Outcome<TOut>.Canceled(UpstreamCanceledCode);
         }
-        catch (Exception)
+        catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
         {
             outcome = Outcome<TOut>.Error(UnhandledExceptionCode);
         }
