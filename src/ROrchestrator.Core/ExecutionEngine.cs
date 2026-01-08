@@ -542,6 +542,51 @@ public sealed class ExecutionEngine
         FlowContext flowContext)
     {
         var moduleType = node.ModuleType!;
+
+        var overrideProvider = flowContext.FlowTestOverrideProvider;
+        if (overrideProvider is not null && overrideProvider.TryGetOverride(node.Name, out var overrideEntry))
+        {
+            Outcome<TOut> overriddenOutcome;
+
+            if (overrideEntry is FlowTestOverrideOutcome<TOut> fixedOverride)
+            {
+                overriddenOutcome = fixedOverride.Outcome;
+            }
+            else if (overrideEntry is FlowTestOverrideCompute<TArgs, TOut> computeOverride)
+            {
+                var moduleContext = new ModuleContext<TArgs>(node.Name, moduleType, args, flowContext);
+
+                try
+                {
+                    overriddenOutcome = await computeOverride.Compute(moduleContext).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    overriddenOutcome = IsDeadlineExceeded(flowContext.Deadline)
+                        ? Outcome<TOut>.Timeout(DeadlineExceededCode)
+                        : Outcome<TOut>.Canceled(UpstreamCanceledCode);
+                }
+                catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
+                {
+                    overriddenOutcome = Outcome<TOut>.Error(UnhandledExceptionCode);
+                }
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"Override for moduleId '{node.Name}' has a different signature. Expected args '{typeof(TArgs)}' and output '{typeof(TOut)}'.");
+            }
+
+            flowContext.FlowTestInvocationSink?.Record(
+                node.Name,
+                moduleType,
+                isOverride: true,
+                overriddenOutcome.Kind,
+                overriddenOutcome.Code);
+            flowContext.RecordNodeOutcome(node.Index, node.Name, overriddenOutcome);
+            return;
+        }
+
         var module = engine._catalog.Create<TArgs, TOut>(moduleType, flowContext.Services);
 
         Outcome<TOut> outcome;
@@ -562,6 +607,12 @@ public sealed class ExecutionEngine
             outcome = Outcome<TOut>.Error(UnhandledExceptionCode);
         }
 
+        flowContext.FlowTestInvocationSink?.Record(
+            node.Name,
+            moduleType,
+            isOverride: false,
+            outcome.Kind,
+            outcome.Code);
         flowContext.RecordNodeOutcome(node.Index, node.Name, outcome);
     }
 
@@ -572,6 +623,51 @@ public sealed class ExecutionEngine
         FlowContext flowContext)
     {
         var moduleType = node.ModuleType!;
+
+        var overrideProvider = flowContext.FlowTestOverrideProvider;
+        if (overrideProvider is not null && overrideProvider.TryGetOverride(node.Name, out var overrideEntry))
+        {
+            Outcome<TOut> overriddenOutcome;
+
+            if (overrideEntry is FlowTestOverrideOutcome<TOut> fixedOverride)
+            {
+                overriddenOutcome = fixedOverride.Outcome;
+            }
+            else if (overrideEntry is FlowTestOverrideCompute<TArgs, TOut> computeOverride)
+            {
+                var moduleContext = new ModuleContext<TArgs>(node.Name, moduleType, args, flowContext);
+
+                try
+                {
+                    overriddenOutcome = await computeOverride.Compute(moduleContext).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    overriddenOutcome = IsDeadlineExceeded(flowContext.Deadline)
+                        ? Outcome<TOut>.Timeout(DeadlineExceededCode)
+                        : Outcome<TOut>.Canceled(UpstreamCanceledCode);
+                }
+                catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
+                {
+                    overriddenOutcome = Outcome<TOut>.Error(UnhandledExceptionCode);
+                }
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"Override for moduleId '{node.Name}' has a different signature. Expected args '{typeof(TArgs)}' and output '{typeof(TOut)}'.");
+            }
+
+            flowContext.FlowTestInvocationSink?.Record(
+                node.Name,
+                moduleType,
+                isOverride: true,
+                overriddenOutcome.Kind,
+                overriddenOutcome.Code);
+            flowContext.RecordNodeOutcome(node.Index, node.Name, overriddenOutcome);
+            return;
+        }
+
         var module = engine._catalog.Create<TArgs, TOut>(moduleType, flowContext.Services);
 
         Outcome<TOut> outcome;
@@ -592,6 +688,12 @@ public sealed class ExecutionEngine
             outcome = Outcome<TOut>.Error(UnhandledExceptionCode);
         }
 
+        flowContext.FlowTestInvocationSink?.Record(
+            node.Name,
+            moduleType,
+            isOverride: false,
+            outcome.Kind,
+            outcome.Code);
         flowContext.RecordNodeOutcome(node.Index, node.Name, outcome);
     }
 

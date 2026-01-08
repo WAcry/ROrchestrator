@@ -15,6 +15,8 @@ public sealed class FlowContext
     private int _nodeCount;
     private int _nextDynamicIndex;
     private bool _hasRecordedOutcomes;
+    private IFlowTestOverrideProvider? _flowTestOverrideProvider;
+    private IFlowTestInvocationSink? _flowTestInvocationSink;
 
     public IServiceProvider Services { get; }
 
@@ -55,6 +57,16 @@ public sealed class FlowContext
     }
 
     internal ExecExplainCollectorV1? ExecExplainCollector => _execExplainCollector;
+
+    internal IFlowTestOverrideProvider? FlowTestOverrideProvider => _flowTestOverrideProvider;
+
+    internal IFlowTestInvocationSink? FlowTestInvocationSink => _flowTestInvocationSink;
+
+    internal void ConfigureForTesting(IFlowTestOverrideProvider? overrideProvider, IFlowTestInvocationSink? invocationSink)
+    {
+        _flowTestOverrideProvider = overrideProvider;
+        _flowTestInvocationSink = invocationSink;
+    }
 
     public bool TryGetConfigVersion(out ulong configVersion)
     {
