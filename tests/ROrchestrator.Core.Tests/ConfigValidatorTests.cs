@@ -164,6 +164,128 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenFanoutMaxIsValid()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":8}}}}}");
+
+        Assert.True(report.IsValid);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportFanoutMaxInvalid_WhenFanoutMaxIsNotInteger()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":\"8\"}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_FANOUT_MAX_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.fanoutMax", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportFanoutMaxInvalid_WhenFanoutMaxIsNegative()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":-1}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_FANOUT_MAX_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.fanoutMax", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportFanoutMaxExceeded_WhenFanoutMaxExceedsMaxAllowed()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":9}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_FANOUT_MAX_EXCEEDED");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.fanoutMax", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenExperimentPatchFanoutMaxIsValid()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1}}}}]}}}");
+
+        Assert.True(report.IsValid);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportFanoutMaxExceeded_WhenExperimentPatchFanoutMaxExceedsMaxAllowed()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":9}}}}]}}}");
+
+        var finding = GetSingleFinding(report, "CFG_FANOUT_MAX_EXCEEDED");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.fanoutMax", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+        AssertNoFinding(report, "CFG_EXPERIMENT_PATCH_INVALID");
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportFanoutMaxInvalid_WhenExperimentPatchFanoutMaxIsNegative()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":-1}}}}]}}}");
+
+        var finding = GetSingleFinding(report, "CFG_FANOUT_MAX_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.fanoutMax", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+        AssertNoFinding(report, "CFG_EXPERIMENT_PATCH_INVALID");
+    }
+
+    [Fact]
     public void ValidatePatchJson_ShouldReportStageNotInBlueprint_WhenFlowIsRegisteredWithParams()
     {
         var registry = new FlowRegistry();

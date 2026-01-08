@@ -12,6 +12,8 @@ public sealed class ConfigValidator
     private const string CodeParseError = "CFG_PARSE_ERROR";
     private const string CodeSchemaVersionUnsupported = "CFG_SCHEMA_VERSION_UNSUPPORTED";
     private const string CodeUnknownField = "CFG_UNKNOWN_FIELD";
+    private const string CodeFanoutMaxInvalid = "CFG_FANOUT_MAX_INVALID";
+    private const string CodeFanoutMaxExceeded = "CFG_FANOUT_MAX_EXCEEDED";
     private const string CodeFlowsNotObject = "CFG_FLOWS_NOT_OBJECT";
     private const string CodeFlowPatchNotObject = "CFG_FLOW_PATCH_NOT_OBJECT";
     private const string CodeFlowNotRegistered = "CFG_FLOW_NOT_REGISTERED";
@@ -33,6 +35,8 @@ public sealed class ConfigValidator
     private const string CodeExperimentMappingDuplicate = "CFG_EXPERIMENT_MAPPING_DUPLICATE";
     private const string CodeExperimentPatchInvalid = "CFG_EXPERIMENT_PATCH_INVALID";
     private const string GateCodePrefix = "CFG_GATE_";
+
+    private const int MaxAllowedFanoutMax = 8;
 
     private readonly FlowRegistry _flowRegistry;
     private readonly ModuleCatalog _moduleCatalog;
@@ -542,7 +546,9 @@ public sealed class ConfigValidator
 
             if (item.Severity == ValidationSeverity.Error)
             {
-                if (item.Code.StartsWith(GateCodePrefix, StringComparison.Ordinal))
+                if (item.Code.StartsWith(GateCodePrefix, StringComparison.Ordinal)
+                    || string.Equals(item.Code, CodeFanoutMaxInvalid, StringComparison.Ordinal)
+                    || string.Equals(item.Code, CodeFanoutMaxExceeded, StringComparison.Ordinal))
                 {
                     findings.Add(item);
                     continue;
@@ -724,6 +730,8 @@ public sealed class ConfigValidator
     {
         var hasModules = false;
         JsonElement modulesPatch = default;
+        var hasFanoutMax = false;
+        JsonElement fanoutMax = default;
 
         foreach (var stageField in stagePatch.EnumerateObject())
         {
@@ -734,6 +742,13 @@ public sealed class ConfigValidator
                 continue;
             }
 
+            if (stageField.NameEquals("fanoutMax"))
+            {
+                hasFanoutMax = true;
+                fanoutMax = stageField.Value;
+                continue;
+            }
+
             var fieldName = stageField.Name;
             findings.Add(
                 new ValidationFinding(
@@ -741,6 +756,11 @@ public sealed class ConfigValidator
                     code: CodeUnknownField,
                     path: string.Concat("$.flows.", flowName, ".stages.", stageName, ".", fieldName),
                     message: string.Concat("Unknown field: ", fieldName)));
+        }
+
+        if (hasFanoutMax)
+        {
+            ValidateFanoutMax(flowName, stageName, fanoutMax, ref findings);
         }
 
         if (!hasModules)
@@ -762,6 +782,97 @@ public sealed class ConfigValidator
         }
 
         ValidateModulesPatch(flowName, stageName, modulesPathPrefix, modulesPatch, moduleCatalog, ref findings, ref moduleIdFirstOccurrenceMap);
+    }
+
+    private static void ValidateFanoutMax(
+        string flowName,
+        string stageName,
+        JsonElement fanoutMax,
+        ref FindingBuffer findings)
+    {
+        var path = string.Concat("$.flows.", flowName, ".stages.", stageName, ".fanoutMax");
+
+        if (fanoutMax.ValueKind != JsonValueKind.Number)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeFanoutMaxInvalid,
+                    path: path,
+                    message: "fanoutMax must be a non-negative integer."));
+            return;
+        }
+
+        if (fanoutMax.TryGetInt32(out var value32))
+        {
+            if (value32 < 0)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeFanoutMaxInvalid,
+                        path: path,
+                        message: "fanoutMax must be a non-negative integer."));
+                return;
+            }
+
+            if (value32 > MaxAllowedFanoutMax)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeFanoutMaxExceeded,
+                        path: path,
+                        message: string.Concat(
+                            "fanoutMax=",
+                            value32.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            " exceeds maxAllowed=",
+                            MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            ".")));
+                return;
+            }
+
+            return;
+        }
+
+        if (fanoutMax.TryGetInt64(out var value64))
+        {
+            if (value64 < 0)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeFanoutMaxInvalid,
+                        path: path,
+                        message: "fanoutMax must be a non-negative integer."));
+                return;
+            }
+
+            if (value64 > MaxAllowedFanoutMax)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeFanoutMaxExceeded,
+                        path: path,
+                        message: string.Concat(
+                            "fanoutMax=",
+                            value64.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            " exceeds maxAllowed=",
+                            MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            ".")));
+                return;
+            }
+
+            return;
+        }
+
+        findings.Add(
+            new ValidationFinding(
+                ValidationSeverity.Error,
+                code: CodeFanoutMaxInvalid,
+                path: path,
+                message: "fanoutMax must be a non-negative integer."));
     }
 
     private static void ValidateModulesPatch(
