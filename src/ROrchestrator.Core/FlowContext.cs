@@ -2,7 +2,11 @@ namespace ROrchestrator.Core;
 
 public sealed class FlowContext
 {
+    private readonly Lock _configSnapshotGate;
     private readonly Lock _nodeOutcomeGate;
+    private ConfigSnapshot _configSnapshot;
+    private Task<ConfigSnapshot>? _configSnapshotTask;
+    private int _configSnapshotState;
     private Dictionary<string, int>? _nodeNameToIndex;
     private IReadOnlyDictionary<string, int>? _nodeNameToIndexView;
     private NodeOutcomeEntry[]? _nodeOutcomes;
@@ -26,9 +30,98 @@ public sealed class FlowContext
             throw new ArgumentException("Deadline must be non-default.", nameof(deadline));
         }
 
+        _configSnapshotGate = new();
         _nodeOutcomeGate = new();
         CancellationToken = cancellationToken;
         Deadline = deadline;
+    }
+
+    internal ValueTask<ConfigSnapshot> GetConfigSnapshotAsync(IConfigProvider provider)
+    {
+        if (provider is null)
+        {
+            throw new ArgumentNullException(nameof(provider));
+        }
+
+        var state = Volatile.Read(ref _configSnapshotState);
+
+        if (state == 2)
+        {
+            return new ValueTask<ConfigSnapshot>(_configSnapshot);
+        }
+
+        if (state == 1)
+        {
+            var task = Volatile.Read(ref _configSnapshotTask);
+            if (task is not null)
+            {
+                return new ValueTask<ConfigSnapshot>(task);
+            }
+
+            return GetConfigSnapshotSlowAsync(provider);
+        }
+
+        return GetConfigSnapshotSlowAsync(provider);
+    }
+
+    private ValueTask<ConfigSnapshot> GetConfigSnapshotSlowAsync(IConfigProvider provider)
+    {
+        lock (_configSnapshotGate)
+        {
+            var state = _configSnapshotState;
+
+            if (state == 2)
+            {
+                return new ValueTask<ConfigSnapshot>(_configSnapshot);
+            }
+
+            if (state == 1)
+            {
+                return new ValueTask<ConfigSnapshot>(_configSnapshotTask!);
+            }
+
+            var snapshotTask = provider.GetSnapshotAsync(this);
+
+            if (snapshotTask.IsCompletedSuccessfully)
+            {
+                var snapshot = snapshotTask.Result;
+                _configSnapshot = snapshot;
+                Volatile.Write(ref _configSnapshotState, 2);
+                return new ValueTask<ConfigSnapshot>(snapshot);
+            }
+
+            var task = FetchAndStoreConfigSnapshotAsync(snapshotTask);
+            _configSnapshotTask = task;
+            Volatile.Write(ref _configSnapshotState, 1);
+            return new ValueTask<ConfigSnapshot>(task);
+        }
+    }
+
+    private async Task<ConfigSnapshot> FetchAndStoreConfigSnapshotAsync(ValueTask<ConfigSnapshot> snapshotTask)
+    {
+        try
+        {
+            var snapshot = await snapshotTask.ConfigureAwait(false);
+
+            lock (_configSnapshotGate)
+            {
+                _configSnapshot = snapshot;
+                _configSnapshotTask = null;
+                Volatile.Write(ref _configSnapshotState, 2);
+            }
+
+            return snapshot;
+        }
+        catch
+        {
+            lock (_configSnapshotGate)
+            {
+                _configSnapshotTask = null;
+                Volatile.Write(ref _configSnapshotState, 0);
+            }
+
+            throw;
+        }
     }
 
     internal void RecordNodeOutcome<T>(string nodeName, Outcome<T> outcome)
