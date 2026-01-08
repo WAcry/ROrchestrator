@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Reflection;
+using ROrchestrator.Core.Gates;
 
 namespace ROrchestrator.Core;
 
@@ -31,6 +32,7 @@ public sealed class ConfigValidator
     private const string CodeExperimentMappingInvalid = "CFG_EXPERIMENT_MAPPING_INVALID";
     private const string CodeExperimentMappingDuplicate = "CFG_EXPERIMENT_MAPPING_DUPLICATE";
     private const string CodeExperimentPatchInvalid = "CFG_EXPERIMENT_PATCH_INVALID";
+    private const string GateCodePrefix = "CFG_GATE_";
 
     private readonly FlowRegistry _flowRegistry;
     private readonly ModuleCatalog _moduleCatalog;
@@ -540,6 +542,12 @@ public sealed class ConfigValidator
 
             if (item.Severity == ValidationSeverity.Error)
             {
+                if (item.Code.StartsWith(GateCodePrefix, StringComparison.Ordinal))
+                {
+                    findings.Add(item);
+                    continue;
+                }
+
                 findings.Add(
                     new ValidationFinding(
                         ValidationSeverity.Error,
@@ -787,6 +795,8 @@ public sealed class ConfigValidator
             string? moduleUse = null;
             var hasModuleWith = false;
             JsonElement moduleWith = default;
+            var hasModuleGate = false;
+            JsonElement moduleGate = default;
 
             foreach (var moduleField in modulePatch.EnumerateObject())
             {
@@ -814,6 +824,13 @@ public sealed class ConfigValidator
                 {
                     hasModuleWith = true;
                     moduleWith = moduleField.Value;
+                    continue;
+                }
+
+                if (moduleField.NameEquals("gate"))
+                {
+                    hasModuleGate = true;
+                    moduleGate = moduleField.Value;
                     continue;
                 }
 
@@ -1045,6 +1062,16 @@ public sealed class ConfigValidator
                             code: CodeModuleArgsBindFailed,
                             path: moduleWithPath,
                             message: message));
+                }
+            }
+
+            if (hasModuleGate)
+            {
+                var gatePath = string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].gate");
+
+                if (!GateJsonV1.TryParseOptional(moduleGate, gatePath, out _, out var gateFinding))
+                {
+                    findings.Add(gateFinding);
                 }
             }
 

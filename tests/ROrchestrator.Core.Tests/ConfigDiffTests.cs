@@ -83,6 +83,104 @@ public sealed class ConfigDiffTests
     }
 
     [Fact]
+    public void DiffModules_ShouldReportGateAdded_WhenModuleGateIsAdded()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"l1\",\"in\":[\"A\"]}}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.GateAdded, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].gate", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportGateRemoved_WhenModuleGateIsRemoved()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"l1\",\"in\":[\"A\"]}}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.GateRemoved, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].gate", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportGateChanged_WhenModuleGateChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"l1\",\"in\":[\"A\"]}}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"l1\",\"in\":[\"B\"]}}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.GateChanged, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].gate", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldBeEmpty_WhenOnlyGatePropertyOrderChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"l1\",\"in\":[\"A\"]}}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"gate\":{\"experiment\":{\"in\":[\"A\"],\"layer\":\"l1\"}}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        Assert.Empty(report.Diffs);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportGateChanged_WhenExperimentPatchModuleGateChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"layer1\",\"in\":[\"A\"]}}}]}}}}]}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"layer1\",\"in\":[\"B\"]}}}]}}}}]}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.GateChanged, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("l1", diff.ExperimentLayer);
+        Assert.Equal("v1", diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].gate", diff.Path);
+    }
+
+    [Fact]
     public void DiffModules_ShouldReportWithAddedRemovedAndChanged_WhenModuleWithFieldsChange()
     {
         var oldPatchJson =

@@ -85,7 +85,14 @@ public static class PatchDiffV1
                         var isUseChanged = !string.Equals(oldModule.Use, newModule.Use, StringComparison.Ordinal);
                         var isWithChanged = !JsonElementDeepEquals(oldModule.With, newModule.With);
 
-                        if (isUseChanged || isWithChanged)
+                        var oldHasGate = oldModule.Gate.ValueKind != JsonValueKind.Undefined;
+                        var newHasGate = newModule.Gate.ValueKind != JsonValueKind.Undefined;
+
+                        var isGateAdded = !oldHasGate && newHasGate;
+                        var isGateRemoved = oldHasGate && !newHasGate;
+                        var isGateChanged = oldHasGate && newHasGate && !JsonElementDeepEquals(oldModule.Gate, newModule.Gate);
+
+                        if (isUseChanged || isWithChanged || isGateAdded || isGateRemoved || isGateChanged)
                         {
                             var modulePath = BuildModulePath(key.FlowName, key.StageName, newModule.Index, newModule.ExperimentIndex);
 
@@ -97,6 +104,40 @@ public static class PatchDiffV1
                                         key.StageName,
                                         key.ModuleId,
                                         string.Concat(modulePath, ".use"),
+                                        key.ExperimentLayer,
+                                        key.ExperimentVariant));
+                            }
+
+                            if (isGateAdded)
+                            {
+                                buffer.Add(
+                                    PatchModuleDiff.CreateGateAdded(
+                                        key.FlowName,
+                                        key.StageName,
+                                        key.ModuleId,
+                                        string.Concat(modulePath, ".gate"),
+                                        key.ExperimentLayer,
+                                        key.ExperimentVariant));
+                            }
+                            else if (isGateRemoved)
+                            {
+                                buffer.Add(
+                                    PatchModuleDiff.CreateGateRemoved(
+                                        key.FlowName,
+                                        key.StageName,
+                                        key.ModuleId,
+                                        string.Concat(modulePath, ".gate"),
+                                        key.ExperimentLayer,
+                                        key.ExperimentVariant));
+                            }
+                            else if (isGateChanged)
+                            {
+                                buffer.Add(
+                                    PatchModuleDiff.CreateGateChanged(
+                                        key.FlowName,
+                                        key.StageName,
+                                        key.ModuleId,
+                                        string.Concat(modulePath, ".gate"),
                                         key.ExperimentLayer,
                                         key.ExperimentVariant));
                             }
@@ -878,11 +919,18 @@ public static class PatchDiffV1
                         string.Concat("modules[].with is required. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
                 }
 
+                JsonElement gateElement = default;
+
+                if (moduleElement.TryGetProperty("gate", out var rawGateElement) && rawGateElement.ValueKind != JsonValueKind.Null)
+                {
+                    gateElement = rawGateElement;
+                }
+
                 moduleMap ??= new Dictionary<ModuleKey, ModuleInfo>(4);
 
                 var key = new ModuleKey(flowName, stageName, moduleId, experimentLayer, experimentVariant);
 
-                if (!moduleMap.TryAdd(key, new ModuleInfo(moduleUse, withElement, index, experimentIndex)))
+                if (!moduleMap.TryAdd(key, new ModuleInfo(moduleUse, withElement, gateElement, index, experimentIndex)))
                 {
                     throw new FormatException(
                         string.Concat("Duplicate module id within stage. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
@@ -1099,13 +1147,15 @@ public static class PatchDiffV1
     {
         public readonly string Use;
         public readonly JsonElement With;
+        public readonly JsonElement Gate;
         public readonly int Index;
         public readonly int ExperimentIndex;
 
-        public ModuleInfo(string use, JsonElement with, int index, int experimentIndex)
+        public ModuleInfo(string use, JsonElement with, JsonElement gate, int index, int experimentIndex)
         {
             Use = use;
             With = with;
+            Gate = gate;
             Index = index;
             ExperimentIndex = experimentIndex;
         }
@@ -1306,6 +1356,9 @@ public enum PatchModuleDiffKind
     WithChanged = 4,
     WithAdded = 5,
     WithRemoved = 6,
+    GateAdded = 7,
+    GateRemoved = 8,
+    GateChanged = 9,
 }
 
 public readonly struct PatchModuleDiff
@@ -1406,6 +1459,39 @@ public readonly struct PatchModuleDiff
         string? experimentVariant = null)
     {
         return new PatchModuleDiff(PatchModuleDiffKind.WithRemoved, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
+    }
+
+    internal static PatchModuleDiff CreateGateAdded(
+        string flowName,
+        string stageName,
+        string moduleId,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchModuleDiff(PatchModuleDiffKind.GateAdded, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
+    }
+
+    internal static PatchModuleDiff CreateGateRemoved(
+        string flowName,
+        string stageName,
+        string moduleId,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchModuleDiff(PatchModuleDiffKind.GateRemoved, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
+    }
+
+    internal static PatchModuleDiff CreateGateChanged(
+        string flowName,
+        string stageName,
+        string moduleId,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchModuleDiff(PatchModuleDiffKind.GateChanged, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
     }
 }
 

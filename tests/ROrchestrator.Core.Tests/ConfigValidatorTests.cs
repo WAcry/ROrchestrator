@@ -854,6 +854,144 @@ public sealed class ConfigValidatorTests
         Assert.False(string.IsNullOrEmpty(finding.Message));
     }
 
+    [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenModuleGateIsValid()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"recall_layer\",\"in\":[\"B\"]}}}]}}}}}");
+
+        Assert.True(report.IsValid);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenExperimentPatchModuleGateIsValid()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"not\":{\"experiment\":{\"layer\":\"recall_layer\",\"in\":[\"B\"]}}}}]}}}}]}}}");
+
+        Assert.True(report.IsValid);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportGateUnknownType_WhenGateTypeIsUnknown()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"magicExpr\":\"x > 1\"}}]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_GATE_UNKNOWN_TYPE");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].gate", finding.Path);
+        Assert.Equal("gate type is unknown or unsupported.", finding.Message);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportGateUnknownType_WhenExperimentPatchGateTypeIsUnknown()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"magicExpr\":\"x > 1\"}}]}}}}]}}}");
+
+        Assert.Single(report.Findings);
+
+        var finding = GetSingleFinding(report, "CFG_GATE_UNKNOWN_TYPE");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].gate", finding.Path);
+        Assert.Equal("gate type is unknown or unsupported.", finding.Message);
+
+        AssertNoFinding(report, "CFG_EXPERIMENT_PATCH_INVALID");
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportGateEmptyComposite_WhenAllIsEmpty()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"all\":[]}}]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_GATE_EMPTY_COMPOSITE");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].gate.all", finding.Path);
+        Assert.Equal("gate composite must be a non-empty array.", finding.Message);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportGateExperimentInvalid_WhenLayerIsEmpty()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"\",\"in\":[\"B\"]}}}]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_GATE_EXPERIMENT_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].gate.experiment.layer", finding.Path);
+        Assert.Equal("gate.experiment.layer is required and must be a non-empty string.", finding.Message);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportGateExperimentInvalid_WhenInIsEmpty()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"recall_layer\",\"in\":[]}}}]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_GATE_EXPERIMENT_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].gate.experiment.in", finding.Path);
+        Assert.Equal("gate.experiment.in is required and must be a non-empty array of strings.", finding.Message);
+    }
+
     private static ValidationFinding GetSingleFinding(ValidationReport report, string code)
     {
         if (report is null)
