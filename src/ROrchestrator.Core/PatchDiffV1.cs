@@ -76,7 +76,9 @@ public static class PatchDiffV1
                                     key.FlowName,
                                     key.StageName,
                                     key.ModuleId,
-                                    BuildModulePath(key.FlowName, key.StageName, oldModule.Index)));
+                                    BuildModulePath(key.FlowName, key.StageName, oldModule.Index, oldModule.ExperimentIndex),
+                                    key.ExperimentLayer,
+                                    key.ExperimentVariant));
                             continue;
                         }
 
@@ -87,7 +89,9 @@ public static class PatchDiffV1
                                     key.FlowName,
                                     key.StageName,
                                     key.ModuleId,
-                                    string.Concat(BuildModulePath(key.FlowName, key.StageName, newModule.Index), ".use")));
+                                    string.Concat(BuildModulePath(key.FlowName, key.StageName, newModule.Index, newModule.ExperimentIndex), ".use"),
+                                    key.ExperimentLayer,
+                                    key.ExperimentVariant));
                         }
 
                         if (!JsonElementDeepEquals(oldModule.With, newModule.With))
@@ -97,7 +101,9 @@ public static class PatchDiffV1
                                     key.FlowName,
                                     key.StageName,
                                     key.ModuleId,
-                                    string.Concat(BuildModulePath(key.FlowName, key.StageName, newModule.Index), ".with")));
+                                    string.Concat(BuildModulePath(key.FlowName, key.StageName, newModule.Index, newModule.ExperimentIndex), ".with"),
+                                    key.ExperimentLayer,
+                                    key.ExperimentVariant));
                         }
                     }
                 }
@@ -120,7 +126,9 @@ public static class PatchDiffV1
                                 key.FlowName,
                                 key.StageName,
                                 key.ModuleId,
-                                BuildModulePath(key.FlowName, key.StageName, newModule.Index)));
+                                BuildModulePath(key.FlowName, key.StageName, newModule.Index, newModule.ExperimentIndex),
+                                key.ExperimentLayer,
+                                key.ExperimentVariant));
                     }
                 }
 
@@ -178,107 +186,220 @@ public static class PatchDiffV1
                 throw new FormatException(string.Concat("Flow patch must be an object. Flow: ", flowName));
             }
 
-            if (!flowPatch.TryGetProperty("stages", out var stagesElement) || stagesElement.ValueKind == JsonValueKind.Null)
+            CollectFlowModules(flowName, flowPatch, experimentLayer: null, experimentVariant: null, experimentIndex: -1, ref moduleMap);
+
+            if (!flowPatch.TryGetProperty("experiments", out var experimentsElement) || experimentsElement.ValueKind == JsonValueKind.Null)
             {
                 continue;
             }
 
-            if (stagesElement.ValueKind != JsonValueKind.Object)
+            if (experimentsElement.ValueKind != JsonValueKind.Array)
             {
-                throw new FormatException(string.Concat("stages must be an object. Flow: ", flowName));
+                throw new FormatException(string.Concat("experiments must be an array. Flow: ", flowName));
             }
 
-            foreach (var stageProperty in stagesElement.EnumerateObject())
+            var experimentIndex = 0;
+
+            foreach (var experimentMapping in experimentsElement.EnumerateArray())
             {
-                var stageName = stageProperty.Name;
-                var stagePatch = stageProperty.Value;
+                if (experimentMapping.ValueKind != JsonValueKind.Object)
+                {
+                    throw new FormatException(string.Concat("experiments must be an array of objects. Flow: ", flowName));
+                }
 
-                if (stagePatch.ValueKind != JsonValueKind.Object)
+                if (!experimentMapping.TryGetProperty("layer", out var layerElement) || layerElement.ValueKind != JsonValueKind.String)
                 {
                     throw new FormatException(
-                        string.Concat("Stage patch must be an object. Flow: ", flowName, ", Stage: ", stageName));
+                        string.Concat(
+                            "experiments[].layer is required and must be a non-empty string. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
                 }
 
-                if (!stagePatch.TryGetProperty("modules", out var modulesElement) || modulesElement.ValueKind == JsonValueKind.Null)
-                {
-                    continue;
-                }
+                var layer = layerElement.GetString();
 
-                if (modulesElement.ValueKind != JsonValueKind.Array)
+                if (string.IsNullOrEmpty(layer))
                 {
                     throw new FormatException(
-                        string.Concat("modules must be an array. Flow: ", flowName, ", Stage: ", stageName));
+                        string.Concat(
+                            "experiments[].layer is required and must be a non-empty string. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
                 }
 
-                var index = 0;
-
-                foreach (var moduleElement in modulesElement.EnumerateArray())
+                if (!experimentMapping.TryGetProperty("variant", out var variantElement) || variantElement.ValueKind != JsonValueKind.String)
                 {
-                    if (moduleElement.ValueKind != JsonValueKind.Object)
-                    {
-                        throw new FormatException(
-                            string.Concat("modules must be an array of objects. Flow: ", flowName, ", Stage: ", stageName));
-                    }
-
-                    if (!moduleElement.TryGetProperty("id", out var idElement) || idElement.ValueKind != JsonValueKind.String)
-                    {
-                        throw new FormatException(
-                            string.Concat("modules[].id is required and must be a string. Flow: ", flowName, ", Stage: ", stageName));
-                    }
-
-                    var moduleId = idElement.GetString();
-
-                    if (string.IsNullOrEmpty(moduleId))
-                    {
-                        throw new FormatException(
-                            string.Concat("modules[].id is required and must be non-empty. Flow: ", flowName, ", Stage: ", stageName));
-                    }
-
-                    if (!moduleElement.TryGetProperty("use", out var useElement) || useElement.ValueKind != JsonValueKind.String)
-                    {
-                        throw new FormatException(
-                            string.Concat("modules[].use is required and must be a string. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
-                    }
-
-                    var moduleUse = useElement.GetString();
-
-                    if (string.IsNullOrEmpty(moduleUse))
-                    {
-                        throw new FormatException(
-                            string.Concat("modules[].use is required and must be non-empty. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
-                    }
-
-                    if (!moduleElement.TryGetProperty("with", out var withElement) || withElement.ValueKind == JsonValueKind.Null)
-                    {
-                        throw new FormatException(
-                            string.Concat("modules[].with is required. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
-                    }
-
-                    moduleMap ??= new Dictionary<ModuleKey, ModuleInfo>(4);
-
-                    var key = new ModuleKey(flowName, stageName, moduleId);
-
-                    if (!moduleMap.TryAdd(key, new ModuleInfo(moduleUse, withElement, index)))
-                    {
-                        throw new FormatException(
-                            string.Concat("Duplicate module id within stage. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
-                    }
-
-                    index++;
+                    throw new FormatException(
+                        string.Concat(
+                            "experiments[].variant is required and must be a non-empty string. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
                 }
+
+                var variant = variantElement.GetString();
+
+                if (string.IsNullOrEmpty(variant))
+                {
+                    throw new FormatException(
+                        string.Concat(
+                            "experiments[].variant is required and must be a non-empty string. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
+                }
+
+                if (!experimentMapping.TryGetProperty("patch", out var patchElement) || patchElement.ValueKind == JsonValueKind.Null)
+                {
+                    throw new FormatException(
+                        string.Concat(
+                            "experiments[].patch is required. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
+                }
+
+                if (patchElement.ValueKind != JsonValueKind.Object)
+                {
+                    throw new FormatException(
+                        string.Concat(
+                            "experiments[].patch must be a non-null object. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
+                }
+
+                CollectFlowModules(flowName, patchElement, layer!, variant!, experimentIndex, ref moduleMap);
+
+                experimentIndex++;
             }
         }
     }
 
-    private static string BuildModulePath(string flowName, string stageName, int index)
+    private static void CollectFlowModules(
+        string flowName,
+        JsonElement flowPatch,
+        string? experimentLayer,
+        string? experimentVariant,
+        int experimentIndex,
+        ref Dictionary<ModuleKey, ModuleInfo>? moduleMap)
     {
+        if (!flowPatch.TryGetProperty("stages", out var stagesElement) || stagesElement.ValueKind == JsonValueKind.Null)
+        {
+            return;
+        }
+
+        if (stagesElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new FormatException(string.Concat("stages must be an object. Flow: ", flowName));
+        }
+
+        foreach (var stageProperty in stagesElement.EnumerateObject())
+        {
+            var stageName = stageProperty.Name;
+            var stagePatch = stageProperty.Value;
+
+            if (stagePatch.ValueKind != JsonValueKind.Object)
+            {
+                throw new FormatException(
+                    string.Concat("Stage patch must be an object. Flow: ", flowName, ", Stage: ", stageName));
+            }
+
+            if (!stagePatch.TryGetProperty("modules", out var modulesElement) || modulesElement.ValueKind == JsonValueKind.Null)
+            {
+                continue;
+            }
+
+            if (modulesElement.ValueKind != JsonValueKind.Array)
+            {
+                throw new FormatException(
+                    string.Concat("modules must be an array. Flow: ", flowName, ", Stage: ", stageName));
+            }
+
+            var index = 0;
+
+            foreach (var moduleElement in modulesElement.EnumerateArray())
+            {
+                if (moduleElement.ValueKind != JsonValueKind.Object)
+                {
+                    throw new FormatException(
+                        string.Concat("modules must be an array of objects. Flow: ", flowName, ", Stage: ", stageName));
+                }
+
+                if (!moduleElement.TryGetProperty("id", out var idElement) || idElement.ValueKind != JsonValueKind.String)
+                {
+                    throw new FormatException(
+                        string.Concat("modules[].id is required and must be a string. Flow: ", flowName, ", Stage: ", stageName));
+                }
+
+                var moduleId = idElement.GetString();
+
+                if (string.IsNullOrEmpty(moduleId))
+                {
+                    throw new FormatException(
+                        string.Concat("modules[].id is required and must be non-empty. Flow: ", flowName, ", Stage: ", stageName));
+                }
+
+                if (!moduleElement.TryGetProperty("use", out var useElement) || useElement.ValueKind != JsonValueKind.String)
+                {
+                    throw new FormatException(
+                        string.Concat("modules[].use is required and must be a string. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
+                }
+
+                var moduleUse = useElement.GetString();
+
+                if (string.IsNullOrEmpty(moduleUse))
+                {
+                    throw new FormatException(
+                        string.Concat("modules[].use is required and must be non-empty. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
+                }
+
+                if (!moduleElement.TryGetProperty("with", out var withElement) || withElement.ValueKind == JsonValueKind.Null)
+                {
+                    throw new FormatException(
+                        string.Concat("modules[].with is required. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
+                }
+
+                moduleMap ??= new Dictionary<ModuleKey, ModuleInfo>(4);
+
+                var key = new ModuleKey(flowName, stageName, moduleId, experimentLayer, experimentVariant);
+
+                if (!moduleMap.TryAdd(key, new ModuleInfo(moduleUse, withElement, index, experimentIndex)))
+                {
+                    throw new FormatException(
+                        string.Concat("Duplicate module id within stage. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
+                }
+
+                index++;
+            }
+        }
+    }
+
+    private static string BuildModulePath(string flowName, string stageName, int moduleIndex, int experimentIndex)
+    {
+        if (experimentIndex < 0)
+        {
+            return string.Concat(
+                "$.flows.",
+                flowName,
+                ".stages.",
+                stageName,
+                ".modules[",
+                moduleIndex.ToString(CultureInfo.InvariantCulture),
+                "]");
+        }
+
         return string.Concat(
             "$.flows.",
             flowName,
-            ".stages.",
+            ".experiments[",
+            experimentIndex.ToString(CultureInfo.InvariantCulture),
+            "].patch.stages.",
             stageName,
             ".modules[",
-            index.ToString(CultureInfo.InvariantCulture),
+            moduleIndex.ToString(CultureInfo.InvariantCulture),
             "]");
     }
 
@@ -371,12 +492,16 @@ public static class PatchDiffV1
     private readonly struct ModuleKey : IEquatable<ModuleKey>
     {
         public readonly string FlowName;
+        public readonly string? ExperimentLayer;
+        public readonly string? ExperimentVariant;
         public readonly string StageName;
         public readonly string ModuleId;
 
-        public ModuleKey(string flowName, string stageName, string moduleId)
+        public ModuleKey(string flowName, string stageName, string moduleId, string? experimentLayer, string? experimentVariant)
         {
             FlowName = flowName;
+            ExperimentLayer = experimentLayer;
+            ExperimentVariant = experimentVariant;
             StageName = stageName;
             ModuleId = moduleId;
         }
@@ -384,6 +509,8 @@ public static class PatchDiffV1
         public bool Equals(ModuleKey other)
         {
             return string.Equals(FlowName, other.FlowName, StringComparison.Ordinal)
+                && string.Equals(ExperimentLayer, other.ExperimentLayer, StringComparison.Ordinal)
+                && string.Equals(ExperimentVariant, other.ExperimentVariant, StringComparison.Ordinal)
                 && string.Equals(StageName, other.StageName, StringComparison.Ordinal)
                 && string.Equals(ModuleId, other.ModuleId, StringComparison.Ordinal);
         }
@@ -397,6 +524,8 @@ public static class PatchDiffV1
         {
             var hash = new HashCode();
             hash.Add(FlowName);
+            hash.Add(ExperimentLayer);
+            hash.Add(ExperimentVariant);
             hash.Add(StageName);
             hash.Add(ModuleId);
             return hash.ToHashCode();
@@ -408,12 +537,14 @@ public static class PatchDiffV1
         public readonly string Use;
         public readonly JsonElement With;
         public readonly int Index;
+        public readonly int ExperimentIndex;
 
-        public ModuleInfo(string use, JsonElement with, int index)
+        public ModuleInfo(string use, JsonElement with, int index, int experimentIndex)
         {
             Use = use;
             With = with;
             Index = index;
+            ExperimentIndex = experimentIndex;
         }
     }
 
@@ -475,6 +606,18 @@ public static class PatchDiffV1
                 return c;
             }
 
+            c = string.CompareOrdinal(x.ExperimentLayer, y.ExperimentLayer);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            c = string.CompareOrdinal(x.ExperimentVariant, y.ExperimentVariant);
+            if (c != 0)
+            {
+                return c;
+            }
+
             c = string.CompareOrdinal(x.StageName, y.StageName);
             if (c != 0)
             {
@@ -520,6 +663,10 @@ public readonly struct PatchModuleDiff
 
     public string FlowName { get; }
 
+    public string? ExperimentLayer { get; }
+
+    public string? ExperimentVariant { get; }
+
     public string StageName { get; }
 
     public string ModuleId { get; }
@@ -531,32 +678,60 @@ public readonly struct PatchModuleDiff
         string flowName,
         string stageName,
         string moduleId,
-        string path)
+        string path,
+        string? experimentLayer,
+        string? experimentVariant)
     {
         Kind = kind;
         FlowName = flowName;
+        ExperimentLayer = experimentLayer;
+        ExperimentVariant = experimentVariant;
         StageName = stageName;
         ModuleId = moduleId;
         Path = path;
     }
 
-    internal static PatchModuleDiff CreateAdded(string flowName, string stageName, string moduleId, string path)
+    internal static PatchModuleDiff CreateAdded(
+        string flowName,
+        string stageName,
+        string moduleId,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
     {
-        return new PatchModuleDiff(PatchModuleDiffKind.Added, flowName, stageName, moduleId, path);
+        return new PatchModuleDiff(PatchModuleDiffKind.Added, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
     }
 
-    internal static PatchModuleDiff CreateRemoved(string flowName, string stageName, string moduleId, string path)
+    internal static PatchModuleDiff CreateRemoved(
+        string flowName,
+        string stageName,
+        string moduleId,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
     {
-        return new PatchModuleDiff(PatchModuleDiffKind.Removed, flowName, stageName, moduleId, path);
+        return new PatchModuleDiff(PatchModuleDiffKind.Removed, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
     }
 
-    internal static PatchModuleDiff CreateUseChanged(string flowName, string stageName, string moduleId, string path)
+    internal static PatchModuleDiff CreateUseChanged(
+        string flowName,
+        string stageName,
+        string moduleId,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
     {
-        return new PatchModuleDiff(PatchModuleDiffKind.UseChanged, flowName, stageName, moduleId, path);
+        return new PatchModuleDiff(PatchModuleDiffKind.UseChanged, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
     }
 
-    internal static PatchModuleDiff CreateWithChanged(string flowName, string stageName, string moduleId, string path)
+    internal static PatchModuleDiff CreateWithChanged(
+        string flowName,
+        string stageName,
+        string moduleId,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
     {
-        return new PatchModuleDiff(PatchModuleDiffKind.WithChanged, flowName, stageName, moduleId, path);
+        return new PatchModuleDiff(PatchModuleDiffKind.WithChanged, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
     }
 }
