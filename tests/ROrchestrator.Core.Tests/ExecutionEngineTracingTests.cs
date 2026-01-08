@@ -207,6 +207,87 @@ public sealed class ExecutionEngineTracingTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Template_WithListener_ShouldSetOutcomeTags_ForSkippedOutcome()
+    {
+        var services = new DummyServiceProvider();
+        var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<int, int>("m.skip", _ => new SkippingModule(code: "GATE_FALSE"));
+
+        var blueprint = FlowBlueprint.Define<int, int>("TracingTestFlow.Skipped")
+            .Step("step_a", "m.skip")
+            .Join<int>(
+                "final",
+                ctx =>
+                {
+                    Assert.True(ctx.TryGetNodeOutcome<int>("step_a", out var stepOutcome));
+                    Assert.True(stepOutcome.IsSkipped);
+                    return new ValueTask<Outcome<int>>(Outcome<int>.Ok(1));
+                })
+            .Build();
+
+        var template = PlanCompiler.Compile(blueprint, catalog);
+        var engine = new ExecutionEngine(catalog);
+
+        var activities = new List<Activity>();
+        var expectedPlanHash = template.PlanHash.ToString("X16");
+        using var listener = CreateListener(activities, template.Name, expectedPlanHash);
+
+        var result = await engine.ExecuteAsync(template, request: 1, flowContext);
+        Assert.True(result.IsOk);
+
+        Assert.True(TryGetNodeActivityByName(activities, "step_a", out var stepActivity));
+        AssertTag(stepActivity, "outcome.kind", "skipped");
+        AssertTag(stepActivity, "outcome.code", "GATE_FALSE");
+
+        Assert.True(TryGetNodeActivityByName(activities, "final", out var finalActivity));
+        AssertTag(finalActivity, "outcome.kind", "ok");
+        AssertTag(finalActivity, "outcome.code", "OK");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Template_WithListener_ShouldSetOutcomeTags_ForFallbackOutcome()
+    {
+        var services = new DummyServiceProvider();
+        var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<int, int>("m.fallback", _ => new FallbackModule(value: 42, code: "CACHE_HIT"));
+
+        var blueprint = FlowBlueprint.Define<int, int>("TracingTestFlow.Fallback")
+            .Step("step_a", "m.fallback")
+            .Join<int>(
+                "final",
+                ctx =>
+                {
+                    Assert.True(ctx.TryGetNodeOutcome<int>("step_a", out var stepOutcome));
+                    Assert.True(stepOutcome.IsFallback);
+                    Assert.Equal(42, stepOutcome.Value);
+                    return new ValueTask<Outcome<int>>(Outcome<int>.Ok(stepOutcome.Value));
+                })
+            .Build();
+
+        var template = PlanCompiler.Compile(blueprint, catalog);
+        var engine = new ExecutionEngine(catalog);
+
+        var activities = new List<Activity>();
+        var expectedPlanHash = template.PlanHash.ToString("X16");
+        using var listener = CreateListener(activities, template.Name, expectedPlanHash);
+
+        var result = await engine.ExecuteAsync(template, request: 1, flowContext);
+        Assert.True(result.IsOk);
+
+        Assert.True(TryGetNodeActivityByName(activities, "step_a", out var stepActivity));
+        AssertTag(stepActivity, "outcome.kind", "fallback");
+        AssertTag(stepActivity, "outcome.code", "CACHE_HIT");
+
+        Assert.True(TryGetNodeActivityByName(activities, "final", out var finalActivity));
+        AssertTag(finalActivity, "outcome.kind", "ok");
+        AssertTag(finalActivity, "outcome.code", "OK");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Template_NoListener_ShouldNotCreateActivities()
     {
         var services = new DummyServiceProvider();
@@ -370,6 +451,38 @@ public sealed class ExecutionEngineTracingTests
         {
             ObservedActivity = Activity.Current;
             return new ValueTask<Outcome<int>>(Outcome<int>.Ok(context.Args));
+        }
+    }
+
+    private sealed class SkippingModule : IModule<int, int>
+    {
+        private readonly string _code;
+
+        public SkippingModule(string code)
+        {
+            _code = code;
+        }
+
+        public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<int> context)
+        {
+            return new ValueTask<Outcome<int>>(Outcome<int>.Skipped(_code));
+        }
+    }
+
+    private sealed class FallbackModule : IModule<int, int>
+    {
+        private readonly int _value;
+        private readonly string _code;
+
+        public FallbackModule(int value, string code)
+        {
+            _value = value;
+            _code = code;
+        }
+
+        public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<int> context)
+        {
+            return new ValueTask<Outcome<int>>(Outcome<int>.Fallback(_value, _code));
         }
     }
 }

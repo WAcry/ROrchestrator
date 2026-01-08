@@ -308,6 +308,76 @@ public sealed class ExecutionEnginePlanTemplateMetricsTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Template_ShouldRecordStepOutcome_Fallback_WhenModuleReturnsFallback()
+    {
+        var services = new DummyServiceProvider();
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<int, int>("m.fallback", _ => new FallbackModule(value: 42, code: "CACHE_HIT"));
+
+        var blueprint = FlowBlueprint.Define<int, int>("MetricsTestFlow.Step.Fallback")
+            .Step("step_a", "m.fallback")
+            .Join<int>(
+                "final",
+                ctx =>
+                {
+                    Assert.True(ctx.TryGetNodeOutcome<int>("step_a", out var stepOutcome));
+                    Assert.True(stepOutcome.IsFallback);
+                    Assert.Equal(42, stepOutcome.Value);
+                    return new ValueTask<Outcome<int>>(Outcome<int>.Ok(stepOutcome.Value));
+                })
+            .Build();
+
+        var template = PlanCompiler.Compile(blueprint, catalog);
+        var engine = new ExecutionEngine(catalog);
+
+        var samples = new List<MetricSample>();
+        using var listener = CreateListener(samples, expectedFlowName: template.Name);
+        listener.Start();
+
+        var context = new FlowContext(services, CancellationToken.None, FutureDeadline);
+        var result = await engine.ExecuteAsync(template, request: 1, context);
+        Assert.True(result.IsOk);
+        Assert.Equal(42, result.Value);
+
+        AssertHasSingleSample(samples, StepOutcomeInstrumentName, out var stepOutcomeMetric);
+        AssertStepMetricTags(stepOutcomeMetric.Tags, template.Name, expectedModuleType: "m.fallback", expectedOutcomeKind: "fallback");
+        AssertNoSample(samples, StepSkipReasonInstrumentName);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Template_ShouldRecordFlowAndJoinOutcome_Fallback_WhenJoinReturnsFallback()
+    {
+        var services = new DummyServiceProvider();
+
+        var blueprint = FlowBlueprint.Define<int, int>("MetricsTestFlow.Join.Fallback")
+            .Join<int>("final", _ => new ValueTask<Outcome<int>>(Outcome<int>.Fallback(42, code: "DEGRADED")))
+            .Build();
+
+        var template = PlanCompiler.Compile(blueprint, new ModuleCatalog());
+        var engine = new ExecutionEngine(new ModuleCatalog());
+
+        var samples = new List<MetricSample>();
+        using var listener = CreateListener(samples, expectedFlowName: template.Name);
+        listener.Start();
+
+        var context = new FlowContext(services, CancellationToken.None, FutureDeadline);
+        var result = await engine.ExecuteAsync(template, request: 1, context);
+        Assert.True(result.IsFallback);
+        Assert.Equal(42, result.Value);
+        Assert.Equal("DEGRADED", result.Code);
+
+        AssertHasSingleSample(samples, FlowOutcomeInstrumentName, out var flowOutcome);
+        AssertFlowMetricTags(flowOutcome.Tags, template.Name, expectedOutcomeKind: "fallback");
+
+        AssertHasSingleSample(samples, JoinOutcomeInstrumentName, out var joinOutcome);
+        AssertJoinMetricTags(joinOutcome.Tags, template.Name, expectedOutcomeKind: "fallback");
+
+        AssertNoSample(samples, StepOutcomeInstrumentName);
+        AssertNoSample(samples, StepSkipReasonInstrumentName);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Template_ShouldEmitSkipReasonMetric_WhenOnlySkipReasonInstrumentIsEnabled()
     {
         var services = new DummyServiceProvider();
@@ -765,6 +835,23 @@ public sealed class ExecutionEnginePlanTemplateMetricsTests
         public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<int> context)
         {
             return new ValueTask<Outcome<int>>(Outcome<int>.Skipped(_code));
+        }
+    }
+
+    private sealed class FallbackModule : IModule<int, int>
+    {
+        private readonly int _value;
+        private readonly string _code;
+
+        public FallbackModule(int value, string code)
+        {
+            _value = value;
+            _code = code;
+        }
+
+        public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<int> context)
+        {
+            return new ValueTask<Outcome<int>>(Outcome<int>.Fallback(_value, _code));
         }
     }
 }

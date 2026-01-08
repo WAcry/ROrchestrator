@@ -5,7 +5,7 @@ namespace ROrchestrator.Core.Observability;
 
 internal static class FlowActivitySource
 {
-    internal const string ActivitySourceName = "ROrchestrator.Core";
+    internal const string ActivitySourceName = "ROrchestrator";
 
     internal const string PlanHashFormat = "X16";
 
