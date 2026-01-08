@@ -548,6 +548,65 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
+    public void ValidatePatchJson_ShouldReportModuleArgsUnknownField_WhenModuleWithContainsUnknownField()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgsWithMaxCandidate, int>("test.module", _ => new TestModuleWithMaxCandidateArgs());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{\"MaxCandidate\":10,\"Unknown\":123}}]}}}}}");
+
+        Assert.False(report.IsValid);
+        Assert.Single(report.Findings);
+
+        var finding = GetSingleFinding(report, "CFG_MODULE_ARGS_UNKNOWN_FIELD");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].with.Unknown", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenModuleArgsTypeIsJsonElement()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<JsonElement, int>("test.module", _ => new TestJsonElementModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{\"Unknown\":123}}]}}}}}");
+
+        Assert.True(report.IsValid);
+        AssertNoFinding(report, "CFG_MODULE_ARGS_UNKNOWN_FIELD");
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenModuleArgsTypeIsDictionary()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<IDictionary<string, object>, int>("test.module", _ => new TestDictionaryModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{\"Unknown\":123}}]}}}}}");
+
+        Assert.True(report.IsValid);
+        AssertNoFinding(report, "CFG_MODULE_ARGS_UNKNOWN_FIELD");
+    }
+
+    [Fact]
     public void ValidatePatchJson_ShouldReportModuleIdInvalidFormat_WhenModuleIdIsInvalid()
     {
         var registry = new FlowRegistry();
@@ -736,6 +795,26 @@ public sealed class ConfigValidatorTests
         return found;
     }
 
+    private static void AssertNoFinding(ValidationReport report, string code)
+    {
+        if (report is null)
+        {
+            throw new ArgumentNullException(nameof(report));
+        }
+
+        if (string.IsNullOrEmpty(code))
+        {
+            throw new ArgumentException("Code must be non-empty.", nameof(code));
+        }
+
+        var findings = report.Findings;
+
+        for (var i = 0; i < findings.Count; i++)
+        {
+            Assert.NotEqual(code, findings[i].Code);
+        }
+    }
+
     private static FlowBlueprint<TReq, TResp> CreateBlueprint<TReq, TResp>(string name, TResp okValue)
     {
         return FlowBlueprint.Define<TReq, TResp>(name)
@@ -822,6 +901,22 @@ public sealed class ConfigValidatorTests
     private sealed class TestModuleWithMaxCandidateArgs : IModule<ModuleArgsWithMaxCandidate, int>
     {
         public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<ModuleArgsWithMaxCandidate> context)
+        {
+            return new ValueTask<Outcome<int>>(Outcome<int>.Ok(0));
+        }
+    }
+
+    private sealed class TestJsonElementModule : IModule<JsonElement, int>
+    {
+        public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<JsonElement> context)
+        {
+            return new ValueTask<Outcome<int>>(Outcome<int>.Ok(0));
+        }
+    }
+
+    private sealed class TestDictionaryModule : IModule<IDictionary<string, object>, int>
+    {
+        public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<IDictionary<string, object>> context)
         {
             return new ValueTask<Outcome<int>>(Outcome<int>.Ok(0));
         }

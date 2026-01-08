@@ -27,6 +27,7 @@ public sealed class ConfigValidator
     private const string CodeModuleTypeNotRegistered = "CFG_MODULE_TYPE_NOT_REGISTERED";
     private const string CodeModuleArgsMissing = "CFG_MODULE_ARGS_MISSING";
     private const string CodeModuleArgsBindFailed = "CFG_MODULE_ARGS_BIND_FAILED";
+    private const string CodeModuleArgsUnknownField = "CFG_MODULE_ARGS_UNKNOWN_FIELD";
     private const string CodeExperimentMappingInvalid = "CFG_EXPERIMENT_MAPPING_INVALID";
     private const string CodeExperimentMappingDuplicate = "CFG_EXPERIMENT_MAPPING_DUPLICATE";
     private const string CodeExperimentPatchInvalid = "CFG_EXPERIMENT_PATCH_INVALID";
@@ -926,6 +927,28 @@ public sealed class ConfigValidator
             }
             else if (moduleArgsType is not null)
             {
+                if (moduleWith.ValueKind == JsonValueKind.Object && ShouldValidateUnknownFields(moduleArgsType))
+                {
+                    var knownFieldNameSet = BuildJsonPropertyNameSet(moduleArgsType);
+
+                    foreach (var property in moduleWith.EnumerateObject())
+                    {
+                        var name = property.Name;
+
+                        if (NameSetContains(knownFieldNameSet, name))
+                        {
+                            continue;
+                        }
+
+                        findings.Add(
+                            new ValidationFinding(
+                                ValidationSeverity.Error,
+                                code: CodeModuleArgsUnknownField,
+                                path: string.Concat(moduleWithPath, ".", name),
+                                message: string.Concat("Unknown module args field: ", name)));
+                    }
+                }
+
                 try
                 {
                     _ = moduleWith.Deserialize(moduleArgsType);
@@ -975,6 +998,63 @@ public sealed class ConfigValidator
 
             index++;
         }
+    }
+
+    private static bool ShouldValidateUnknownFields(Type type)
+    {
+        if (type == typeof(JsonElement) || type == typeof(JsonDocument))
+        {
+            return false;
+        }
+
+        if (type == typeof(object))
+        {
+            return false;
+        }
+
+        if (typeof(System.Text.Json.Nodes.JsonNode).IsAssignableFrom(type))
+        {
+            return false;
+        }
+
+        if (typeof(System.Collections.IDictionary).IsAssignableFrom(type))
+        {
+            return false;
+        }
+
+        if (IsAssignableToGenericDictionary(type, typeof(System.Collections.Generic.IDictionary<,>)))
+        {
+            return false;
+        }
+
+        if (IsAssignableToGenericDictionary(type, typeof(System.Collections.Generic.IReadOnlyDictionary<,>)))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsAssignableToGenericDictionary(Type type, Type openGenericType)
+    {
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == openGenericType)
+        {
+            return true;
+        }
+
+        var interfaces = type.GetInterfaces();
+
+        for (var i = 0; i < interfaces.Length; i++)
+        {
+            var candidate = interfaces[i];
+
+            if (candidate.IsGenericType && candidate.GetGenericTypeDefinition() == openGenericType)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsValidModuleIdFormat(string moduleId)
