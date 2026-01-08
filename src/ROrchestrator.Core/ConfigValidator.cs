@@ -11,7 +11,11 @@ public sealed class ConfigValidator
     private const string CodeParseError = "CFG_PARSE_ERROR";
     private const string CodeSchemaVersionUnsupported = "CFG_SCHEMA_VERSION_UNSUPPORTED";
     private const string CodeUnknownField = "CFG_UNKNOWN_FIELD";
+    private const string CodeFlowsNotObject = "CFG_FLOWS_NOT_OBJECT";
+    private const string CodeFlowPatchNotObject = "CFG_FLOW_PATCH_NOT_OBJECT";
     private const string CodeFlowNotRegistered = "CFG_FLOW_NOT_REGISTERED";
+    private const string CodeStagesNotObject = "CFG_STAGES_NOT_OBJECT";
+    private const string CodeStagePatchNotObject = "CFG_STAGE_PATCH_NOT_OBJECT";
     private const string CodeStageNotInBlueprint = "CFG_STAGE_NOT_IN_BLUEPRINT";
     private const string CodeParamsBindFailed = "CFG_PARAMS_BIND_FAILED";
     private const string CodeParamsUnknownField = "CFG_PARAMS_UNKNOWN_FIELD";
@@ -113,7 +117,16 @@ public sealed class ConfigValidator
                 findings.Add(CreateSchemaVersionUnsupportedFinding());
             }
 
-            if (hasFlows && flowsElement.ValueKind == JsonValueKind.Object)
+            if (hasFlows && flowsElement.ValueKind != JsonValueKind.Object)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeFlowsNotObject,
+                        path: "$.flows",
+                        message: "flows must be an object."));
+            }
+            else if (hasFlows && flowsElement.ValueKind == JsonValueKind.Object)
             {
                 foreach (var flowProperty in flowsElement.EnumerateObject())
                 {
@@ -137,25 +150,43 @@ public sealed class ConfigValidator
                                 message: string.Concat("Flow is not registered: ", flowName)));
                     }
 
-                    if (flowProperty.Value.ValueKind == JsonValueKind.Object)
+                    if (flowProperty.Value.ValueKind != JsonValueKind.Object)
                     {
-                        ValidateFlowPatchTopLevelFields(
-                            flowName,
-                            flowProperty.Value,
-                            ref findings,
-                            out var stagesPatch,
-                            out var paramsPatch,
-                            out var hasParamsPatch);
+                        findings.Add(
+                            new ValidationFinding(
+                                ValidationSeverity.Error,
+                                code: CodeFlowPatchNotObject,
+                                path: string.Concat("$.flows.", flowName),
+                                message: "Flow patch must be an object."));
+                        continue;
+                    }
 
-                        if (flowRegistered)
-                        {
-                            ValidateFlowParamsPatch(flowName, hasParamsPatch, paramsPatch, patchType, ref findings);
+                    ValidateFlowPatchTopLevelFields(
+                        flowName,
+                        flowProperty.Value,
+                        ref findings,
+                        out var hasStagesPatch,
+                        out var stagesPatch,
+                        out var paramsPatch,
+                        out var hasParamsPatch);
 
-                            if (stagesPatch.ValueKind == JsonValueKind.Object)
-                            {
-                                ValidateStagePatches(flowName, stagesPatch, blueprintStageNameSet, _moduleCatalog, ref findings);
-                            }
-                        }
+                    if (flowRegistered)
+                    {
+                        ValidateFlowParamsPatch(flowName, hasParamsPatch, paramsPatch, patchType, ref findings);
+                    }
+
+                    if (hasStagesPatch && stagesPatch.ValueKind != JsonValueKind.Object)
+                    {
+                        findings.Add(
+                            new ValidationFinding(
+                                ValidationSeverity.Error,
+                                code: CodeStagesNotObject,
+                                path: string.Concat("$.flows.", flowName, ".stages"),
+                                message: "stages must be an object."));
+                    }
+                    else if (flowRegistered && stagesPatch.ValueKind == JsonValueKind.Object)
+                    {
+                        ValidateStagePatches(flowName, stagesPatch, blueprintStageNameSet, _moduleCatalog, ref findings);
                     }
                 }
             }
@@ -168,10 +199,12 @@ public sealed class ConfigValidator
         string flowName,
         JsonElement flowPatch,
         ref FindingBuffer findings,
+        out bool hasStagesPatch,
         out JsonElement stagesPatch,
         out JsonElement paramsPatch,
         out bool hasParamsPatch)
     {
+        hasStagesPatch = false;
         stagesPatch = default;
         paramsPatch = default;
         hasParamsPatch = false;
@@ -193,6 +226,7 @@ public sealed class ConfigValidator
 
             if (flowField.NameEquals("stages"))
             {
+                hasStagesPatch = true;
                 stagesPatch = flowField.Value;
                 continue;
             }
@@ -326,8 +360,9 @@ public sealed class ConfigValidator
         foreach (var stageProperty in stagesPatch.EnumerateObject())
         {
             var stageName = stageProperty.Name;
+            var stageNameInBlueprint = StageNameSetContains(blueprintStageNameSet, stageName);
 
-            if (!StageNameSetContains(blueprintStageNameSet, stageName))
+            if (!stageNameInBlueprint)
             {
                 findings.Add(
                     new ValidationFinding(
@@ -335,10 +370,20 @@ public sealed class ConfigValidator
                         code: CodeStageNotInBlueprint,
                         path: string.Concat("$.flows.", flowName, ".stages.", stageName),
                         message: string.Concat("Stage is not in blueprint: ", stageName)));
-                continue;
             }
 
             if (stageProperty.Value.ValueKind != JsonValueKind.Object)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeStagePatchNotObject,
+                        path: string.Concat("$.flows.", flowName, ".stages.", stageName),
+                        message: "Stage patch must be an object."));
+                continue;
+            }
+
+            if (!stageNameInBlueprint)
             {
                 continue;
             }
@@ -363,7 +408,16 @@ public sealed class ConfigValidator
             {
                 hasModules = true;
                 modulesPatch = stageField.Value;
+                continue;
             }
+
+            var fieldName = stageField.Name;
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeUnknownField,
+                    path: string.Concat("$.flows.", flowName, ".stages.", stageName, ".", fieldName),
+                    message: string.Concat("Unknown field: ", fieldName)));
         }
 
         if (!hasModules)
@@ -440,6 +494,19 @@ public sealed class ConfigValidator
 
                     continue;
                 }
+
+                var fieldName = moduleField.Name;
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeUnknownField,
+                        path: string.Concat(
+                            modulesPathPrefix,
+                            "[",
+                            index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            "].",
+                            fieldName),
+                        message: string.Concat("Unknown field: ", fieldName)));
             }
 
             if (string.IsNullOrEmpty(moduleId))

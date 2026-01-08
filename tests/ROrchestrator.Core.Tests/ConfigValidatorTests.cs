@@ -51,6 +51,20 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
+    public void ValidatePatchJson_ShouldReportFlowsNotObject_WhenFlowsIsNotObject()
+    {
+        var registry = new FlowRegistry();
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson("{\"schemaVersion\":\"v1\",\"flows\":123}");
+
+        var finding = GetSingleFinding(report, "CFG_FLOWS_NOT_OBJECT");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows", finding.Path);
+    }
+
+    [Fact]
     public void ValidatePatchJson_ShouldReportFlowNotRegistered_WhenFlowIsNotInRegistry()
     {
         var registry = new FlowRegistry();
@@ -64,6 +78,22 @@ public sealed class ConfigValidatorTests
         var finding = GetSingleFinding(report, "CFG_FLOW_NOT_REGISTERED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
         Assert.Equal("$.flows.NotAFlow", finding.Path);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportFlowPatchNotObject_WhenFlowPatchIsNotObject()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprint<int, int>("TestFlow", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson("{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":123}}");
+
+        var finding = GetSingleFinding(report, "CFG_FLOW_PATCH_NOT_OBJECT");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed", finding.Path);
     }
 
     [Fact]
@@ -83,6 +113,54 @@ public sealed class ConfigValidatorTests
         var finding = GetSingleFinding(report, "CFG_STAGE_NOT_IN_BLUEPRINT");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
         Assert.Equal("$.flows.HomeFeed.stages.s2", finding.Path);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportStagesNotObject_WhenStagesIsNotObject()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson("{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":123}}}");
+
+        var finding = GetSingleFinding(report, "CFG_STAGES_NOT_OBJECT");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages", finding.Path);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportStagePatchNotObject_WhenStagePatchIsNotObject()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson("{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":123}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_STAGE_PATCH_NOT_OBJECT");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1", finding.Path);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportUnknownField_WhenStagePatchContainsUnknownField()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson("{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"unknown\":123}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_UNKNOWN_FIELD");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.unknown", finding.Path);
     }
 
     [Fact]
@@ -393,6 +471,26 @@ public sealed class ConfigValidatorTests
         var finding = GetSingleFinding(report, "CFG_MODULE_TYPE_NOT_REGISTERED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
         Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].use", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportUnknownField_WhenModulePatchContainsUnknownField()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"unknown\":123}]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_UNKNOWN_FIELD");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].unknown", finding.Path);
         Assert.False(string.IsNullOrEmpty(finding.Message));
     }
 
