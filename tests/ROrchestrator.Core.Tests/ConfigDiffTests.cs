@@ -79,7 +79,62 @@ public sealed class ConfigDiffTests
         Assert.Equal("HomeFeed", diff.FlowName);
         Assert.Equal("s1", diff.StageName);
         Assert.Equal("m1", diff.ModuleId);
-        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].with", diff.Path);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].with.a.b", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportWithAddedRemovedAndChanged_WhenModuleWithFieldsChange()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"a\":1,\"b\":2}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"b\":3,\"c\":4}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        Assert.Equal(3, report.Diffs.Count);
+
+        var removed = report.Diffs[0];
+        Assert.Equal(PatchModuleDiffKind.WithRemoved, removed.Kind);
+        Assert.Equal("HomeFeed", removed.FlowName);
+        Assert.Null(removed.ExperimentLayer);
+        Assert.Null(removed.ExperimentVariant);
+        Assert.Equal("s1", removed.StageName);
+        Assert.Equal("m1", removed.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].with.a", removed.Path);
+
+        var changed = report.Diffs[1];
+        Assert.Equal(PatchModuleDiffKind.WithChanged, changed.Kind);
+        Assert.Equal("HomeFeed", changed.FlowName);
+        Assert.Null(changed.ExperimentLayer);
+        Assert.Null(changed.ExperimentVariant);
+        Assert.Equal("s1", changed.StageName);
+        Assert.Equal("m1", changed.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].with.b", changed.Path);
+
+        var added = report.Diffs[2];
+        Assert.Equal(PatchModuleDiffKind.WithAdded, added.Kind);
+        Assert.Equal("HomeFeed", added.FlowName);
+        Assert.Null(added.ExperimentLayer);
+        Assert.Null(added.ExperimentVariant);
+        Assert.Equal("s1", added.StageName);
+        Assert.Equal("m1", added.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].with.c", added.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldBeEmpty_WhenOnlyWithPropertyOrderChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"a\":1,\"b\":2,\"c\":{\"d\":3,\"e\":4}}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"c\":{\"e\":4,\"d\":3},\"b\":2,\"a\":1}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        Assert.Empty(report.Diffs);
     }
 
     [Fact]
@@ -147,6 +202,61 @@ public sealed class ConfigDiffTests
         Assert.Equal("s1", diff.StageName);
         Assert.Equal("m1", diff.ModuleId);
         Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].use", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportWithAddedRemovedAndChanged_WhenExperimentPatchModuleWithFieldsChange()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"a\":1,\"b\":{\"x\":1}}}]}}}}]}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"b\":{\"x\":2},\"c\":4}}]}}}}]}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        Assert.Equal(3, report.Diffs.Count);
+
+        var removed = report.Diffs[0];
+        Assert.Equal(PatchModuleDiffKind.WithRemoved, removed.Kind);
+        Assert.Equal("HomeFeed", removed.FlowName);
+        Assert.Equal("l1", removed.ExperimentLayer);
+        Assert.Equal("v1", removed.ExperimentVariant);
+        Assert.Equal("s1", removed.StageName);
+        Assert.Equal("m1", removed.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].with.a", removed.Path);
+
+        var changed = report.Diffs[1];
+        Assert.Equal(PatchModuleDiffKind.WithChanged, changed.Kind);
+        Assert.Equal("HomeFeed", changed.FlowName);
+        Assert.Equal("l1", changed.ExperimentLayer);
+        Assert.Equal("v1", changed.ExperimentVariant);
+        Assert.Equal("s1", changed.StageName);
+        Assert.Equal("m1", changed.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].with.b.x", changed.Path);
+
+        var added = report.Diffs[2];
+        Assert.Equal(PatchModuleDiffKind.WithAdded, added.Kind);
+        Assert.Equal("HomeFeed", added.FlowName);
+        Assert.Equal("l1", added.ExperimentLayer);
+        Assert.Equal("v1", added.ExperimentVariant);
+        Assert.Equal("s1", added.StageName);
+        Assert.Equal("m1", added.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].with.c", added.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldBeEmpty_WhenOnlyExperimentPatchWithPropertyOrderChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"a\":1,\"b\":2,\"c\":{\"d\":3,\"e\":4}}}]}}}}]}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"c\":{\"e\":4,\"d\":3},\"b\":2,\"a\":1}}]}}}}]}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        Assert.Empty(report.Diffs);
     }
 
     [Fact]

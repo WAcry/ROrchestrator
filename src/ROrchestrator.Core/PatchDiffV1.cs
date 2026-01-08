@@ -82,28 +82,29 @@ public static class PatchDiffV1
                             continue;
                         }
 
-                        if (!string.Equals(oldModule.Use, newModule.Use, StringComparison.Ordinal))
-                        {
-                            buffer.Add(
-                                PatchModuleDiff.CreateUseChanged(
-                                    key.FlowName,
-                                    key.StageName,
-                                    key.ModuleId,
-                                    string.Concat(BuildModulePath(key.FlowName, key.StageName, newModule.Index, newModule.ExperimentIndex), ".use"),
-                                    key.ExperimentLayer,
-                                    key.ExperimentVariant));
-                        }
+                        var isUseChanged = !string.Equals(oldModule.Use, newModule.Use, StringComparison.Ordinal);
+                        var isWithChanged = !JsonElementDeepEquals(oldModule.With, newModule.With);
 
-                        if (!JsonElementDeepEquals(oldModule.With, newModule.With))
+                        if (isUseChanged || isWithChanged)
                         {
-                            buffer.Add(
-                                PatchModuleDiff.CreateWithChanged(
-                                    key.FlowName,
-                                    key.StageName,
-                                    key.ModuleId,
-                                    string.Concat(BuildModulePath(key.FlowName, key.StageName, newModule.Index, newModule.ExperimentIndex), ".with"),
-                                    key.ExperimentLayer,
-                                    key.ExperimentVariant));
+                            var modulePath = BuildModulePath(key.FlowName, key.StageName, newModule.Index, newModule.ExperimentIndex);
+
+                            if (isUseChanged)
+                            {
+                                buffer.Add(
+                                    PatchModuleDiff.CreateUseChanged(
+                                        key.FlowName,
+                                        key.StageName,
+                                        key.ModuleId,
+                                        string.Concat(modulePath, ".use"),
+                                        key.ExperimentLayer,
+                                        key.ExperimentVariant));
+                            }
+
+                            if (isWithChanged)
+                            {
+                                DiffWithValuesKnownDifferent(key, string.Concat(modulePath, ".with"), oldModule.With, newModule.With, ref buffer);
+                            }
                         }
                     }
                 }
@@ -631,6 +632,168 @@ public static class PatchDiffV1
         }
     }
 
+    private static void DiffWithValuesKnownDifferent(
+        ModuleKey key,
+        string pathPrefix,
+        JsonElement oldValue,
+        JsonElement newValue,
+        ref ModuleDiffBuffer buffer)
+    {
+        if (oldValue.ValueKind == JsonValueKind.Object && newValue.ValueKind == JsonValueKind.Object)
+        {
+            DiffWithObjects(key, pathPrefix, oldValue, newValue, ref buffer);
+            return;
+        }
+
+        if (oldValue.ValueKind == JsonValueKind.Array && newValue.ValueKind == JsonValueKind.Array)
+        {
+            DiffWithArrays(key, pathPrefix, oldValue, newValue, ref buffer);
+            return;
+        }
+
+        buffer.Add(
+            PatchModuleDiff.CreateWithChanged(
+                key.FlowName,
+                key.StageName,
+                key.ModuleId,
+                pathPrefix,
+                key.ExperimentLayer,
+                key.ExperimentVariant));
+    }
+
+    private static void DiffWithObjects(
+        ModuleKey key,
+        string pathPrefix,
+        JsonElement oldObject,
+        JsonElement newObject,
+        ref ModuleDiffBuffer buffer)
+    {
+        foreach (var oldProperty in oldObject.EnumerateObject())
+        {
+            var name = oldProperty.Name;
+            var oldValue = oldProperty.Value;
+
+            if (!newObject.TryGetProperty(name, out var newValue))
+            {
+                buffer.Add(
+                    PatchModuleDiff.CreateWithRemoved(
+                        key.FlowName,
+                        key.StageName,
+                        key.ModuleId,
+                        string.Concat(pathPrefix, ".", name),
+                        key.ExperimentLayer,
+                        key.ExperimentVariant));
+                continue;
+            }
+
+            if (JsonElementDeepEquals(oldValue, newValue))
+            {
+                continue;
+            }
+
+            DiffWithValuesKnownDifferent(key, string.Concat(pathPrefix, ".", name), oldValue, newValue, ref buffer);
+        }
+
+        foreach (var newProperty in newObject.EnumerateObject())
+        {
+            var name = newProperty.Name;
+
+            if (oldObject.TryGetProperty(name, out _))
+            {
+                continue;
+            }
+
+            buffer.Add(
+                PatchModuleDiff.CreateWithAdded(
+                    key.FlowName,
+                    key.StageName,
+                    key.ModuleId,
+                    string.Concat(pathPrefix, ".", name),
+                    key.ExperimentLayer,
+                    key.ExperimentVariant));
+        }
+    }
+
+    private static void DiffWithArrays(
+        ModuleKey key,
+        string pathPrefix,
+        JsonElement oldArray,
+        JsonElement newArray,
+        ref ModuleDiffBuffer buffer)
+    {
+        var oldLength = oldArray.GetArrayLength();
+        var newLength = newArray.GetArrayLength();
+        var commonLength = oldLength < newLength ? oldLength : newLength;
+
+        var oldEnumerator = oldArray.EnumerateArray();
+        var newEnumerator = newArray.EnumerateArray();
+
+        var index = 0;
+
+        while (index < commonLength)
+        {
+            if (!oldEnumerator.MoveNext() || !newEnumerator.MoveNext())
+            {
+                break;
+            }
+
+            var oldValue = oldEnumerator.Current;
+            var newValue = newEnumerator.Current;
+
+            if (!JsonElementDeepEquals(oldValue, newValue))
+            {
+                DiffWithValuesKnownDifferent(
+                    key,
+                    string.Concat(pathPrefix, "[", index.ToString(CultureInfo.InvariantCulture), "]"),
+                    oldValue,
+                    newValue,
+                    ref buffer);
+            }
+
+            index++;
+        }
+
+        while (index < oldLength)
+        {
+            if (!oldEnumerator.MoveNext())
+            {
+                break;
+            }
+
+            buffer.Add(
+                PatchModuleDiff.CreateWithRemoved(
+                    key.FlowName,
+                    key.StageName,
+                    key.ModuleId,
+                    string.Concat(pathPrefix, "[", index.ToString(CultureInfo.InvariantCulture), "]"),
+                    key.ExperimentLayer,
+                    key.ExperimentVariant));
+
+            index++;
+        }
+
+        index = commonLength;
+
+        while (index < newLength)
+        {
+            if (!newEnumerator.MoveNext())
+            {
+                break;
+            }
+
+            buffer.Add(
+                PatchModuleDiff.CreateWithAdded(
+                    key.FlowName,
+                    key.StageName,
+                    key.ModuleId,
+                    string.Concat(pathPrefix, "[", index.ToString(CultureInfo.InvariantCulture), "]"),
+                    key.ExperimentLayer,
+                    key.ExperimentVariant));
+
+            index++;
+        }
+    }
+
     private static void CollectFlowModules(
         string flowName,
         JsonElement flowPatch,
@@ -1076,6 +1239,12 @@ public static class PatchDiffV1
                 return c;
             }
 
+            c = string.CompareOrdinal(x.Path, y.Path);
+            if (c != 0)
+            {
+                return c;
+            }
+
             return ((int)x.Kind).CompareTo((int)y.Kind);
         }
     }
@@ -1135,6 +1304,8 @@ public enum PatchModuleDiffKind
     Removed = 2,
     UseChanged = 3,
     WithChanged = 4,
+    WithAdded = 5,
+    WithRemoved = 6,
 }
 
 public readonly struct PatchModuleDiff
@@ -1213,6 +1384,28 @@ public readonly struct PatchModuleDiff
         string? experimentVariant = null)
     {
         return new PatchModuleDiff(PatchModuleDiffKind.WithChanged, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
+    }
+
+    internal static PatchModuleDiff CreateWithAdded(
+        string flowName,
+        string stageName,
+        string moduleId,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchModuleDiff(PatchModuleDiffKind.WithAdded, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
+    }
+
+    internal static PatchModuleDiff CreateWithRemoved(
+        string flowName,
+        string stageName,
+        string moduleId,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchModuleDiff(PatchModuleDiffKind.WithRemoved, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
     }
 }
 
