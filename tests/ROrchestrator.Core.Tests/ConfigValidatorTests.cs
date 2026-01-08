@@ -331,9 +331,78 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\"}]}}}}}");
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}}");
 
         Assert.True(report.IsValid);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportModuleArgsMissing_WhenModuleWithIsMissing()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\"}]}}}}}");
+
+        Assert.False(report.IsValid);
+        Assert.Single(report.Findings);
+
+        var finding = GetSingleFinding(report, "CFG_MODULE_ARGS_MISSING");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].with", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportModuleArgsMissing_WhenModuleWithIsNull()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":null}]}}}}}");
+
+        Assert.False(report.IsValid);
+        Assert.Single(report.Findings);
+
+        var finding = GetSingleFinding(report, "CFG_MODULE_ARGS_MISSING");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].with", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportModuleArgsBindFailed_WhenModuleWithCannotBind()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgsWithMaxCandidate, int>("test.module", _ => new TestModuleWithMaxCandidateArgs());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{\"MaxCandidate\":\"oops\"}}]}}}}}");
+
+        Assert.False(report.IsValid);
+        Assert.Single(report.Findings);
+
+        var finding = GetSingleFinding(report, "CFG_MODULE_ARGS_BIND_FAILED");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].with.MaxCandidate", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
     }
 
     [Fact]
@@ -348,7 +417,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"M1\",\"use\":\"test.module\"}]}}}}}");
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"M1\",\"use\":\"test.module\",\"with\":{}}]}}}}}");
 
         Assert.True(report.IsValid);
         Assert.Single(report.Findings);
@@ -391,7 +460,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"use\":\"test.module\"}]}}}}}");
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"use\":\"test.module\",\"with\":{}}]}}}}}");
 
         var finding = GetSingleFinding(report, "CFG_MODULE_ID_MISSING");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -411,7 +480,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\"},{\"id\":\"m1\",\"use\":\"test.module\"}]}}}}}");
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}},{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}}");
 
         var pathsFound = 0;
         var findings = report.Findings;
@@ -446,7 +515,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\"}]}}}}}");
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"with\":{}}]}}}}}");
 
         var finding = GetSingleFinding(report, "CFG_MODULE_TYPE_MISSING");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -466,7 +535,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"not.registered\"}]}}}}}");
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"not.registered\",\"with\":{}}]}}}}}");
 
         var finding = GetSingleFinding(report, "CFG_MODULE_TYPE_NOT_REGISTERED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -486,7 +555,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"unknown\":123}]}}}}}");
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"unknown\":123}]}}}}}");
 
         var finding = GetSingleFinding(report, "CFG_UNKNOWN_FIELD");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -595,9 +664,22 @@ public sealed class ConfigValidatorTests
     {
     }
 
+    private sealed class ModuleArgsWithMaxCandidate
+    {
+        public int MaxCandidate { get; set; }
+    }
+
     private sealed class TestModule : IModule<ModuleArgs, int>
     {
         public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<ModuleArgs> context)
+        {
+            return new ValueTask<Outcome<int>>(Outcome<int>.Ok(0));
+        }
+    }
+
+    private sealed class TestModuleWithMaxCandidateArgs : IModule<ModuleArgsWithMaxCandidate, int>
+    {
+        public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<ModuleArgsWithMaxCandidate> context)
         {
             return new ValueTask<Outcome<int>>(Outcome<int>.Ok(0));
         }

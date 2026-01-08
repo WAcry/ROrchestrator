@@ -25,6 +25,8 @@ public sealed class ConfigValidator
     private const string CodeModuleIdInvalidFormat = "CFG_MODULE_ID_INVALID_FORMAT";
     private const string CodeModuleTypeMissing = "CFG_MODULE_TYPE_MISSING";
     private const string CodeModuleTypeNotRegistered = "CFG_MODULE_TYPE_NOT_REGISTERED";
+    private const string CodeModuleArgsMissing = "CFG_MODULE_ARGS_MISSING";
+    private const string CodeModuleArgsBindFailed = "CFG_MODULE_ARGS_BIND_FAILED";
 
     private readonly FlowRegistry _flowRegistry;
     private readonly ModuleCatalog _moduleCatalog;
@@ -472,6 +474,8 @@ public sealed class ConfigValidator
 
             string? moduleId = null;
             string? moduleUse = null;
+            var hasModuleWith = false;
+            JsonElement moduleWith = default;
 
             foreach (var moduleField in modulePatch.EnumerateObject())
             {
@@ -492,6 +496,13 @@ public sealed class ConfigValidator
                         moduleUse = moduleField.Value.GetString();
                     }
 
+                    continue;
+                }
+
+                if (moduleField.NameEquals("with"))
+                {
+                    hasModuleWith = true;
+                    moduleWith = moduleField.Value;
                     continue;
                 }
 
@@ -565,6 +576,8 @@ public sealed class ConfigValidator
                 }
             }
 
+            var moduleArgsType = (Type?)null;
+
             if (string.IsNullOrEmpty(moduleUse))
             {
                 findings.Add(
@@ -576,7 +589,7 @@ public sealed class ConfigValidator
             }
             else
             {
-                if (!moduleCatalog.TryGetSignature(moduleUse, out _, out _))
+                if (!moduleCatalog.TryGetSignature(moduleUse, out var argsType, out _))
                 {
                     findings.Add(
                         new ValidationFinding(
@@ -584,6 +597,70 @@ public sealed class ConfigValidator
                             code: CodeModuleTypeNotRegistered,
                             path: string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].use"),
                             message: string.Concat("Module type is not registered: ", moduleUse)));
+                }
+                else
+                {
+                    moduleArgsType = argsType;
+                }
+            }
+
+            var moduleWithPath = string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].with");
+
+            if (!hasModuleWith || moduleWith.ValueKind == JsonValueKind.Null)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeModuleArgsMissing,
+                        path: moduleWithPath,
+                        message: "modules[].with is required."));
+            }
+            else if (moduleArgsType is not null)
+            {
+                try
+                {
+                    _ = moduleWith.Deserialize(moduleArgsType);
+                }
+                catch (JsonException ex)
+                {
+                    var path = BuildParamsBindFailedPath(moduleWithPath, ex.Path);
+
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Error,
+                            code: CodeModuleArgsBindFailed,
+                            path: path,
+                            message: ex.Message));
+                }
+                catch (NotSupportedException ex)
+                {
+                    var message = ex.Message;
+                    if (string.IsNullOrEmpty(message))
+                    {
+                        message = "module args binding is not supported.";
+                    }
+
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Error,
+                            code: CodeModuleArgsBindFailed,
+                            path: moduleWithPath,
+                            message: message));
+                }
+                catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
+                {
+                    var message = ex.Message;
+                    if (string.IsNullOrEmpty(message))
+                    {
+                        message = "module args binding failed.";
+                    }
+
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Error,
+                            code: CodeModuleArgsBindFailed,
+                            path: moduleWithPath,
+                            message: message));
                 }
             }
 
