@@ -221,4 +221,118 @@ public sealed class ConfigDiffTests
     {
         Assert.Throws<NotSupportedException>(() => PatchDiffV1.DiffModules("{\"schemaVersion\":\"v999\",\"flows\":{}}", "{"));
     }
+
+    [Fact]
+    public void DiffParams_ShouldReportAddedRemovedAndChanged_WhenParamsFieldsChange()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"a\":1,\"b\":2}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"b\":3,\"c\":4}}}}";
+
+        var report = PatchDiffV1.DiffParams(oldPatchJson, newPatchJson);
+
+        Assert.Equal(3, report.Diffs.Count);
+
+        var removed = report.Diffs[0];
+        Assert.Equal(PatchParamDiffKind.Removed, removed.Kind);
+        Assert.Equal("HomeFeed", removed.FlowName);
+        Assert.Null(removed.ExperimentLayer);
+        Assert.Null(removed.ExperimentVariant);
+        Assert.Equal("$.flows.HomeFeed.params.a", removed.Path);
+
+        var changed = report.Diffs[1];
+        Assert.Equal(PatchParamDiffKind.Changed, changed.Kind);
+        Assert.Equal("HomeFeed", changed.FlowName);
+        Assert.Null(changed.ExperimentLayer);
+        Assert.Null(changed.ExperimentVariant);
+        Assert.Equal("$.flows.HomeFeed.params.b", changed.Path);
+
+        var added = report.Diffs[2];
+        Assert.Equal(PatchParamDiffKind.Added, added.Kind);
+        Assert.Equal("HomeFeed", added.FlowName);
+        Assert.Null(added.ExperimentLayer);
+        Assert.Null(added.ExperimentVariant);
+        Assert.Equal("$.flows.HomeFeed.params.c", added.Path);
+    }
+
+    [Fact]
+    public void DiffParams_ShouldReportChanged_WhenNestedParamFieldChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"a\":{\"b\":1,\"c\":2}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"a\":{\"b\":2,\"c\":2}}}}}";
+
+        var report = PatchDiffV1.DiffParams(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchParamDiffKind.Changed, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("$.flows.HomeFeed.params.a.b", diff.Path);
+    }
+
+    [Fact]
+    public void DiffParams_ShouldBeEmpty_WhenOnlyParamPropertyOrderChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"a\":1,\"b\":2,\"c\":{\"d\":3,\"e\":4}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"c\":{\"e\":4,\"d\":3},\"b\":2,\"a\":1}}}}";
+
+        var report = PatchDiffV1.DiffParams(oldPatchJson, newPatchJson);
+
+        Assert.Empty(report.Diffs);
+    }
+
+    [Fact]
+    public void DiffParams_ShouldReportChanged_WhenExperimentPatchParamChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"params\":{\"a\":1}}}]}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"params\":{\"a\":2}}}]}}}";
+
+        var report = PatchDiffV1.DiffParams(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchParamDiffKind.Changed, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("l1", diff.ExperimentLayer);
+        Assert.Equal("v1", diff.ExperimentVariant);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.params.a", diff.Path);
+    }
+
+    [Fact]
+    public void DiffParams_ShouldThrow_WhenJsonIsInvalid()
+    {
+        var validPatchJson = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
+        Assert.Throws<FormatException>(() => PatchDiffV1.DiffParams("{", validPatchJson));
+    }
+
+    [Fact]
+    public void DiffParams_ShouldThrow_WhenNewJsonIsInvalid()
+    {
+        var validPatchJson = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
+        Assert.Throws<FormatException>(() => PatchDiffV1.DiffParams(validPatchJson, "{"));
+    }
+
+    [Fact]
+    public void DiffParams_ShouldThrow_WhenSchemaVersionIsUnsupported()
+    {
+        var validPatchJson = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
+        Assert.Throws<NotSupportedException>(() => PatchDiffV1.DiffParams("{\"schemaVersion\":\"v999\",\"flows\":{}}", validPatchJson));
+    }
+
+    [Fact]
+    public void DiffParams_ShouldThrowNotSupported_WhenOldSchemaUnsupported_EvenIfNewJsonIsInvalid()
+    {
+        Assert.Throws<NotSupportedException>(() => PatchDiffV1.DiffParams("{\"schemaVersion\":\"v999\",\"flows\":{}}", "{"));
+    }
 }

@@ -149,6 +149,116 @@ public static class PatchDiffV1
         }
     }
 
+    public static PatchParamDiffReport DiffParams(string oldPatchJson, string newPatchJson)
+    {
+        if (oldPatchJson is null)
+        {
+            throw new ArgumentNullException(nameof(oldPatchJson));
+        }
+
+        if (newPatchJson is null)
+        {
+            throw new ArgumentNullException(nameof(newPatchJson));
+        }
+
+        JsonDocument oldDocument;
+
+        try
+        {
+            oldDocument = JsonDocument.Parse(oldPatchJson);
+        }
+        catch (JsonException ex)
+        {
+            throw new FormatException("oldPatchJson is not a valid JSON document.", ex);
+        }
+
+        using (oldDocument)
+        {
+            EnsureSupportedSchemaVersion(oldDocument.RootElement);
+
+            JsonDocument newDocument;
+
+            try
+            {
+                newDocument = JsonDocument.Parse(newPatchJson);
+            }
+            catch (JsonException ex)
+            {
+                throw new FormatException("newPatchJson is not a valid JSON document.", ex);
+            }
+
+            using (newDocument)
+            {
+                EnsureSupportedSchemaVersion(newDocument.RootElement);
+
+                Dictionary<ParamsKey, ParamsInfo>? oldParamsMap = null;
+                Dictionary<ParamsKey, ParamsInfo>? newParamsMap = null;
+
+                CollectParams(oldDocument.RootElement, ref oldParamsMap);
+                CollectParams(newDocument.RootElement, ref newParamsMap);
+
+                if (oldParamsMap is null && newParamsMap is null)
+                {
+                    return PatchParamDiffReport.Empty;
+                }
+
+                var buffer = new ParamDiffBuffer();
+
+                if (oldParamsMap is not null)
+                {
+                    foreach (var pair in oldParamsMap)
+                    {
+                        var key = pair.Key;
+                        var oldParams = pair.Value;
+
+                        if (newParamsMap is null || !newParamsMap.TryGetValue(key, out var newParams))
+                        {
+                            AddAllParamPropertiesAsRemoved(key, BuildParamsPath(key.FlowName, oldParams.ExperimentIndex), oldParams.Params, ref buffer);
+                            continue;
+                        }
+
+                        DiffParamObjects(
+                            key,
+                            BuildParamsPath(key.FlowName, newParams.ExperimentIndex),
+                            oldParams.Params,
+                            newParams.Params,
+                            ref buffer);
+                    }
+                }
+
+                if (newParamsMap is not null)
+                {
+                    foreach (var pair in newParamsMap)
+                    {
+                        var key = pair.Key;
+
+                        if (oldParamsMap is not null && oldParamsMap.ContainsKey(key))
+                        {
+                            continue;
+                        }
+
+                        var newParams = pair.Value;
+                        AddAllParamPropertiesAsAdded(key, BuildParamsPath(key.FlowName, newParams.ExperimentIndex), newParams.Params, ref buffer);
+                    }
+                }
+
+                var diffs = buffer.ToArray();
+
+                if (diffs.Length == 0)
+                {
+                    return PatchParamDiffReport.Empty;
+                }
+
+                if (diffs.Length > 1)
+                {
+                    Array.Sort(diffs, PatchParamDiffComparer.Instance);
+                }
+
+                return new PatchParamDiffReport(diffs);
+            }
+        }
+    }
+
     private static void EnsureSupportedSchemaVersion(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object)
@@ -161,6 +271,165 @@ public static class PatchDiffV1
             || !schemaVersionElement.ValueEquals(SupportedSchemaVersion))
         {
             throw new NotSupportedException("schemaVersion is missing or unsupported. Supported: v1.");
+        }
+    }
+
+    private static void CollectParams(JsonElement root, ref Dictionary<ParamsKey, ParamsInfo>? paramsMap)
+    {
+        if (!root.TryGetProperty("flows", out var flowsElement))
+        {
+            return;
+        }
+
+        if (flowsElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new FormatException("flows must be an object.");
+        }
+
+        foreach (var flowProperty in flowsElement.EnumerateObject())
+        {
+            var flowName = flowProperty.Name;
+            var flowPatch = flowProperty.Value;
+
+            if (flowPatch.ValueKind != JsonValueKind.Object)
+            {
+                throw new FormatException(string.Concat("Flow patch must be an object. Flow: ", flowName));
+            }
+
+            CollectFlowParams(flowName, flowPatch, experimentLayer: null, experimentVariant: null, experimentIndex: -1, ref paramsMap);
+
+            if (!flowPatch.TryGetProperty("experiments", out var experimentsElement) || experimentsElement.ValueKind == JsonValueKind.Null)
+            {
+                continue;
+            }
+
+            if (experimentsElement.ValueKind != JsonValueKind.Array)
+            {
+                throw new FormatException(string.Concat("experiments must be an array. Flow: ", flowName));
+            }
+
+            var experimentIndex = 0;
+
+            foreach (var experimentMapping in experimentsElement.EnumerateArray())
+            {
+                if (experimentMapping.ValueKind != JsonValueKind.Object)
+                {
+                    throw new FormatException(string.Concat("experiments must be an array of objects. Flow: ", flowName));
+                }
+
+                if (!experimentMapping.TryGetProperty("layer", out var layerElement) || layerElement.ValueKind != JsonValueKind.String)
+                {
+                    throw new FormatException(
+                        string.Concat(
+                            "experiments[].layer is required and must be a non-empty string. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
+                }
+
+                var layer = layerElement.GetString();
+
+                if (string.IsNullOrEmpty(layer))
+                {
+                    throw new FormatException(
+                        string.Concat(
+                            "experiments[].layer is required and must be a non-empty string. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
+                }
+
+                if (!experimentMapping.TryGetProperty("variant", out var variantElement) || variantElement.ValueKind != JsonValueKind.String)
+                {
+                    throw new FormatException(
+                        string.Concat(
+                            "experiments[].variant is required and must be a non-empty string. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
+                }
+
+                var variant = variantElement.GetString();
+
+                if (string.IsNullOrEmpty(variant))
+                {
+                    throw new FormatException(
+                        string.Concat(
+                            "experiments[].variant is required and must be a non-empty string. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
+                }
+
+                if (!experimentMapping.TryGetProperty("patch", out var patchElement) || patchElement.ValueKind == JsonValueKind.Null)
+                {
+                    throw new FormatException(
+                        string.Concat(
+                            "experiments[].patch is required. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
+                }
+
+                if (patchElement.ValueKind != JsonValueKind.Object)
+                {
+                    throw new FormatException(
+                        string.Concat(
+                            "experiments[].patch must be a non-null object. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
+                }
+
+                CollectFlowParams(flowName, patchElement, layer!, variant!, experimentIndex, ref paramsMap);
+
+                experimentIndex++;
+            }
+        }
+    }
+
+    private static void CollectFlowParams(
+        string flowName,
+        JsonElement flowPatch,
+        string? experimentLayer,
+        string? experimentVariant,
+        int experimentIndex,
+        ref Dictionary<ParamsKey, ParamsInfo>? paramsMap)
+    {
+        if (!flowPatch.TryGetProperty("params", out var paramsElement) || paramsElement.ValueKind == JsonValueKind.Null)
+        {
+            return;
+        }
+
+        if (paramsElement.ValueKind != JsonValueKind.Object)
+        {
+            if (experimentIndex < 0)
+            {
+                throw new FormatException(string.Concat("params must be an object. Flow: ", flowName));
+            }
+
+            throw new FormatException(
+                string.Concat(
+                    "params must be an object. Flow: ",
+                    flowName,
+                    ", ExperimentIndex: ",
+                    experimentIndex.ToString(CultureInfo.InvariantCulture)));
+        }
+
+        paramsMap ??= new Dictionary<ParamsKey, ParamsInfo>(4);
+
+        var key = new ParamsKey(flowName, experimentLayer, experimentVariant);
+
+        if (!paramsMap.TryAdd(key, new ParamsInfo(paramsElement, experimentIndex)))
+        {
+            throw new FormatException(
+                string.Concat(
+                    "Duplicate experiment mapping within flow. Flow: ",
+                    flowName,
+                    ", Layer: ",
+                    experimentLayer,
+                    ", Variant: ",
+                    experimentVariant));
         }
     }
 
@@ -275,6 +544,90 @@ public static class PatchDiffV1
 
                 experimentIndex++;
             }
+        }
+    }
+
+    private static string BuildParamsPath(string flowName, int experimentIndex)
+    {
+        if (experimentIndex < 0)
+        {
+            return string.Concat("$.flows.", flowName, ".params");
+        }
+
+        return string.Concat(
+            "$.flows.",
+            flowName,
+            ".experiments[",
+            experimentIndex.ToString(CultureInfo.InvariantCulture),
+            "].patch.params");
+    }
+
+    private static void AddAllParamPropertiesAsAdded(ParamsKey key, string pathPrefix, JsonElement paramsElement, ref ParamDiffBuffer buffer)
+    {
+        foreach (var property in paramsElement.EnumerateObject())
+        {
+            buffer.Add(PatchParamDiff.CreateAdded(key.FlowName, string.Concat(pathPrefix, ".", property.Name), key.ExperimentLayer, key.ExperimentVariant));
+        }
+    }
+
+    private static void AddAllParamPropertiesAsRemoved(ParamsKey key, string pathPrefix, JsonElement paramsElement, ref ParamDiffBuffer buffer)
+    {
+        foreach (var property in paramsElement.EnumerateObject())
+        {
+            buffer.Add(PatchParamDiff.CreateRemoved(key.FlowName, string.Concat(pathPrefix, ".", property.Name), key.ExperimentLayer, key.ExperimentVariant));
+        }
+    }
+
+    private static void DiffParamObjects(
+        ParamsKey key,
+        string pathPrefix,
+        JsonElement oldParams,
+        JsonElement newParams,
+        ref ParamDiffBuffer buffer)
+    {
+        foreach (var oldProperty in oldParams.EnumerateObject())
+        {
+            var name = oldProperty.Name;
+            var oldValue = oldProperty.Value;
+
+            if (!newParams.TryGetProperty(name, out var newValue))
+            {
+                buffer.Add(
+                    PatchParamDiff.CreateRemoved(
+                        key.FlowName,
+                        string.Concat(pathPrefix, ".", name),
+                        key.ExperimentLayer,
+                        key.ExperimentVariant));
+                continue;
+            }
+
+            if (oldValue.ValueKind == JsonValueKind.Object && newValue.ValueKind == JsonValueKind.Object)
+            {
+                DiffParamObjects(key, string.Concat(pathPrefix, ".", name), oldValue, newValue, ref buffer);
+                continue;
+            }
+
+            if (!JsonElementDeepEquals(oldValue, newValue))
+            {
+                buffer.Add(
+                    PatchParamDiff.CreateChanged(
+                        key.FlowName,
+                        string.Concat(pathPrefix, ".", name),
+                        key.ExperimentLayer,
+                        key.ExperimentVariant));
+            }
+        }
+
+        foreach (var newProperty in newParams.EnumerateObject())
+        {
+            var name = newProperty.Name;
+
+            if (oldParams.TryGetProperty(name, out _))
+            {
+                continue;
+            }
+
+            buffer.Add(PatchParamDiff.CreateAdded(key.FlowName, string.Concat(pathPrefix, ".", name), key.ExperimentLayer, key.ExperimentVariant));
         }
     }
 
@@ -489,6 +842,53 @@ public static class PatchDiffV1
         }
     }
 
+    private readonly struct ParamsKey : IEquatable<ParamsKey>
+    {
+        public readonly string FlowName;
+        public readonly string? ExperimentLayer;
+        public readonly string? ExperimentVariant;
+
+        public ParamsKey(string flowName, string? experimentLayer, string? experimentVariant)
+        {
+            FlowName = flowName;
+            ExperimentLayer = experimentLayer;
+            ExperimentVariant = experimentVariant;
+        }
+
+        public bool Equals(ParamsKey other)
+        {
+            return string.Equals(FlowName, other.FlowName, StringComparison.Ordinal)
+                && string.Equals(ExperimentLayer, other.ExperimentLayer, StringComparison.Ordinal)
+                && string.Equals(ExperimentVariant, other.ExperimentVariant, StringComparison.Ordinal);
+        }
+
+        public override bool Equals(object? obj)
+        {
+            return obj is ParamsKey other && Equals(other);
+        }
+
+        public override int GetHashCode()
+        {
+            var hash = new HashCode();
+            hash.Add(FlowName);
+            hash.Add(ExperimentLayer);
+            hash.Add(ExperimentVariant);
+            return hash.ToHashCode();
+        }
+    }
+
+    private readonly struct ParamsInfo
+    {
+        public readonly JsonElement Params;
+        public readonly int ExperimentIndex;
+
+        public ParamsInfo(JsonElement @params, int experimentIndex)
+        {
+            Params = @params;
+            ExperimentIndex = experimentIndex;
+        }
+    }
+
     private readonly struct ModuleKey : IEquatable<ModuleKey>
     {
         public readonly string FlowName;
@@ -594,6 +994,52 @@ public static class PatchDiffV1
         }
     }
 
+    private struct ParamDiffBuffer
+    {
+        private PatchParamDiff[]? _items;
+        private int _count;
+
+        public void Add(PatchParamDiff item)
+        {
+            var items = _items;
+
+            if (items is null)
+            {
+                items = new PatchParamDiff[4];
+                _items = items;
+            }
+            else if ((uint)_count >= (uint)items.Length)
+            {
+                var newItems = new PatchParamDiff[items.Length * 2];
+                Array.Copy(items, 0, newItems, 0, items.Length);
+                items = newItems;
+                _items = items;
+            }
+
+            items[_count] = item;
+            _count++;
+        }
+
+        public PatchParamDiff[] ToArray()
+        {
+            if (_count == 0)
+            {
+                return Array.Empty<PatchParamDiff>();
+            }
+
+            var items = _items!;
+
+            if (_count == items.Length)
+            {
+                return items;
+            }
+
+            var trimmed = new PatchParamDiff[_count];
+            Array.Copy(items, 0, trimmed, 0, _count);
+            return trimmed;
+        }
+    }
+
     private sealed class PatchModuleDiffComparer : IComparer<PatchModuleDiff>
     {
         public static PatchModuleDiffComparer Instance { get; } = new();
@@ -625,6 +1071,40 @@ public static class PatchDiffV1
             }
 
             c = string.CompareOrdinal(x.ModuleId, y.ModuleId);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            return ((int)x.Kind).CompareTo((int)y.Kind);
+        }
+    }
+
+    private sealed class PatchParamDiffComparer : IComparer<PatchParamDiff>
+    {
+        public static PatchParamDiffComparer Instance { get; } = new();
+
+        public int Compare(PatchParamDiff x, PatchParamDiff y)
+        {
+            var c = string.CompareOrdinal(x.FlowName, y.FlowName);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            c = string.CompareOrdinal(x.ExperimentLayer, y.ExperimentLayer);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            c = string.CompareOrdinal(x.ExperimentVariant, y.ExperimentVariant);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            c = string.CompareOrdinal(x.Path, y.Path);
             if (c != 0)
             {
                 return c;
@@ -733,5 +1213,80 @@ public readonly struct PatchModuleDiff
         string? experimentVariant = null)
     {
         return new PatchModuleDiff(PatchModuleDiffKind.WithChanged, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
+    }
+}
+
+public sealed class PatchParamDiffReport
+{
+    public static PatchParamDiffReport Empty { get; } = new(Array.Empty<PatchParamDiff>());
+
+    private readonly PatchParamDiff[] _diffs;
+
+    public IReadOnlyList<PatchParamDiff> Diffs => _diffs;
+
+    internal PatchParamDiffReport(PatchParamDiff[] diffs)
+    {
+        _diffs = diffs ?? throw new ArgumentNullException(nameof(diffs));
+    }
+}
+
+public enum PatchParamDiffKind
+{
+    Added = 1,
+    Removed = 2,
+    Changed = 3,
+}
+
+public readonly struct PatchParamDiff
+{
+    public PatchParamDiffKind Kind { get; }
+
+    public string FlowName { get; }
+
+    public string? ExperimentLayer { get; }
+
+    public string? ExperimentVariant { get; }
+
+    public string Path { get; }
+
+    private PatchParamDiff(
+        PatchParamDiffKind kind,
+        string flowName,
+        string path,
+        string? experimentLayer,
+        string? experimentVariant)
+    {
+        Kind = kind;
+        FlowName = flowName;
+        Path = path;
+        ExperimentLayer = experimentLayer;
+        ExperimentVariant = experimentVariant;
+    }
+
+    internal static PatchParamDiff CreateAdded(
+        string flowName,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchParamDiff(PatchParamDiffKind.Added, flowName, path, experimentLayer, experimentVariant);
+    }
+
+    internal static PatchParamDiff CreateRemoved(
+        string flowName,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchParamDiff(PatchParamDiffKind.Removed, flowName, path, experimentLayer, experimentVariant);
+    }
+
+    internal static PatchParamDiff CreateChanged(
+        string flowName,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchParamDiff(PatchParamDiffKind.Changed, flowName, path, experimentLayer, experimentVariant);
     }
 }
