@@ -108,6 +108,34 @@ public sealed class FlowContext
         return true;
     }
 
+    internal bool TryGetNodeOutcomeMetadata(int nodeIndex, out OutcomeKind kind, out string code)
+    {
+        if (nodeIndex < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(nodeIndex), nodeIndex, "NodeIndex must be non-negative.");
+        }
+
+        var states = _nodeOutcomeStates;
+        if (states is null || (uint)nodeIndex >= (uint)states.Length)
+        {
+            kind = default;
+            code = string.Empty;
+            return false;
+        }
+
+        if (Volatile.Read(ref states[nodeIndex]) != 2)
+        {
+            kind = default;
+            code = string.Empty;
+            return false;
+        }
+
+        var entry = _nodeOutcomes![nodeIndex];
+        kind = entry.Kind;
+        code = entry.Code;
+        return true;
+    }
+
     internal void RecordNodeOutcome<T>(int nodeIndex, string nodeName, Outcome<T> outcome)
     {
         if (nodeIndex < 0)

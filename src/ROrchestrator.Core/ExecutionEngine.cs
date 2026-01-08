@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
 using ROrchestrator.Core.Blueprint;
+using ROrchestrator.Core.Observability;
 
 namespace ROrchestrator.Core;
 
@@ -168,6 +170,114 @@ public sealed class ExecutionEngine
 
         context.PrepareForExecution(template.NodeNameToIndex, nodeCount);
 
+        var activitySource = FlowActivitySource.Instance;
+
+        if (activitySource.HasListeners())
+        {
+            using var flowActivity = activitySource.StartActivity(FlowActivitySource.FlowActivityName, ActivityKind.Internal);
+
+            if (flowActivity is not null)
+            {
+                var planHashTagValue = template.PlanHash.ToString(FlowActivitySource.PlanHashFormat);
+                flowActivity.SetTag(FlowActivitySource.TagFlowName, template.Name);
+                flowActivity.SetTag(FlowActivitySource.TagPlanHash, planHashTagValue);
+
+                for (var i = 0; i < nodeCount; i++)
+                {
+                    if (IsDeadlineExceeded(context.Deadline))
+                    {
+                        return Outcome<TResp>.Timeout(DeadlineExceededCode);
+                    }
+
+                    if (context.CancellationToken.IsCancellationRequested)
+                    {
+                        return Outcome<TResp>.Canceled(UpstreamCanceledCode);
+                    }
+
+                    var node = nodes[i];
+
+                    Activity? nodeActivity;
+
+                    if (node.Kind == BlueprintNodeKind.Step)
+                    {
+                        nodeActivity = activitySource.StartActivity(FlowActivitySource.StepActivityName, ActivityKind.Internal);
+                    }
+                    else if (node.Kind == BlueprintNodeKind.Join)
+                    {
+                        nodeActivity = activitySource.StartActivity(FlowActivitySource.JoinActivityName, ActivityKind.Internal);
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException($"Unsupported node kind: '{node.Kind}'.");
+                    }
+
+                    if (nodeActivity is not null)
+                    {
+                        nodeActivity.SetTag(FlowActivitySource.TagFlowName, template.Name);
+                        nodeActivity.SetTag(FlowActivitySource.TagPlanHash, planHashTagValue);
+                        nodeActivity.SetTag(FlowActivitySource.TagNodeName, node.Name);
+                        nodeActivity.SetTag(FlowActivitySource.TagNodeKind, FlowActivitySource.GetNodeKindTagValue(node.Kind));
+
+                        if (!string.IsNullOrEmpty(node.StageName))
+                        {
+                            nodeActivity.SetTag(FlowActivitySource.TagStageName, node.StageName);
+                        }
+
+                        if (node.Kind == BlueprintNodeKind.Step && !string.IsNullOrEmpty(node.ModuleType))
+                        {
+                            nodeActivity.SetTag(FlowActivitySource.TagModuleType, node.ModuleType);
+                        }
+                    }
+
+                    try
+                    {
+                        if (node.Kind == BlueprintNodeKind.Step)
+                        {
+                            var outType = node.OutputType;
+                            var executor = StepTemplateExecutorCache<TReq>.Get(outType);
+                            await executor(this, node, request, context).ConfigureAwait(false);
+                            continue;
+                        }
+
+                        var joinOutType = node.OutputType;
+                        var joinExecutor = JoinTemplateExecutorCache.Get(joinOutType);
+                        await joinExecutor(node, context).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        if (nodeActivity is not null && context.TryGetNodeOutcomeMetadata(node.Index, out var kind, out var code))
+                        {
+                            nodeActivity.SetTag(FlowActivitySource.TagOutcomeKind, FlowActivitySource.GetOutcomeKindTagValue(kind));
+                            nodeActivity.SetTag(FlowActivitySource.TagOutcomeCode, code);
+                        }
+
+                        nodeActivity?.Dispose();
+                    }
+                }
+
+                if (IsDeadlineExceeded(context.Deadline))
+                {
+                    return Outcome<TResp>.Timeout(DeadlineExceededCode);
+                }
+
+                if (context.CancellationToken.IsCancellationRequested)
+                {
+                    return Outcome<TResp>.Canceled(UpstreamCanceledCode);
+                }
+
+                var lastNode = nodes[nodeCount - 1];
+
+                EnsureFinalOutputType<TReq, TResp>(template, lastNode);
+
+                if (!context.TryGetNodeOutcome<TResp>(lastNode.Name, out var finalOutcome))
+                {
+                    throw new InvalidOperationException($"Outcome for node '{lastNode.Name}' has not been recorded.");
+                }
+
+                return finalOutcome;
+            }
+        }
+
         for (var i = 0; i < nodeCount; i++)
         {
             if (IsDeadlineExceeded(context.Deadline))
@@ -211,16 +321,16 @@ public sealed class ExecutionEngine
             return Outcome<TResp>.Canceled(UpstreamCanceledCode);
         }
 
-        var lastNode = nodes[nodeCount - 1];
+        var finalNode = nodes[nodeCount - 1];
 
-        EnsureFinalOutputType<TReq, TResp>(template, lastNode);
+        EnsureFinalOutputType<TReq, TResp>(template, finalNode);
 
-        if (!context.TryGetNodeOutcome<TResp>(lastNode.Name, out var finalOutcome))
+        if (!context.TryGetNodeOutcome<TResp>(finalNode.Name, out var finalOutcomeResult))
         {
-            throw new InvalidOperationException($"Outcome for node '{lastNode.Name}' has not been recorded.");
+            throw new InvalidOperationException($"Outcome for node '{finalNode.Name}' has not been recorded.");
         }
 
-        return finalOutcome;
+        return finalOutcomeResult;
     }
 
     private static void EnsureFinalOutputType<TReq, TResp>(FlowBlueprint<TReq, TResp> blueprint, BlueprintNode lastNode)
