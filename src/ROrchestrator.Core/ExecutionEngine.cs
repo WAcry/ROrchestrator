@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Reflection;
 using System.Threading;
 using ROrchestrator.Core.Blueprint;
@@ -199,6 +200,13 @@ public sealed class ExecutionEngine
                 flowActivity.SetTag(FlowActivitySource.TagFlowName, flowName);
                 flowActivity.SetTag(FlowActivitySource.TagPlanHash, planHashTagValue);
 
+                string? configVersionTagValue = null;
+                if (context.TryGetConfigVersion(out var configVersion))
+                {
+                    configVersionTagValue = configVersion.ToString(CultureInfo.InvariantCulture);
+                    flowActivity.SetTag(FlowActivitySource.TagConfigVersion, configVersionTagValue);
+                }
+
                 for (var i = 0; i < nodeCount; i++)
                 {
                     if (IsDeadlineExceeded(context.Deadline))
@@ -238,6 +246,10 @@ public sealed class ExecutionEngine
                     {
                         nodeActivity.SetTag(FlowActivitySource.TagFlowName, flowName);
                         nodeActivity.SetTag(FlowActivitySource.TagPlanHash, planHashTagValue);
+                        if (configVersionTagValue is not null)
+                        {
+                            nodeActivity.SetTag(FlowActivitySource.TagConfigVersion, configVersionTagValue);
+                        }
                         nodeActivity.SetTag(FlowActivitySource.TagNodeName, node.Name);
                         nodeActivity.SetTag(FlowActivitySource.TagNodeKind, FlowActivitySource.GetNodeKindTagValue(node.Kind));
 

@@ -15,6 +15,7 @@ internal static class FlowActivitySource
 
     internal const string TagFlowName = "flow.name";
     internal const string TagPlanHash = "plan.hash";
+    internal const string TagConfigVersion = "config.version";
     internal const string TagNodeName = "node.name";
     internal const string TagNodeKind = "node.kind";
     internal const string TagStageName = "stage.name";

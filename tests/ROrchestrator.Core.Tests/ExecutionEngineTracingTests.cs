@@ -12,6 +12,9 @@ public sealed class ExecutionEngineTracingTests
     {
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
+        var configProvider = new StaticConfigProvider(configVersion: 123, patchJson: string.Empty);
+        _ = await flowContext.GetConfigSnapshotAsync(configProvider);
+        var expectedConfigVersion = "123";
 
         var catalog = new ModuleCatalog();
         catalog.Register<int, int>("m.add_one", _ => new AddOneModule());
@@ -53,6 +56,7 @@ public sealed class ExecutionEngineTracingTests
         Assert.True(TryGetSingleActivity(activities, activityName: Observability.FlowActivitySource.FlowActivityName, out var flowActivity));
         AssertTag(flowActivity, "flow.name", template.Name);
         AssertTag(flowActivity, "plan.hash", expectedPlanHash);
+        AssertTag(flowActivity, "config.version", expectedConfigVersion);
 
         var nodeActivities = new Dictionary<string, Activity>(capacity: template.Nodes.Count);
         for (var i = 0; i < activities.Count; i++)
@@ -80,6 +84,7 @@ public sealed class ExecutionEngineTracingTests
 
             AssertTag(nodeActivity, "flow.name", template.Name);
             AssertTag(nodeActivity, "plan.hash", expectedPlanHash);
+            AssertTag(nodeActivity, "config.version", expectedConfigVersion);
             AssertTag(nodeActivity, "node.name", node.Name);
 
             if (node.Kind == BlueprintNodeKind.Step)
@@ -483,6 +488,21 @@ public sealed class ExecutionEngineTracingTests
         public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<int> context)
         {
             return new ValueTask<Outcome<int>>(Outcome<int>.Fallback(_value, _code));
+        }
+    }
+
+    private sealed class StaticConfigProvider : IConfigProvider
+    {
+        private readonly ConfigSnapshot _snapshot;
+
+        public StaticConfigProvider(ulong configVersion, string patchJson)
+        {
+            _snapshot = new ConfigSnapshot(configVersion, patchJson);
+        }
+
+        public ValueTask<ConfigSnapshot> GetSnapshotAsync(FlowContext context)
+        {
+            return new ValueTask<ConfigSnapshot>(_snapshot);
         }
     }
 }

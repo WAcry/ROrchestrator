@@ -40,6 +40,32 @@ public sealed class FlowHostTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_ShouldExposeConfigSnapshotInFlowContext()
+    {
+        var services = new DummyServiceProvider();
+        var context = new FlowContext(services, CancellationToken.None, FutureDeadline);
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<int, int>("m.add_one", _ => new AddOneModule());
+
+        var registry = new FlowRegistry();
+        registry.Register<int, int>("test_flow", CreateTestFlowBlueprint());
+
+        var configProvider = new StaticConfigProvider(configVersion: 456, patchJson: "patch");
+        var host = new FlowHost(registry, catalog, configProvider);
+
+        var result = await host.ExecuteAsync<int, int>("test_flow", request: 1, context);
+        Assert.True(result.IsOk);
+
+        Assert.True(context.TryGetConfigVersion(out var configVersion));
+        Assert.Equal((ulong)456, configVersion);
+
+        Assert.True(context.TryGetConfigSnapshot(out var snapshot));
+        Assert.Equal((ulong)456, snapshot.ConfigVersion);
+        Assert.Equal("patch", snapshot.PatchJson);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ShouldThrow_WhenFlowNameIsUnknown()
     {
         var services = new DummyServiceProvider();

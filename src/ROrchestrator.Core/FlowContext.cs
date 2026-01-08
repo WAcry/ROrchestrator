@@ -36,6 +36,30 @@ public sealed class FlowContext
         Deadline = deadline;
     }
 
+    public bool TryGetConfigVersion(out ulong configVersion)
+    {
+        if (Volatile.Read(ref _configSnapshotState) == 2)
+        {
+            configVersion = _configSnapshot.ConfigVersion;
+            return true;
+        }
+
+        configVersion = default;
+        return false;
+    }
+
+    public bool TryGetConfigSnapshot(out ConfigSnapshot snapshot)
+    {
+        if (Volatile.Read(ref _configSnapshotState) == 2)
+        {
+            snapshot = _configSnapshot;
+            return true;
+        }
+
+        snapshot = default;
+        return false;
+    }
+
     internal ValueTask<ConfigSnapshot> GetConfigSnapshotAsync(IConfigProvider provider)
     {
         if (provider is null)
