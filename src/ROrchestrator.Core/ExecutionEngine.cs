@@ -150,22 +150,39 @@ public sealed class ExecutionEngine
             throw new ArgumentNullException(nameof(request));
         }
 
+        var flowName = template.Name;
+        var recordFlowMetrics = FlowMetricsV1.IsFlowEnabled;
+        var recordStepMetrics = FlowMetricsV1.IsStepEnabled;
+        var recordStepSkipReasonMetrics = FlowMetricsV1.IsStepSkipReasonEnabled;
+        var recordJoinMetrics = FlowMetricsV1.IsJoinEnabled;
+        var flowStartTimestamp = recordFlowMetrics ? FlowMetricsV1.StartFlowTimer() : 0;
+
+        Outcome<TResp> ReturnWithFlowMetrics(Outcome<TResp> outcome)
+        {
+            if (recordFlowMetrics)
+            {
+                FlowMetricsV1.RecordFlow(flowStartTimestamp, flowName, outcome.Kind);
+            }
+
+            return outcome;
+        }
+
         var nodes = template.Nodes;
         var nodeCount = nodes.Count;
 
         if (nodeCount == 0)
         {
-            throw new InvalidOperationException($"Flow '{template.Name}' must contain at least one node.");
+            throw new InvalidOperationException($"Flow '{flowName}' must contain at least one node.");
         }
 
         if (IsDeadlineExceeded(context.Deadline))
         {
-            return Outcome<TResp>.Timeout(DeadlineExceededCode);
+            return ReturnWithFlowMetrics(Outcome<TResp>.Timeout(DeadlineExceededCode));
         }
 
         if (context.CancellationToken.IsCancellationRequested)
         {
-            return Outcome<TResp>.Canceled(UpstreamCanceledCode);
+            return ReturnWithFlowMetrics(Outcome<TResp>.Canceled(UpstreamCanceledCode));
         }
 
         context.PrepareForExecution(template.NodeNameToIndex, nodeCount);
@@ -179,31 +196,37 @@ public sealed class ExecutionEngine
             if (flowActivity is not null)
             {
                 var planHashTagValue = template.PlanHash.ToString(FlowActivitySource.PlanHashFormat);
-                flowActivity.SetTag(FlowActivitySource.TagFlowName, template.Name);
+                flowActivity.SetTag(FlowActivitySource.TagFlowName, flowName);
                 flowActivity.SetTag(FlowActivitySource.TagPlanHash, planHashTagValue);
 
                 for (var i = 0; i < nodeCount; i++)
                 {
                     if (IsDeadlineExceeded(context.Deadline))
                     {
-                        return Outcome<TResp>.Timeout(DeadlineExceededCode);
+                        return ReturnWithFlowMetrics(Outcome<TResp>.Timeout(DeadlineExceededCode));
                     }
 
                     if (context.CancellationToken.IsCancellationRequested)
                     {
-                        return Outcome<TResp>.Canceled(UpstreamCanceledCode);
+                        return ReturnWithFlowMetrics(Outcome<TResp>.Canceled(UpstreamCanceledCode));
                     }
 
                     var node = nodes[i];
+                    var nodeStartTimestamp = 0L;
+                    var recordNodeMetrics = false;
+                    var recordSkipReasonMetric = false;
 
                     Activity? nodeActivity;
 
                     if (node.Kind == BlueprintNodeKind.Step)
                     {
+                        recordNodeMetrics = recordStepMetrics;
+                        recordSkipReasonMetric = recordStepSkipReasonMetrics;
                         nodeActivity = activitySource.StartActivity(FlowActivitySource.StepActivityName, ActivityKind.Internal);
                     }
                     else if (node.Kind == BlueprintNodeKind.Join)
                     {
+                        recordNodeMetrics = recordJoinMetrics;
                         nodeActivity = activitySource.StartActivity(FlowActivitySource.JoinActivityName, ActivityKind.Internal);
                     }
                     else
@@ -213,7 +236,7 @@ public sealed class ExecutionEngine
 
                     if (nodeActivity is not null)
                     {
-                        nodeActivity.SetTag(FlowActivitySource.TagFlowName, template.Name);
+                        nodeActivity.SetTag(FlowActivitySource.TagFlowName, flowName);
                         nodeActivity.SetTag(FlowActivitySource.TagPlanHash, planHashTagValue);
                         nodeActivity.SetTag(FlowActivitySource.TagNodeName, node.Name);
                         nodeActivity.SetTag(FlowActivitySource.TagNodeKind, FlowActivitySource.GetNodeKindTagValue(node.Kind));
@@ -231,6 +254,13 @@ public sealed class ExecutionEngine
 
                     try
                     {
+                        if (recordNodeMetrics)
+                        {
+                            nodeStartTimestamp = node.Kind == BlueprintNodeKind.Step
+                                ? FlowMetricsV1.StartStepTimer()
+                                : FlowMetricsV1.StartJoinTimer();
+                        }
+
                         if (node.Kind == BlueprintNodeKind.Step)
                         {
                             var outType = node.OutputType;
@@ -245,10 +275,31 @@ public sealed class ExecutionEngine
                     }
                     finally
                     {
-                        if (nodeActivity is not null && context.TryGetNodeOutcomeMetadata(node.Index, out var kind, out var code))
+                        if ((nodeActivity is not null || recordNodeMetrics || recordSkipReasonMetric)
+                            && context.TryGetNodeOutcomeMetadata(node.Index, out var kind, out var code))
                         {
-                            nodeActivity.SetTag(FlowActivitySource.TagOutcomeKind, FlowActivitySource.GetOutcomeKindTagValue(kind));
-                            nodeActivity.SetTag(FlowActivitySource.TagOutcomeCode, code);
+                            if (nodeActivity is not null)
+                            {
+                                nodeActivity.SetTag(FlowActivitySource.TagOutcomeKind, FlowActivitySource.GetOutcomeKindTagValue(kind));
+                                nodeActivity.SetTag(FlowActivitySource.TagOutcomeCode, code);
+                            }
+
+                            if (recordNodeMetrics)
+                            {
+                                if (node.Kind == BlueprintNodeKind.Step)
+                                {
+                                    FlowMetricsV1.RecordStep(nodeStartTimestamp, flowName, node.ModuleType!, kind);
+                                }
+                                else if (node.Kind == BlueprintNodeKind.Join)
+                                {
+                                    FlowMetricsV1.RecordJoin(nodeStartTimestamp, flowName, kind);
+                                }
+                            }
+
+                            if (recordSkipReasonMetric && kind == OutcomeKind.Skipped)
+                            {
+                                FlowMetricsV1.RecordStepSkipReason(flowName, code);
+                            }
                         }
 
                         nodeActivity?.Dispose();
@@ -257,12 +308,12 @@ public sealed class ExecutionEngine
 
                 if (IsDeadlineExceeded(context.Deadline))
                 {
-                    return Outcome<TResp>.Timeout(DeadlineExceededCode);
+                    return ReturnWithFlowMetrics(Outcome<TResp>.Timeout(DeadlineExceededCode));
                 }
 
                 if (context.CancellationToken.IsCancellationRequested)
                 {
-                    return Outcome<TResp>.Canceled(UpstreamCanceledCode);
+                    return ReturnWithFlowMetrics(Outcome<TResp>.Canceled(UpstreamCanceledCode));
                 }
 
                 var lastNode = nodes[nodeCount - 1];
@@ -274,7 +325,7 @@ public sealed class ExecutionEngine
                     throw new InvalidOperationException($"Outcome for node '{lastNode.Name}' has not been recorded.");
                 }
 
-                return finalOutcome;
+                return ReturnWithFlowMetrics(finalOutcome);
             }
         }
 
@@ -282,29 +333,52 @@ public sealed class ExecutionEngine
         {
             if (IsDeadlineExceeded(context.Deadline))
             {
-                return Outcome<TResp>.Timeout(DeadlineExceededCode);
+                return ReturnWithFlowMetrics(Outcome<TResp>.Timeout(DeadlineExceededCode));
             }
 
             if (context.CancellationToken.IsCancellationRequested)
             {
-                return Outcome<TResp>.Canceled(UpstreamCanceledCode);
+                return ReturnWithFlowMetrics(Outcome<TResp>.Canceled(UpstreamCanceledCode));
             }
 
             var node = nodes[i];
 
             if (node.Kind == BlueprintNodeKind.Step)
             {
+                var nodeStartTimestamp = recordStepMetrics ? FlowMetricsV1.StartStepTimer() : 0;
                 var outType = node.OutputType;
                 var executor = StepTemplateExecutorCache<TReq>.Get(outType);
                 await executor(this, node, request, context).ConfigureAwait(false);
+
+                if ((recordStepMetrics || recordStepSkipReasonMetrics)
+                    && context.TryGetNodeOutcomeMetadata(node.Index, out var kind, out var code))
+                {
+                    if (recordStepMetrics)
+                    {
+                        FlowMetricsV1.RecordStep(nodeStartTimestamp, flowName, node.ModuleType!, kind);
+                    }
+
+                    if (recordStepSkipReasonMetrics && kind == OutcomeKind.Skipped)
+                    {
+                        FlowMetricsV1.RecordStepSkipReason(flowName, code);
+                    }
+                }
+
                 continue;
             }
 
             if (node.Kind == BlueprintNodeKind.Join)
             {
+                var nodeStartTimestamp = recordJoinMetrics ? FlowMetricsV1.StartJoinTimer() : 0;
                 var joinOutType = node.OutputType;
                 var executor = JoinTemplateExecutorCache.Get(joinOutType);
                 await executor(node, context).ConfigureAwait(false);
+
+                if (recordJoinMetrics && context.TryGetNodeOutcomeMetadata(node.Index, out var kind, out _))
+                {
+                    FlowMetricsV1.RecordJoin(nodeStartTimestamp, flowName, kind);
+                }
+
                 continue;
             }
 
@@ -313,12 +387,12 @@ public sealed class ExecutionEngine
 
         if (IsDeadlineExceeded(context.Deadline))
         {
-            return Outcome<TResp>.Timeout(DeadlineExceededCode);
+            return ReturnWithFlowMetrics(Outcome<TResp>.Timeout(DeadlineExceededCode));
         }
 
         if (context.CancellationToken.IsCancellationRequested)
         {
-            return Outcome<TResp>.Canceled(UpstreamCanceledCode);
+            return ReturnWithFlowMetrics(Outcome<TResp>.Canceled(UpstreamCanceledCode));
         }
 
         var finalNode = nodes[nodeCount - 1];
@@ -330,7 +404,7 @@ public sealed class ExecutionEngine
             throw new InvalidOperationException($"Outcome for node '{finalNode.Name}' has not been recorded.");
         }
 
-        return finalOutcomeResult;
+        return ReturnWithFlowMetrics(finalOutcomeResult);
     }
 
     private static void EnsureFinalOutputType<TReq, TResp>(FlowBlueprint<TReq, TResp> blueprint, BlueprintNode lastNode)

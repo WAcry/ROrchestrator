@@ -21,6 +21,7 @@ internal static class FlowActivitySource
     internal const string TagModuleType = "module.type";
     internal const string TagOutcomeKind = "outcome.kind";
     internal const string TagOutcomeCode = "outcome.code";
+    internal const string TagSkipCode = "skip.code";
 
     internal static readonly ActivitySource Instance = new(ActivitySourceName);
 
@@ -48,4 +49,3 @@ internal static class FlowActivitySource
         };
     }
 }
-
