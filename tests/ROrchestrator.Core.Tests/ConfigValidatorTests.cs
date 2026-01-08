@@ -705,6 +705,96 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
+    public void ValidatePatchJson_ShouldReportModuleIdDuplicate_WhenModuleIdsDuplicateAcrossStages()
+    {
+        var registry = new FlowRegistry();
+        registry.Register(
+            "HomeFeed",
+            FlowBlueprint.Define<int, int>("TestFlow")
+                .Stage(
+                    "s1",
+                    stage =>
+                    {
+                        stage.Join<int>(
+                            name: "j1",
+                            join: _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0)));
+                    })
+                .Stage(
+                    "s2",
+                    stage =>
+                    {
+                        stage.Join<int>(
+                            name: "j2",
+                            join: _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0)));
+                    })
+                .Build());
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]},\"s2\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}}");
+
+        var pathsFound = 0;
+        var findings = report.Findings;
+
+        for (var i = 0; i < findings.Count; i++)
+        {
+            var finding = findings[i];
+            if (!string.Equals("CFG_MODULE_ID_DUPLICATE", finding.Code, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (string.Equals("$.flows.HomeFeed.stages.s1.modules[0].id", finding.Path, StringComparison.Ordinal)
+                || string.Equals("$.flows.HomeFeed.stages.s2.modules[0].id", finding.Path, StringComparison.Ordinal))
+            {
+                pathsFound++;
+            }
+        }
+
+        Assert.Equal(2, pathsFound);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldNotReportModuleIdDuplicate_WhenModuleIdsAreDistinctAcrossStages()
+    {
+        var registry = new FlowRegistry();
+        registry.Register(
+            "HomeFeed",
+            FlowBlueprint.Define<int, int>("TestFlow")
+                .Stage(
+                    "s1",
+                    stage =>
+                    {
+                        stage.Join<int>(
+                            name: "j1",
+                            join: _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0)));
+                    })
+                .Stage(
+                    "s2",
+                    stage =>
+                    {
+                        stage.Join<int>(
+                            name: "j2",
+                            join: _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0)));
+                    })
+                .Build());
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]},\"s2\":{\"modules\":[{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}]}}}}}");
+
+        AssertNoFinding(report, "CFG_MODULE_ID_DUPLICATE");
+    }
+
+    [Fact]
     public void ValidatePatchJson_ShouldReportModuleTypeMissing_WhenModuleUseIsMissing()
     {
         var registry = new FlowRegistry();

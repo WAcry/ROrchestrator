@@ -669,6 +669,8 @@ public sealed class ConfigValidator
         ModuleCatalog moduleCatalog,
         ref FindingBuffer findings)
     {
+        Dictionary<string, ModuleIdFirstOccurrence>? moduleIdFirstOccurrenceMap = null;
+
         foreach (var stageProperty in stagesPatch.EnumerateObject())
         {
             var stageName = stageProperty.Name;
@@ -700,7 +702,7 @@ public sealed class ConfigValidator
                 continue;
             }
 
-            ValidateStagePatch(flowName, stageName, stageProperty.Value, moduleCatalog, ref findings);
+            ValidateStagePatch(flowName, stageName, stageProperty.Value, moduleCatalog, ref findings, ref moduleIdFirstOccurrenceMap);
         }
     }
 
@@ -709,7 +711,8 @@ public sealed class ConfigValidator
         string stageName,
         JsonElement stagePatch,
         ModuleCatalog moduleCatalog,
-        ref FindingBuffer findings)
+        ref FindingBuffer findings,
+        ref Dictionary<string, ModuleIdFirstOccurrence>? moduleIdFirstOccurrenceMap)
     {
         var hasModules = false;
         JsonElement modulesPatch = default;
@@ -750,7 +753,7 @@ public sealed class ConfigValidator
             return;
         }
 
-        ValidateModulesPatch(flowName, stageName, modulesPathPrefix, modulesPatch, moduleCatalog, ref findings);
+        ValidateModulesPatch(flowName, stageName, modulesPathPrefix, modulesPatch, moduleCatalog, ref findings, ref moduleIdFirstOccurrenceMap);
     }
 
     private static void ValidateModulesPatch(
@@ -759,11 +762,9 @@ public sealed class ConfigValidator
         string modulesPathPrefix,
         JsonElement modulesPatch,
         ModuleCatalog moduleCatalog,
-        ref FindingBuffer findings)
+        ref FindingBuffer findings,
+        ref Dictionary<string, ModuleIdFirstOccurrence>? moduleIdFirstOccurrenceMap)
     {
-        _ = flowName;
-        _ = stageName;
-
         Dictionary<string, int>? moduleIdIndexMap = null;
 
         var index = 0;
@@ -848,7 +849,51 @@ public sealed class ConfigValidator
                             ValidationSeverity.Warn,
                             code: CodeModuleIdInvalidFormat,
                             path: string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].id"),
-                            message: "modules[].id must match [a-z0-9_]+ and length <= 64."));
+                        message: "modules[].id must match [a-z0-9_]+ and length <= 64."));
+                }
+
+                moduleIdFirstOccurrenceMap ??= new Dictionary<string, ModuleIdFirstOccurrence>();
+
+                if (moduleIdFirstOccurrenceMap.TryGetValue(moduleId, out var firstOccurrence))
+                {
+                    if (!string.Equals(firstOccurrence.StageName, stageName, StringComparison.Ordinal))
+                    {
+                        var normalizedFirstIndex = firstOccurrence.Index;
+                        if (normalizedFirstIndex < 0)
+                        {
+                            normalizedFirstIndex = -normalizedFirstIndex - 1;
+                        }
+
+                        if (firstOccurrence.Index >= 0)
+                        {
+                            findings.Add(
+                                new ValidationFinding(
+                                    ValidationSeverity.Error,
+                                    code: CodeModuleIdDuplicate,
+                                    path: string.Concat(
+                                        "$.flows.",
+                                        flowName,
+                                        ".stages.",
+                                        firstOccurrence.StageName,
+                                        ".modules[",
+                                        normalizedFirstIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                        "].id"),
+                                    message: string.Concat("Duplicate module id: ", moduleId)));
+
+                            moduleIdFirstOccurrenceMap[moduleId] = new ModuleIdFirstOccurrence(firstOccurrence.StageName, -normalizedFirstIndex - 1);
+                        }
+
+                        findings.Add(
+                            new ValidationFinding(
+                                ValidationSeverity.Error,
+                                code: CodeModuleIdDuplicate,
+                                path: string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].id"),
+                                message: string.Concat("Duplicate module id: ", moduleId)));
+                    }
+                }
+                else
+                {
+                    moduleIdFirstOccurrenceMap.Add(moduleId, new ModuleIdFirstOccurrence(stageName, index));
                 }
 
                 moduleIdIndexMap ??= new Dictionary<string, int>();
@@ -868,9 +913,16 @@ public sealed class ConfigValidator
                                 ValidationSeverity.Error,
                                 code: CodeModuleIdDuplicate,
                                 path: string.Concat(modulesPathPrefix, "[", normalizedFirstIndex.ToString(System.Globalization.CultureInfo.InvariantCulture), "].id"),
-                                message: string.Concat("Duplicate module id: ", moduleId)));
+                            message: string.Concat("Duplicate module id: ", moduleId)));
 
                         moduleIdIndexMap[moduleId] = -normalizedFirstIndex - 1;
+
+                        if (moduleIdFirstOccurrenceMap.TryGetValue(moduleId, out var withinStageFirstOccurrence)
+                            && string.Equals(withinStageFirstOccurrence.StageName, stageName, StringComparison.Ordinal)
+                            && withinStageFirstOccurrence.Index >= 0)
+                        {
+                            moduleIdFirstOccurrenceMap[moduleId] = new ModuleIdFirstOccurrence(withinStageFirstOccurrence.StageName, -withinStageFirstOccurrence.Index - 1);
+                        }
                     }
 
                     findings.Add(
@@ -1199,6 +1251,18 @@ public sealed class ConfigValidator
             code: CodeSchemaVersionUnsupported,
             path: "$.schemaVersion",
             message: "schemaVersion is missing or unsupported.");
+    }
+
+    private readonly struct ModuleIdFirstOccurrence
+    {
+        public readonly string StageName;
+        public readonly int Index;
+
+        public ModuleIdFirstOccurrence(string stageName, int index)
+        {
+            StageName = stageName;
+            Index = index;
+        }
     }
 
     private struct FindingBuffer
