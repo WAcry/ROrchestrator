@@ -1841,6 +1841,44 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenModuleShadowSampleIsValid()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m_shadow\",\"use\":\"test.module\",\"with\":{},\"shadow\":{\"sample\":0.02}}]}}}}}");
+
+        Assert.True(report.IsValid);
+        Assert.Empty(report.Findings);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportShadowSampleInvalid_WhenModuleShadowSampleIsOutOfRange()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m_shadow\",\"use\":\"test.module\",\"with\":{},\"shadow\":{\"sample\":1.1}}]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_SHADOW_SAMPLE_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].shadow.sample", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
     public void ValidatePatchJson_ShouldReportGateRequestFieldNotAllowed_WhenFieldIsNotAllowed()
     {
         var registry = new FlowRegistry();

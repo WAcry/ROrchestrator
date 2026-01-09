@@ -56,6 +56,48 @@ public sealed class ExecutionEngineStageFanoutMetricsTests
         AssertAllSamplesHaveTag(samples, StageFanoutModuleOutcomeInstrumentName, "outcome.kind", "ok");
     }
 
+    [Fact]
+    public async Task ExecuteAsync_Template_ShouldEmitStageFanoutModuleMetrics_WithExecutionPath()
+    {
+        var patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"MetricsTestFlow.FanoutShadow\":{" +
+            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
+            "{\"id\":\"m_primary\",\"use\":\"test.ok\",\"with\":{}}," +
+            "{\"id\":\"m_shadow\",\"use\":\"test.ok\",\"with\":{},\"shadow\":{\"sample\":1}}" +
+            "]}}}}}";
+
+        var services = new DummyServiceProvider();
+        var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
+        _ = await flowContext.GetConfigSnapshotAsync(new StaticConfigProvider(configVersion: 123, patchJson));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<JsonElement, int>("test.ok", _ => new OkJsonElementModule());
+
+        var blueprint = FlowBlueprint.Define<int, int>("MetricsTestFlow.FanoutShadow")
+            .Stage(
+                "s1",
+                stage =>
+                    stage.Join<int>(
+                        "final",
+                        _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0))))
+            .Build();
+
+        var template = PlanCompiler.Compile(blueprint, catalog);
+        var engine = new ExecutionEngine(catalog);
+
+        var samples = new List<MetricSample>();
+        using var listener = CreateListener(samples, expectedFlowName: template.Name);
+        listener.Start();
+
+        var result = await engine.ExecuteAsync(template, request: 0, flowContext);
+        Assert.True(result.IsOk);
+
+        Assert.Equal(2, CountSamples(samples, StageFanoutModuleOutcomeInstrumentName));
+
+        Assert.Contains(samples, sample => sample.InstrumentName == StageFanoutModuleOutcomeInstrumentName && HasTag(sample.Tags, "execution.path", "primary"));
+        Assert.Contains(samples, sample => sample.InstrumentName == StageFanoutModuleOutcomeInstrumentName && HasTag(sample.Tags, "execution.path", "shadow"));
+    }
+
     private static MeterListener CreateListener(List<MetricSample> samples, string expectedFlowName)
     {
         bool ShouldCaptureInstrumentName(string instrumentName)
@@ -133,6 +175,16 @@ public sealed class ExecutionEngineStageFanoutMetricsTests
 
     private static void AssertAllSamplesHaveTag(List<MetricSample> samples, string instrumentName, string tagKey, string expectedValue)
     {
+        AssertAllSamplesHaveTag(samples, instrumentName, tagKey, expectedValue, allowMissing: false);
+    }
+
+    private static void AssertAllSamplesHaveTag(
+        List<MetricSample> samples,
+        string instrumentName,
+        string tagKey,
+        string expectedValue,
+        bool allowMissing)
+    {
         for (var i = 0; i < samples.Count; i++)
         {
             var sample = samples[i];
@@ -141,9 +193,19 @@ public sealed class ExecutionEngineStageFanoutMetricsTests
                 continue;
             }
 
-            Assert.True(TryGetTagString(sample.Tags, tagKey, out var value), $"Expected tag '{tagKey}' to be present.");
+            if (!TryGetTagString(sample.Tags, tagKey, out var value))
+            {
+                Assert.True(allowMissing, $"Expected tag '{tagKey}' to be present.");
+                continue;
+            }
+
             Assert.Equal(expectedValue, value);
         }
+    }
+
+    private static bool HasTag(KeyValuePair<string, object?>[] tags, string key, string expectedValue)
+    {
+        return TryGetTagString(tags, key, out var value) && value == expectedValue;
     }
 
     private static KeyValuePair<string, object?>[] CopyTags(ReadOnlySpan<KeyValuePair<string, object?>> tags)
@@ -256,4 +318,3 @@ public sealed class ExecutionEngineStageFanoutMetricsTests
         }
     }
 }
-

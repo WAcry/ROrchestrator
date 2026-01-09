@@ -45,6 +45,7 @@ public sealed class ConfigValidator
     private const string CodeLayerConflict = "CFG_LAYER_CONFLICT";
     private const string CodeLayerParamLeak = "CFG_LAYER_PARAM_LEAK";
     private const string CodeGateRedundant = "CFG_GATE_REDUNDANT";
+    private const string CodeShadowSampleInvalid = "CFG_SHADOW_SAMPLE_INVALID";
     private const string GateCodePrefix = "CFG_GATE_";
 
     private const int MaxAllowedFanoutMax = 8;
@@ -1904,6 +1905,8 @@ public sealed class ConfigValidator
             var moduleEnabled = true;
             var hasModulePriority = false;
             JsonElement modulePriority = default;
+            var hasModuleShadow = false;
+            JsonElement moduleShadow = default;
 
             foreach (var moduleField in modulePatch.EnumerateObject())
             {
@@ -1970,6 +1973,13 @@ public sealed class ConfigValidator
                 {
                     hasModuleGate = true;
                     moduleGate = moduleField.Value;
+                    continue;
+                }
+
+                if (moduleField.NameEquals("shadow"))
+                {
+                    hasModuleShadow = true;
+                    moduleShadow = moduleField.Value;
                     continue;
                 }
 
@@ -2299,6 +2309,69 @@ public sealed class ConfigValidator
                 if (!GateJsonV1.TryParseOptional(moduleGate, gatePath, selectorRegistry, out _, out var gateFinding))
                 {
                     findings.Add(gateFinding);
+                }
+            }
+
+            if (hasModuleShadow)
+            {
+                var shadowPath = string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].shadow");
+
+                if (moduleShadow.ValueKind != JsonValueKind.Object)
+                {
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Error,
+                            code: CodeShadowSampleInvalid,
+                            path: shadowPath,
+                            message: "modules[].shadow must be an object."));
+                }
+                else
+                {
+                    var hasSample = false;
+                    JsonElement sampleElement = default;
+
+                    foreach (var shadowField in moduleShadow.EnumerateObject())
+                    {
+                        if (shadowField.NameEquals("sample"))
+                        {
+                            hasSample = true;
+                            sampleElement = shadowField.Value;
+                            continue;
+                        }
+
+                        var fieldName = shadowField.Name;
+                        findings.Add(
+                            new ValidationFinding(
+                                ValidationSeverity.Error,
+                                code: CodeUnknownField,
+                                path: string.Concat(shadowPath, ".", fieldName),
+                                message: string.Concat("Unknown field: ", fieldName)));
+                    }
+
+                    if (!hasSample)
+                    {
+                        findings.Add(
+                            new ValidationFinding(
+                                ValidationSeverity.Error,
+                                code: CodeShadowSampleInvalid,
+                                path: string.Concat(shadowPath, ".sample"),
+                                message: "modules[].shadow.sample is required."));
+                    }
+                    else
+                    {
+                        if (sampleElement.ValueKind != JsonValueKind.Number
+                            || !sampleElement.TryGetDouble(out var sampleRate)
+                            || sampleRate < 0
+                            || sampleRate > 1)
+                        {
+                            findings.Add(
+                                new ValidationFinding(
+                                    ValidationSeverity.Error,
+                                    code: CodeShadowSampleInvalid,
+                                    path: string.Concat(shadowPath, ".sample"),
+                                    message: "modules[].shadow.sample must be a number in range 0..1."));
+                        }
+                    }
                 }
             }
 

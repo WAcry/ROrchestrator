@@ -25,6 +25,11 @@ internal static class FlowActivitySource
     internal const string TagOutcomeKind = "outcome.kind";
     internal const string TagOutcomeCode = "outcome.code";
     internal const string TagSkipCode = "skip.code";
+    internal const string TagExecutionPath = "execution.path";
+    internal const string TagShadowSampleRateBps = "shadow.sample_rate_bps";
+
+    internal const string ExecutionPathPrimary = "primary";
+    internal const string ExecutionPathShadow = "shadow";
 
     internal static readonly ActivitySource Instance = new(ActivitySourceName);
 

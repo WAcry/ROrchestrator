@@ -233,6 +233,7 @@ public static class PatchEvaluatorV1
     public readonly struct StagePatchV1
     {
         private readonly StageModulePatchV1[] _modules;
+        private readonly StageModulePatchV1[] _shadowModules;
 
         public string StageName { get; }
 
@@ -242,12 +243,20 @@ public static class PatchEvaluatorV1
 
         public IReadOnlyList<StageModulePatchV1> Modules => _modules;
 
-        internal StagePatchV1(string stageName, bool hasFanoutMax, int fanoutMax, StageModulePatchV1[] modules)
+        public IReadOnlyList<StageModulePatchV1> ShadowModules => _shadowModules;
+
+        internal StagePatchV1(
+            string stageName,
+            bool hasFanoutMax,
+            int fanoutMax,
+            StageModulePatchV1[] modules,
+            StageModulePatchV1[] shadowModules)
         {
             StageName = stageName;
             HasFanoutMax = hasFanoutMax;
             FanoutMax = fanoutMax;
             _modules = modules;
+            _shadowModules = shadowModules;
         }
     }
 
@@ -269,6 +278,10 @@ public static class PatchEvaluatorV1
 
         public bool DisabledByEmergency { get; }
 
+        public bool IsShadow { get; }
+
+        public ushort ShadowSampleBps { get; }
+
         internal StageModulePatchV1(
             string moduleId,
             string moduleType,
@@ -277,7 +290,9 @@ public static class PatchEvaluatorV1
             int priority,
             bool hasGate,
             JsonElement gate,
-            bool disabledByEmergency)
+            bool disabledByEmergency,
+            bool isShadow,
+            ushort shadowSampleBps)
         {
             ModuleId = moduleId;
             ModuleType = moduleType;
@@ -287,6 +302,8 @@ public static class PatchEvaluatorV1
             HasGate = hasGate;
             Gate = gate;
             DisabledByEmergency = disabledByEmergency;
+            IsShadow = isShadow;
+            ShadowSampleBps = shadowSampleBps;
         }
     }
 
@@ -537,22 +554,57 @@ public static class PatchEvaluatorV1
         public StagePatchV1 Build()
         {
             StageModulePatchV1[] modules;
+            StageModulePatchV1[] shadowModules;
 
             if (_modules.Count == 0)
             {
                 modules = Array.Empty<StageModulePatchV1>();
+                shadowModules = Array.Empty<StageModulePatchV1>();
             }
             else
             {
-                modules = new StageModulePatchV1[_modules.Count];
+                var primaryCount = 0;
+                var shadowCount = 0;
 
                 for (var i = 0; i < _modules.Count; i++)
                 {
-                    modules[i] = _modules[i].Build();
+                    if (_modules[i].IsShadow)
+                    {
+                        shadowCount++;
+                        continue;
+                    }
+
+                    primaryCount++;
+                }
+
+                modules = primaryCount == 0 ? Array.Empty<StageModulePatchV1>() : new StageModulePatchV1[primaryCount];
+                shadowModules = shadowCount == 0 ? Array.Empty<StageModulePatchV1>() : new StageModulePatchV1[shadowCount];
+
+                var moduleIndex = 0;
+                var shadowIndex = 0;
+
+                for (var i = 0; i < _modules.Count; i++)
+                {
+                    var built = _modules[i].Build();
+
+                    if (built.IsShadow)
+                    {
+                        shadowModules[shadowIndex] = built;
+                        shadowIndex++;
+                        continue;
+                    }
+
+                    modules[moduleIndex] = built;
+                    moduleIndex++;
+                }
+
+                if (moduleIndex != modules.Length || shadowIndex != shadowModules.Length)
+                {
+                    throw new InvalidOperationException("Stage builder produced inconsistent module counts.");
                 }
             }
 
-            return new StagePatchV1(StageName, HasFanoutMax, FanoutMax, modules);
+            return new StagePatchV1(StageName, HasFanoutMax, FanoutMax, modules, shadowModules);
         }
     }
 
@@ -573,6 +625,10 @@ public static class PatchEvaluatorV1
 
         public bool DisabledByEmergency { get; private set; }
 
+        public bool IsShadow { get; private set; }
+
+        public ushort ShadowSampleBps { get; private set; }
+
         public ModuleBuilder(string moduleId)
         {
             ModuleId = moduleId;
@@ -581,6 +637,8 @@ public static class PatchEvaluatorV1
             Priority = 0;
             HasGate = false;
             DisabledByEmergency = false;
+            IsShadow = false;
+            ShadowSampleBps = 0;
         }
 
         public void ApplyFullModulePatch(string flowName, string stageName, JsonElement modulePatch)
@@ -594,6 +652,8 @@ public static class PatchEvaluatorV1
             var priority = 0;
             var hasGate = false;
             JsonElement gate = default;
+            var hasShadow = false;
+            ushort shadowSampleBps = 0;
 
             foreach (var moduleField in modulePatch.EnumerateObject())
             {
@@ -636,6 +696,13 @@ public static class PatchEvaluatorV1
                     gate = moduleField.Value;
                     continue;
                 }
+
+                if (moduleField.NameEquals("shadow"))
+                {
+                    hasShadow = true;
+                    shadowSampleBps = ParseShadowSampleBps(moduleField.Value, flowName, stageName, ModuleId);
+                    continue;
+                }
             }
 
             if (string.IsNullOrEmpty(use))
@@ -668,6 +735,12 @@ public static class PatchEvaluatorV1
                 HasGate = true;
                 _gate = gate;
             }
+
+            if (hasShadow)
+            {
+                IsShadow = true;
+                ShadowSampleBps = shadowSampleBps;
+            }
         }
 
         public void ApplyEmergencyDisable()
@@ -686,7 +759,71 @@ public static class PatchEvaluatorV1
                 Priority,
                 HasGate,
                 _gate,
-                DisabledByEmergency);
+                DisabledByEmergency,
+                IsShadow,
+                ShadowSampleBps);
+        }
+
+        private static ushort ParseShadowSampleBps(JsonElement shadowElement, string flowName, string stageName, string moduleId)
+        {
+            if (shadowElement.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidOperationException(
+                    $"modules[].shadow must be an object for module '{moduleId}' in flow '{flowName}' stage '{stageName}'.");
+            }
+
+            var hasSample = false;
+            double sample = 0;
+
+            foreach (var property in shadowElement.EnumerateObject())
+            {
+                if (property.NameEquals("sample"))
+                {
+                    hasSample = true;
+
+                    if (property.Value.ValueKind != JsonValueKind.Number || !property.Value.TryGetDouble(out sample))
+                    {
+                        throw new InvalidOperationException(
+                            $"modules[].shadow.sample must be a number for module '{moduleId}' in flow '{flowName}' stage '{stageName}'.");
+                    }
+
+                    continue;
+                }
+
+                throw new InvalidOperationException(
+                    $"Unknown field: {property.Name} in modules[].shadow for module '{moduleId}' in flow '{flowName}' stage '{stageName}'.");
+            }
+
+            if (!hasSample)
+            {
+                throw new InvalidOperationException(
+                    $"modules[].shadow.sample is required for module '{moduleId}' in flow '{flowName}' stage '{stageName}'.");
+            }
+
+            if (sample < 0 || sample > 1)
+            {
+                throw new InvalidOperationException(
+                    $"modules[].shadow.sample must be within range 0..1 for module '{moduleId}' in flow '{flowName}' stage '{stageName}'.");
+            }
+
+            if (sample == 0)
+            {
+                return 0;
+            }
+
+            if (sample == 1)
+            {
+                return 10000;
+            }
+
+            var bps = (int)Math.Round(sample * 10000.0, MidpointRounding.AwayFromZero);
+            if ((uint)bps > 10000)
+            {
+                throw new InvalidOperationException(
+                    $"modules[].shadow.sample must be within range 0..1 for module '{moduleId}' in flow '{flowName}' stage '{stageName}'.");
+            }
+
+            return (ushort)bps;
         }
     }
 

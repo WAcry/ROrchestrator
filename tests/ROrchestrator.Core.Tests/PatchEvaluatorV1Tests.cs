@@ -107,5 +107,29 @@ public sealed class PatchEvaluatorV1Tests
         Assert.False(stage.Modules[1].Enabled);
         Assert.True(stage.Modules[1].DisabledByEmergency);
     }
-}
 
+    [Fact]
+    public void Evaluate_ShouldSeparateShadowModules()
+    {
+        var patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
+            "\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[" +
+            "{\"id\":\"m_primary\",\"use\":\"test.module\",\"with\":{}}," +
+            "{\"id\":\"m_shadow\",\"use\":\"test.module\",\"with\":{},\"shadow\":{\"sample\":0.5}}" +
+            "]}}" +
+            "}}}";
+
+        using var evaluation = PatchEvaluatorV1.Evaluate("HomeFeed", patchJson, requestOptions: new FlowRequestOptions());
+
+        Assert.Single(evaluation.Stages);
+        var stage = evaluation.Stages[0];
+
+        Assert.Single(stage.Modules);
+        Assert.Equal("m_primary", stage.Modules[0].ModuleId);
+
+        Assert.Single(stage.ShadowModules);
+        Assert.Equal("m_shadow", stage.ShadowModules[0].ModuleId);
+        Assert.True(stage.ShadowModules[0].IsShadow);
+        Assert.Equal((ushort)5000, stage.ShadowModules[0].ShadowSampleBps);
+    }
+}

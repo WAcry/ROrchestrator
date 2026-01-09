@@ -154,6 +154,9 @@ internal sealed class ExecExplainCollectorV1
         OutcomeKind outcomeKind,
         string outcomeCode,
         string gateDecisionCode,
+        string gateSelectorName,
+        bool isShadow,
+        ushort shadowSampleBps,
         bool isOverride)
     {
         if (!_active)
@@ -173,6 +176,9 @@ internal sealed class ExecExplainCollectorV1
                 outcomeKind,
                 outcomeCode,
                 gateDecisionCode,
+                gateSelectorName,
+                isShadow,
+                shadowSampleBps,
                 isOverride));
     }
 

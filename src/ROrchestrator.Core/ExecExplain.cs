@@ -127,6 +127,12 @@ public readonly struct ExecExplainStageModule
 
     public string GateDecisionCode { get; }
 
+    public string GateSelectorName { get; }
+
+    public bool IsShadow { get; }
+
+    public ushort ShadowSampleBps { get; }
+
     public bool IsOverride { get; }
 
     internal ExecExplainStageModule(
@@ -139,6 +145,9 @@ public readonly struct ExecExplainStageModule
         OutcomeKind outcomeKind,
         string outcomeCode,
         string gateDecisionCode,
+        string gateSelectorName,
+        bool isShadow,
+        ushort shadowSampleBps,
         bool isOverride)
     {
         StageName = stageName;
@@ -150,6 +159,9 @@ public readonly struct ExecExplainStageModule
         OutcomeKind = outcomeKind;
         OutcomeCode = outcomeCode;
         GateDecisionCode = gateDecisionCode;
+        GateSelectorName = gateSelectorName;
+        IsShadow = isShadow;
+        ShadowSampleBps = shadowSampleBps;
         IsOverride = isOverride;
     }
 

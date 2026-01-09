@@ -42,6 +42,7 @@ ScaffoldingReadMe.txt
 CodeCoverage/
 .idea/
 .vscode/
+BenchmarkDotNet.Artifacts/
 
 # MSBuild Binary and Structured Log
 *.binlog

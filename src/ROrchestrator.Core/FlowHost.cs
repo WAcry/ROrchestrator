@@ -1,4 +1,5 @@
 using System.Threading;
+using ROrchestrator.Core.Selectors;
 
 namespace ROrchestrator.Core;
 
@@ -23,12 +24,22 @@ public sealed class FlowHost
     }
 
     public FlowHost(FlowRegistry registry, ModuleCatalog catalog)
-        : this(registry, catalog, EmptyConfigProvider.Instance, DefaultPlanCompiler.Instance)
+        : this(registry, catalog, SelectorRegistry.Empty, EmptyConfigProvider.Instance, DefaultPlanCompiler.Instance)
     {
     }
 
     public FlowHost(FlowRegistry registry, ModuleCatalog catalog, IConfigProvider configProvider)
-        : this(registry, catalog, configProvider, DefaultPlanCompiler.Instance)
+        : this(registry, catalog, SelectorRegistry.Empty, configProvider, DefaultPlanCompiler.Instance)
+    {
+    }
+
+    public FlowHost(FlowRegistry registry, ModuleCatalog catalog, SelectorRegistry selectorRegistry)
+        : this(registry, catalog, selectorRegistry, EmptyConfigProvider.Instance, DefaultPlanCompiler.Instance)
+    {
+    }
+
+    public FlowHost(FlowRegistry registry, ModuleCatalog catalog, SelectorRegistry selectorRegistry, IConfigProvider configProvider)
+        : this(registry, catalog, selectorRegistry, configProvider, DefaultPlanCompiler.Instance)
     {
     }
 
@@ -37,10 +48,20 @@ public sealed class FlowHost
         ModuleCatalog catalog,
         IConfigProvider configProvider,
         IPlanCompiler planCompiler)
+        : this(registry, catalog, SelectorRegistry.Empty, configProvider, planCompiler)
+    {
+    }
+
+    internal FlowHost(
+        FlowRegistry registry,
+        ModuleCatalog catalog,
+        SelectorRegistry selectorRegistry,
+        IConfigProvider configProvider,
+        IPlanCompiler planCompiler)
     {
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
-        _engine = new ExecutionEngine(catalog);
+        _engine = new ExecutionEngine(catalog, selectorRegistry ?? throw new ArgumentNullException(nameof(selectorRegistry)));
         _configProvider = configProvider ?? throw new ArgumentNullException(nameof(configProvider));
         _planCompiler = planCompiler ?? throw new ArgumentNullException(nameof(planCompiler));
 

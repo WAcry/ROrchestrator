@@ -187,6 +187,86 @@ public sealed class ExecutionEngineTracingTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Template_WithListener_ShouldTagShadowStageFanoutModuleActivities()
+    {
+        var patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"TracingTestFlow.FanoutShadow\":{" +
+            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
+            "{\"id\":\"m_primary\",\"use\":\"test.ok\",\"with\":{}}," +
+            "{\"id\":\"m_shadow\",\"use\":\"test.ok\",\"with\":{},\"shadow\":{\"sample\":1}}" +
+            "]}}}}}";
+
+        var services = new DummyServiceProvider();
+        var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
+        var configProvider = new StaticConfigProvider(configVersion: 123, patchJson: patchJson);
+        _ = await flowContext.GetConfigSnapshotAsync(configProvider);
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<JsonElement, int>("test.ok", _ => new OkJsonElementModule());
+
+        var blueprint = FlowBlueprint.Define<int, int>("TracingTestFlow.FanoutShadow")
+            .Stage(
+                "s1",
+                stage =>
+                    stage.Join<int>(
+                        "final",
+                        _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0))))
+            .Build();
+
+        var template = PlanCompiler.Compile(blueprint, catalog);
+        var engine = new ExecutionEngine(catalog);
+
+        var activities = new List<Activity>();
+
+        using var listener = CreateListenerForFlowName(activities, expectedFlowName: template.Name);
+
+        var result = await engine.ExecuteAsync(template, request: 0, flowContext);
+        Assert.True(result.IsOk);
+
+        Assert.True(TryGetSingleActivity(activities, activityName: Observability.FlowActivitySource.FlowActivityName, out var flowActivity));
+
+        var stageFanoutActivities = new List<Activity>(capacity: 2);
+        for (var i = 0; i < activities.Count; i++)
+        {
+            var activity = activities[i];
+            if (activity.DisplayName == Observability.FlowActivitySource.StageFanoutModuleActivityName)
+            {
+                stageFanoutActivities.Add(activity);
+            }
+        }
+
+        Assert.Equal(2, stageFanoutActivities.Count);
+
+        for (var i = 0; i < stageFanoutActivities.Count; i++)
+        {
+            var activity = stageFanoutActivities[i];
+            var moduleId = GetTagString(activity, "module.id");
+
+            Assert.Equal(flowActivity.SpanId, activity.ParentSpanId);
+            AssertTag(activity, "flow.name", template.Name);
+            AssertTag(activity, "stage.name", "s1");
+            AssertTag(activity, "module.type", "test.ok");
+            AssertTag(activity, "outcome.kind", "ok");
+            AssertTag(activity, "outcome.code", "OK");
+
+            if (moduleId == "m_primary")
+            {
+                AssertTag(activity, "execution.path", "primary");
+                Assert.Null(GetTagObject(activity, "shadow.sample_rate_bps"));
+            }
+            else if (moduleId == "m_shadow")
+            {
+                AssertTag(activity, "execution.path", "shadow");
+                AssertTag(activity, "shadow.sample_rate_bps", 10000L);
+            }
+            else
+            {
+                Assert.Fail("Unexpected module.id tag value.");
+            }
+        }
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Template_WithListener_ShouldSetOutcomeTags_ForErrorOutcome()
     {
         var services = new DummyServiceProvider();

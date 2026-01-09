@@ -188,7 +188,8 @@ internal static class FlowMetricsV1
         string flowName,
         string stageName,
         string moduleType,
-        OutcomeKind outcomeKind)
+        OutcomeKind outcomeKind,
+        bool isShadow)
     {
         var recordDuration = startTimestamp != 0 && StageFanoutModuleLatencyMs.Enabled;
         var recordOutcome = StageFanoutModuleOutcomes.Enabled;
@@ -203,6 +204,7 @@ internal static class FlowMetricsV1
         tags.Add(FlowActivitySource.TagStageName, stageName);
         tags.Add(FlowActivitySource.TagModuleType, moduleType);
         tags.Add(FlowActivitySource.TagOutcomeKind, FlowActivitySource.GetOutcomeKindTagValue(outcomeKind));
+        tags.Add(FlowActivitySource.TagExecutionPath, isShadow ? FlowActivitySource.ExecutionPathShadow : FlowActivitySource.ExecutionPathPrimary);
 
         if (recordDuration)
         {
