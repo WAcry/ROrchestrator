@@ -1,5 +1,6 @@
 using ROrchestrator.Core;
 using ROrchestrator.Core.Blueprint;
+using ROrchestrator.Core.Selectors;
 using ROrchestrator.Tooling;
 
 namespace ROrchestrator.Tooling.Tests;
@@ -111,7 +112,8 @@ public sealed class ToolingJsonV1Tests
             "{\"id\":\"m_disabled\",\"use\":\"test.module\",\"with\":{}}," +
             "{\"id\":\"m_gate_false\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"l1\",\"in\":[\"B\"]}}}," +
             "{\"id\":\"m_high\",\"use\":\"test.module\",\"with\":{},\"priority\":10}," +
-            "{\"id\":\"m_low\",\"use\":\"test.module\",\"with\":{},\"priority\":0}" +
+            "{\"id\":\"m_low\",\"use\":\"test.module\",\"with\":{},\"priority\":0}," +
+            "{\"id\":\"m_shadow\",\"use\":\"test.module\",\"with\":{},\"shadow\":{\"sample\":1}}" +
             "]}},\"experiments\":[{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[" +
             "{\"id\":\"m_exp\",\"use\":\"test.module\",\"with\":{},\"priority\":5}" +
             "]}}}}]," +
@@ -132,14 +134,14 @@ public sealed class ToolingJsonV1Tests
         Assert.Equal(0, result.ExitCode);
 
         Assert.Equal(
-            "{\"kind\":\"explain_patch\",\"flow_name\":\"HomeFeed\",\"variants\":{\"l1\":\"A\"},\"overlays_applied\":[{\"layer\":\"base\",\"experiment_layer\":null,\"experiment_variant\":null},{\"layer\":\"experiment\",\"experiment_layer\":\"l1\",\"experiment_variant\":\"A\"},{\"layer\":\"emergency\",\"experiment_layer\":null,\"experiment_variant\":null}],\"stages\":[{\"stage_name\":\"s1\",\"fanout_max\":1,\"modules\":[{\"module_id\":\"m_disabled\",\"module_type\":\"test.module\",\"enabled\":false,\"disabled_by_emergency\":true,\"priority\":0,\"decision_kind\":\"skip\",\"decision_code\":\"DISABLED\"},{\"module_id\":\"m_gate_false\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"decision_kind\":\"skip\",\"decision_code\":\"GATE_FALSE\"},{\"module_id\":\"m_high\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":10,\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"},{\"module_id\":\"m_low\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"decision_kind\":\"skip\",\"decision_code\":\"FANOUT_TRIM\"},{\"module_id\":\"m_exp\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":5,\"decision_kind\":\"skip\",\"decision_code\":\"FANOUT_TRIM\"}]}]}",
+            "{\"kind\":\"explain_patch\",\"flow_name\":\"HomeFeed\",\"variants\":{\"l1\":\"A\"},\"overlays_applied\":[{\"layer\":\"base\",\"experiment_layer\":null,\"experiment_variant\":null},{\"layer\":\"experiment\",\"experiment_layer\":\"l1\",\"experiment_variant\":\"A\"},{\"layer\":\"emergency\",\"experiment_layer\":null,\"experiment_variant\":null}],\"stages\":[{\"stage_name\":\"s1\",\"fanout_max\":1,\"modules\":[{\"module_id\":\"m_disabled\",\"module_type\":\"test.module\",\"enabled\":false,\"disabled_by_emergency\":true,\"priority\":0,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"skip\",\"decision_code\":\"DISABLED\"},{\"module_id\":\"m_gate_false\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"gate_decision_code\":\"GATE_FALSE\",\"gate_selector_name\":null,\"decision_kind\":\"skip\",\"decision_code\":\"GATE_FALSE\"},{\"module_id\":\"m_high\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":10,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"},{\"module_id\":\"m_low\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"skip\",\"decision_code\":\"FANOUT_TRIM\"},{\"module_id\":\"m_exp\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":5,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"skip\",\"decision_code\":\"FANOUT_TRIM\"}],\"shadow_modules\":[{\"module_id\":\"m_shadow\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"shadow_sample_rate_bps\":10000,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"}]}]}",
             result.Json);
     }
 
     [Fact]
     public void ExplainPatchJson_ShouldIncludeMermaid_WhenRequested()
     {
-        var patchJson = "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}}";
+        var patchJson = "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}},{\"id\":\"m_shadow\",\"use\":\"test.module\",\"with\":{},\"shadow\":{\"sample\":1}}]}}}}}";
 
         var result = ToolingJsonV1.ExplainPatchJson(
             flowName: "HomeFeed",
@@ -150,7 +152,35 @@ public sealed class ToolingJsonV1Tests
         Assert.Equal(0, result.ExitCode);
 
         Assert.Equal(
-            "{\"kind\":\"explain_patch\",\"flow_name\":\"HomeFeed\",\"variants\":null,\"overlays_applied\":[{\"layer\":\"base\",\"experiment_layer\":null,\"experiment_variant\":null}],\"stages\":[{\"stage_name\":\"s1\",\"fanout_max\":1,\"modules\":[{\"module_id\":\"m1\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"}]}],\"mermaid\":\"flowchart TD\\n  s0[\\\"s1\\\\nfanout_max=1\\\"]\\n  s0 --> m0[\\\"m1\\\\nexecute\\\\nSELECTED\\\"]\\n\"}",
+            "{\"kind\":\"explain_patch\",\"flow_name\":\"HomeFeed\",\"variants\":null,\"overlays_applied\":[{\"layer\":\"base\",\"experiment_layer\":null,\"experiment_variant\":null}],\"stages\":[{\"stage_name\":\"s1\",\"fanout_max\":1,\"modules\":[{\"module_id\":\"m1\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"}],\"shadow_modules\":[{\"module_id\":\"m_shadow\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"shadow_sample_rate_bps\":10000,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"}]}],\"mermaid\":\"flowchart TD\\n  s0[\\\"s1\\\\nfanout_max=1\\\"]\\n  s0 --> m0[\\\"m1\\\\nexecute\\\\nSELECTED\\\"]\\n  s0 -.-> m1[\\\"m_shadow\\\\nshadow\\\\nsample_bps=10000\\\\nexecute\\\\nSELECTED\\\"]\\n\"}",
+            result.Json);
+    }
+
+    [Fact]
+    public void ExplainPatchJson_ShouldEvaluateSelectorGate_WhenSelectorRegistryIsProvided()
+    {
+        var patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
+            "\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[" +
+            "{\"id\":\"m_sel_true\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"selector\":\"always_true\"}}," +
+            "{\"id\":\"m_sel_false\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"selector\":\"always_false\"}}" +
+            "]}}}}}";
+
+        var selectors = new SelectorRegistry();
+        selectors.Register("always_true", _ => true);
+        selectors.Register("always_false", _ => false);
+
+        var result = ToolingJsonV1.ExplainPatchJson(
+            flowName: "HomeFeed",
+            patchJson: patchJson,
+            requestOptions: default,
+            includeMermaid: false,
+            selectorRegistry: selectors);
+
+        Assert.Equal(0, result.ExitCode);
+
+        Assert.Equal(
+            "{\"kind\":\"explain_patch\",\"flow_name\":\"HomeFeed\",\"variants\":null,\"overlays_applied\":[{\"layer\":\"base\",\"experiment_layer\":null,\"experiment_variant\":null}],\"stages\":[{\"stage_name\":\"s1\",\"fanout_max\":2,\"modules\":[{\"module_id\":\"m_sel_true\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"gate_decision_code\":\"GATE_TRUE\",\"gate_selector_name\":\"always_true\",\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"},{\"module_id\":\"m_sel_false\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"gate_decision_code\":\"GATE_FALSE\",\"gate_selector_name\":\"always_false\",\"decision_kind\":\"skip\",\"decision_code\":\"GATE_FALSE\"}],\"shadow_modules\":[]}]}",
             result.Json);
     }
 

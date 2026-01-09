@@ -96,7 +96,8 @@ public static class ToolingJsonV1
         string flowName,
         string patchJson,
         FlowRequestOptions requestOptions = default,
-        bool includeMermaid = false)
+        bool includeMermaid = false,
+        SelectorRegistry? selectorRegistry = null)
     {
         if (flowName is null)
         {
@@ -111,7 +112,7 @@ public static class ToolingJsonV1
         try
         {
             using var evaluation = PatchEvaluatorV1.Evaluate(flowName, patchJson, requestOptions);
-            var json = BuildExplainPatchJson(flowName, evaluation, requestOptions, includeMermaid);
+            var json = BuildExplainPatchJson(flowName, evaluation, requestOptions, includeMermaid, selectorRegistry);
             return new ToolingCommandResult(exitCode: 0, json);
         }
         catch (Exception ex) when (IsExplainPatchInputException(ex))
@@ -174,7 +175,8 @@ public static class ToolingJsonV1
         string flowName,
         PatchEvaluatorV1.FlowPatchEvaluationV1 evaluation,
         FlowRequestOptions requestOptions,
-        bool includeMermaid)
+        bool includeMermaid,
+        SelectorRegistry? selectorRegistry)
     {
         var output = new ArrayBufferWriter<byte>(256);
         using var writer = new Utf8JsonWriter(
@@ -222,16 +224,18 @@ public static class ToolingJsonV1
 
         var stages = evaluation.Stages;
 
+        FlowContext? selectorFlowContext = null;
+
         for (var i = 0; i < stages.Count; i++)
         {
-            WriteExplainPatchStage(writer, stages[i], requestOptions);
+            WriteExplainPatchStage(writer, stages[i], requestOptions, selectorRegistry, ref selectorFlowContext);
         }
 
         writer.WriteEndArray();
 
         if (includeMermaid)
         {
-            writer.WriteString("mermaid", BuildExplainPatchMermaid(evaluation, requestOptions));
+            writer.WriteString("mermaid", BuildExplainPatchMermaid(evaluation, requestOptions, selectorRegistry));
         }
 
         writer.WriteEndObject();
@@ -266,19 +270,24 @@ public static class ToolingJsonV1
         writer.WriteEndObject();
     }
 
-    private static void WriteExplainPatchStage(Utf8JsonWriter writer, PatchEvaluatorV1.StagePatchV1 stage, FlowRequestOptions requestOptions)
+    private static void WriteExplainPatchStage(
+        Utf8JsonWriter writer,
+        PatchEvaluatorV1.StagePatchV1 stage,
+        FlowRequestOptions requestOptions,
+        SelectorRegistry? selectorRegistry,
+        ref FlowContext? selectorFlowContext)
     {
         var modules = stage.Modules;
         var moduleCount = modules.Count;
 
         var decisionKinds = moduleCount == 0 ? Array.Empty<byte>() : new byte[moduleCount];
         var decisionCodes = moduleCount == 0 ? Array.Empty<string>() : new string[moduleCount];
+        var gateDecisionCodes = moduleCount == 0 ? Array.Empty<string?>() : new string?[moduleCount];
+        var gateSelectorNames = moduleCount == 0 ? Array.Empty<string?>() : new string?[moduleCount];
 
         var candidates = moduleCount == 0 ? Array.Empty<StageModuleCandidate>() : new StageModuleCandidate[moduleCount];
         var candidateCount = 0;
 
-        var variants = requestOptions.Variants;
-        var requestAttributes = requestOptions.RequestAttributes;
         var userId = requestOptions.UserId;
 
         for (var i = 0; i < moduleCount; i++)
@@ -292,11 +301,18 @@ public static class ToolingJsonV1
                 continue;
             }
 
-            if (module.HasGate && !EvaluateGateAllowed(module.Gate, variants, userId, requestAttributes))
+            if (module.HasGate)
             {
-                decisionKinds[i] = 0;
-                decisionCodes[i] = ExecutionEngine.GateFalseCode;
-                continue;
+                var gateDecision = EvaluateGateDecision(module.Gate, requestOptions, selectorRegistry, ref selectorFlowContext, out var gateSelectorName);
+                gateDecisionCodes[i] = gateDecision.Code;
+                gateSelectorNames[i] = gateSelectorName;
+
+                if (!gateDecision.Allowed)
+                {
+                    decisionKinds[i] = 0;
+                    decisionCodes[i] = ExecutionEngine.GateFalseCode;
+                    continue;
+                }
             }
 
             candidates[candidateCount] = new StageModuleCandidate(i, module.Priority);
@@ -367,6 +383,108 @@ public static class ToolingJsonV1
             writer.WriteBoolean("enabled", module.Enabled);
             writer.WriteBoolean("disabled_by_emergency", module.DisabledByEmergency);
             writer.WriteNumber("priority", module.Priority);
+
+            if (gateDecisionCodes[i] is null)
+            {
+                writer.WriteNull("gate_decision_code");
+            }
+            else
+            {
+                writer.WriteString("gate_decision_code", gateDecisionCodes[i]);
+            }
+
+            if (gateSelectorNames[i] is null)
+            {
+                writer.WriteNull("gate_selector_name");
+            }
+            else
+            {
+                writer.WriteString("gate_selector_name", gateSelectorNames[i]);
+            }
+
+            writer.WriteString("decision_kind", kind);
+            writer.WriteString("decision_code", code);
+            writer.WriteEndObject();
+        }
+
+        writer.WriteEndArray();
+
+        writer.WritePropertyName("shadow_modules");
+        writer.WriteStartArray();
+
+        var shadowModules = stage.ShadowModules;
+        var shadowCount = shadowModules.Count;
+
+        for (var i = 0; i < shadowCount; i++)
+        {
+            var module = shadowModules[i];
+
+            string? shadowGateDecisionCode = null;
+            string? shadowGateSelectorName = null;
+
+            string kind;
+            string code;
+
+            if (!module.Enabled)
+            {
+                kind = "skip";
+                code = ExecutionEngine.DisabledCode;
+            }
+            else
+            {
+                if (module.HasGate)
+                {
+                    var gateDecision = EvaluateGateDecision(module.Gate, requestOptions, selectorRegistry, ref selectorFlowContext, out var gateSelectorName);
+                    shadowGateDecisionCode = gateDecision.Code;
+                    shadowGateSelectorName = gateSelectorName;
+
+                    if (!gateDecision.Allowed)
+                    {
+                        kind = "skip";
+                        code = ExecutionEngine.GateFalseCode;
+                        goto WriteShadowModule;
+                    }
+                }
+
+                if (!ShouldExecuteShadow(module.ShadowSampleBps, userId, module.ModuleId))
+                {
+                    kind = "skip";
+                    code = ExecutionEngine.ShadowNotSampledCode;
+                }
+                else
+                {
+                    kind = "execute";
+                    code = SelectedDecisionCode;
+                }
+            }
+
+        WriteShadowModule:
+            writer.WriteStartObject();
+            writer.WriteString("module_id", module.ModuleId);
+            writer.WriteString("module_type", module.ModuleType);
+            writer.WriteBoolean("enabled", module.Enabled);
+            writer.WriteBoolean("disabled_by_emergency", module.DisabledByEmergency);
+            writer.WriteNumber("priority", module.Priority);
+            writer.WriteNumber("shadow_sample_rate_bps", module.ShadowSampleBps);
+
+            if (shadowGateDecisionCode is null)
+            {
+                writer.WriteNull("gate_decision_code");
+            }
+            else
+            {
+                writer.WriteString("gate_decision_code", shadowGateDecisionCode);
+            }
+
+            if (shadowGateSelectorName is null)
+            {
+                writer.WriteNull("gate_selector_name");
+            }
+            else
+            {
+                writer.WriteString("gate_selector_name", shadowGateSelectorName);
+            }
+
             writer.WriteString("decision_kind", kind);
             writer.WriteString("decision_code", code);
             writer.WriteEndObject();
@@ -376,40 +494,160 @@ public static class ToolingJsonV1
         writer.WriteEndObject();
     }
 
-    private static bool EvaluateGateAllowed(
+    private static GateDecision EvaluateGateDecision(
         JsonElement gateElement,
-        IReadOnlyDictionary<string, string>? variants,
-        string? userId,
-        IReadOnlyDictionary<string, string>? requestAttributes)
+        FlowRequestOptions requestOptions,
+        SelectorRegistry? selectorRegistry,
+        ref FlowContext? selectorFlowContext,
+        out string? gateSelectorName)
     {
-        if (!GateJsonV1.TryParseOptional(gateElement, "$.gate", out var gate, out var finding))
+        if (selectorRegistry is not null)
         {
-            throw new FormatException(finding.Message);
+            if (!GateJsonV1.TryParseOptional(gateElement, "$.gate", selectorRegistry, out var gate, out var finding))
+            {
+                throw new FormatException(finding.Message);
+            }
+
+            if (gate is null)
+            {
+                gateSelectorName = null;
+                return GateDecision.AllowedDecision;
+            }
+
+            if (gate is SelectorGate selectorGate)
+            {
+                gateSelectorName = selectorGate.SelectorName;
+
+                selectorFlowContext ??= new FlowContext(
+                    services: EmptyServiceProvider.Instance,
+                    cancellationToken: System.Threading.CancellationToken.None,
+                    deadline: SelectorFlowContextDeadline,
+                    requestOptions: requestOptions);
+
+                return GateEvaluator.Evaluate(gate, selectorFlowContext, selectorRegistry);
+            }
+
+            gateSelectorName = null;
+            return EvaluateNonSelectorGateDecision(gate, requestOptions);
         }
 
-        if (gate is null)
+        if (!GateJsonV1.TryParseOptional(gateElement, "$.gate", out var gateWithoutRegistry, out var findingWithoutRegistry))
+        {
+            throw new FormatException(findingWithoutRegistry.Message);
+        }
+
+        if (gateWithoutRegistry is null)
+        {
+            gateSelectorName = null;
+            return GateDecision.AllowedDecision;
+        }
+
+        if (gateWithoutRegistry is SelectorGate)
+        {
+            throw new InvalidOperationException("SelectorRegistry is required to evaluate SelectorGate.");
+        }
+
+        gateSelectorName = null;
+        return EvaluateNonSelectorGateDecision(gateWithoutRegistry, requestOptions);
+    }
+
+    private static GateDecision EvaluateNonSelectorGateDecision(Gate gate, FlowRequestOptions requestOptions)
+    {
+        var variantsDictionary = requestOptions.Variants ?? EmptyVariantDictionary;
+        var evalContext = new GateEvaluationContext(
+            variants: new VariantSet(variantsDictionary),
+            userId: requestOptions.UserId,
+            requestAttributes: requestOptions.RequestAttributes,
+            selectorRegistry: null,
+            flowContext: null);
+
+        return GateEvaluator.Evaluate(gate, in evalContext);
+    }
+
+    private static readonly DateTimeOffset SelectorFlowContextDeadline =
+        new DateTimeOffset(2100, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+    private static bool ShouldExecuteShadow(ushort sampleBps, string? userId, string moduleId)
+    {
+        if (sampleBps == 0)
+        {
+            return false;
+        }
+
+        if (sampleBps >= 10000)
         {
             return true;
         }
 
-        var variantsDictionary = variants ?? EmptyVariantDictionary;
-        var evalContext = new GateEvaluationContext(
-            variants: new VariantSet(variantsDictionary),
-            userId: userId,
-            requestAttributes: requestAttributes,
-            selectorRegistry: null,
-            flowContext: null);
+        if (string.IsNullOrEmpty(userId))
+        {
+            return false;
+        }
 
-        return GateEvaluator.Evaluate(gate, in evalContext).Allowed;
+        var bucket = ComputeShadowBucket(userId!, moduleId);
+        return bucket < sampleBps;
     }
 
-    private static string BuildExplainPatchMermaid(PatchEvaluatorV1.FlowPatchEvaluationV1 evaluation, FlowRequestOptions requestOptions)
+    private static uint ComputeShadowBucket(string userId, string moduleId)
+    {
+        const ulong offsetBasis = 14695981039346656037;
+        const ulong prime = 1099511628211;
+
+        var hash = offsetBasis;
+        hash = HashChars(hash, userId);
+        hash = HashChar(hash, '\0');
+        hash = HashChars(hash, moduleId);
+
+        return (uint)(hash % 10000);
+
+        static ulong HashChars(ulong hash, string value)
+        {
+            for (var i = 0; i < value.Length; i++)
+            {
+                hash = HashChar(hash, value[i]);
+            }
+
+            return hash;
+        }
+
+        static ulong HashChar(ulong hash, char c)
+        {
+            var u = (ushort)c;
+
+            hash ^= (byte)u;
+            hash *= prime;
+            hash ^= (byte)(u >> 8);
+            hash *= prime;
+
+            return hash;
+        }
+    }
+
+    private sealed class EmptyServiceProvider : IServiceProvider
+    {
+        public static readonly EmptyServiceProvider Instance = new();
+
+        private EmptyServiceProvider()
+        {
+        }
+
+        public object? GetService(Type serviceType)
+        {
+            return null;
+        }
+    }
+
+    private static string BuildExplainPatchMermaid(
+        PatchEvaluatorV1.FlowPatchEvaluationV1 evaluation,
+        FlowRequestOptions requestOptions,
+        SelectorRegistry? selectorRegistry)
     {
         var stages = evaluation.Stages;
         var builder = new StringBuilder(256);
         builder.Append("flowchart TD\n");
 
         var moduleIndex = 0;
+        FlowContext? selectorFlowContext = null;
 
         for (var stageIndex = 0; stageIndex < stages.Count; stageIndex++)
         {
@@ -426,91 +664,150 @@ public static class ToolingJsonV1
             var modules = stage.Modules;
             var moduleCount = modules.Count;
 
-            if (moduleCount == 0)
+            if (moduleCount != 0)
             {
-                continue;
+                var decisionKinds = new byte[moduleCount];
+                var decisionCodes = new string[moduleCount];
+                var candidates = new StageModuleCandidate[moduleCount];
+                var candidateCount = 0;
+
+                for (var i = 0; i < moduleCount; i++)
+                {
+                    var module = modules[i];
+
+                    if (!module.Enabled)
+                    {
+                        decisionKinds[i] = 0;
+                        decisionCodes[i] = ExecutionEngine.DisabledCode;
+                        continue;
+                    }
+
+                    if (module.HasGate)
+                    {
+                        var gateDecision = EvaluateGateDecision(module.Gate, requestOptions, selectorRegistry, ref selectorFlowContext, out _);
+
+                        if (!gateDecision.Allowed)
+                        {
+                            decisionKinds[i] = 0;
+                            decisionCodes[i] = ExecutionEngine.GateFalseCode;
+                            continue;
+                        }
+                    }
+
+                    candidates[candidateCount] = new StageModuleCandidate(i, module.Priority);
+                    candidateCount++;
+                }
+
+                SortCandidates(candidates, candidateCount);
+
+                var fanoutMax = stage.HasFanoutMax ? stage.FanoutMax : int.MaxValue;
+
+                if (fanoutMax < 0)
+                {
+                    fanoutMax = 0;
+                }
+
+                var executeCount = candidateCount;
+
+                if (fanoutMax < executeCount)
+                {
+                    executeCount = fanoutMax;
+                }
+
+                if (executeCount < 0)
+                {
+                    executeCount = 0;
+                }
+
+                for (var rank = 0; rank < candidateCount; rank++)
+                {
+                    var idx = candidates[rank].ModuleIndex;
+
+                    if (rank < executeCount)
+                    {
+                        decisionKinds[idx] = 1;
+                        decisionCodes[idx] = SelectedDecisionCode;
+                    }
+                    else
+                    {
+                        decisionKinds[idx] = 0;
+                        decisionCodes[idx] = ExecutionEngine.FanoutTrimCode;
+                    }
+                }
+
+                for (var i = 0; i < moduleCount; i++)
+                {
+                    var module = modules[i];
+                    var kind = decisionKinds[i] == 1 ? "execute" : "skip";
+                    var code = decisionCodes[i];
+
+                    builder.Append("  s");
+                    builder.Append(stageIndex);
+                    builder.Append(" --> m");
+                    builder.Append(moduleIndex);
+                    builder.Append("[\"");
+                    builder.Append(module.ModuleId);
+                    builder.Append("\\n");
+                    builder.Append(kind);
+                    builder.Append("\\n");
+                    builder.Append(code);
+                    builder.Append("\"]\n");
+
+                    moduleIndex++;
+                }
             }
 
-            var decisionKinds = new byte[moduleCount];
-            var decisionCodes = new string[moduleCount];
-            var candidates = new StageModuleCandidate[moduleCount];
-            var candidateCount = 0;
+            var shadowModules = stage.ShadowModules;
+            var shadowCount = shadowModules.Count;
+            var shadowUserId = requestOptions.UserId;
 
-            var variants = requestOptions.Variants;
-            var requestAttributes = requestOptions.RequestAttributes;
-            var userId = requestOptions.UserId;
-
-            for (var i = 0; i < moduleCount; i++)
+            for (var i = 0; i < shadowCount; i++)
             {
-                var module = modules[i];
+                var module = shadowModules[i];
+
+                string kind;
+                string code;
 
                 if (!module.Enabled)
                 {
-                    decisionKinds[i] = 0;
-                    decisionCodes[i] = ExecutionEngine.DisabledCode;
-                    continue;
-                }
-
-                if (module.HasGate && !EvaluateGateAllowed(module.Gate, variants, userId, requestAttributes))
-                {
-                    decisionKinds[i] = 0;
-                    decisionCodes[i] = ExecutionEngine.GateFalseCode;
-                    continue;
-                }
-
-                candidates[candidateCount] = new StageModuleCandidate(i, module.Priority);
-                candidateCount++;
-            }
-
-            SortCandidates(candidates, candidateCount);
-
-            var fanoutMax = stage.HasFanoutMax ? stage.FanoutMax : int.MaxValue;
-
-            if (fanoutMax < 0)
-            {
-                fanoutMax = 0;
-            }
-
-            var executeCount = candidateCount;
-
-            if (fanoutMax < executeCount)
-            {
-                executeCount = fanoutMax;
-            }
-
-            if (executeCount < 0)
-            {
-                executeCount = 0;
-            }
-
-            for (var rank = 0; rank < candidateCount; rank++)
-            {
-                var idx = candidates[rank].ModuleIndex;
-
-                if (rank < executeCount)
-                {
-                    decisionKinds[idx] = 1;
-                    decisionCodes[idx] = SelectedDecisionCode;
+                    kind = "skip";
+                    code = ExecutionEngine.DisabledCode;
                 }
                 else
                 {
-                    decisionKinds[idx] = 0;
-                    decisionCodes[idx] = ExecutionEngine.FanoutTrimCode;
+                    if (module.HasGate)
+                    {
+                        var gateDecision = EvaluateGateDecision(module.Gate, requestOptions, selectorRegistry, ref selectorFlowContext, out _);
+
+                        if (!gateDecision.Allowed)
+                        {
+                            kind = "skip";
+                            code = ExecutionEngine.GateFalseCode;
+                            goto AppendShadowModule;
+                        }
+                    }
+
+                    if (!ShouldExecuteShadow(module.ShadowSampleBps, shadowUserId, module.ModuleId))
+                    {
+                        kind = "skip";
+                        code = ExecutionEngine.ShadowNotSampledCode;
+                    }
+                    else
+                    {
+                        kind = "execute";
+                        code = SelectedDecisionCode;
+                    }
                 }
-            }
 
-            for (var i = 0; i < moduleCount; i++)
-            {
-                var module = modules[i];
-                var kind = decisionKinds[i] == 1 ? "execute" : "skip";
-                var code = decisionCodes[i];
-
+            AppendShadowModule:
                 builder.Append("  s");
                 builder.Append(stageIndex);
-                builder.Append(" --> m");
+                builder.Append(" -.-> m");
                 builder.Append(moduleIndex);
                 builder.Append("[\"");
                 builder.Append(module.ModuleId);
+                builder.Append("\\nshadow\\nsample_bps=");
+                builder.Append(module.ShadowSampleBps.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 builder.Append("\\n");
                 builder.Append(kind);
                 builder.Append("\\n");
