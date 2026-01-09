@@ -15,6 +15,7 @@ public sealed class ConfigValidator
     private const string CodeUnknownField = "CFG_UNKNOWN_FIELD";
     private const string CodeFanoutMaxInvalid = "CFG_FANOUT_MAX_INVALID";
     private const string CodeFanoutMaxExceeded = "CFG_FANOUT_MAX_EXCEEDED";
+    private const string CodeFanoutTrimLikely = "CFG_FANOUT_TRIM_LIKELY";
     private const string CodeFlowsNotObject = "CFG_FLOWS_NOT_OBJECT";
     private const string CodeFlowPatchNotObject = "CFG_FLOW_PATCH_NOT_OBJECT";
     private const string CodeFlowNotRegistered = "CFG_FLOW_NOT_REGISTERED";
@@ -32,6 +33,7 @@ public sealed class ConfigValidator
     private const string CodeModuleArgsMissing = "CFG_MODULE_ARGS_MISSING";
     private const string CodeModuleArgsBindFailed = "CFG_MODULE_ARGS_BIND_FAILED";
     private const string CodeModuleArgsUnknownField = "CFG_MODULE_ARGS_UNKNOWN_FIELD";
+    private const string CodeModuleArgsInvalid = "CFG_MODULE_ARGS_INVALID";
     private const string CodeModuleEnabledInvalid = "CFG_MODULE_ENABLED_INVALID";
     private const string CodePriorityInvalid = "CFG_PRIORITY_INVALID";
     private const string CodeExperimentMappingInvalid = "CFG_EXPERIMENT_MAPPING_INVALID";
@@ -232,6 +234,8 @@ public sealed class ConfigValidator
                         flowName,
                         hasEmergencyPatch,
                         emergencyPatch,
+                        hasStagesPatch,
+                        stagesPatch,
                         blueprintStageNameSet,
                         flowRegistered,
                         ref findings);
@@ -726,6 +730,8 @@ public sealed class ConfigValidator
         string flowName,
         bool hasEmergencyPatch,
         JsonElement emergencyPatch,
+        bool hasBaseStagesPatch,
+        JsonElement baseStagesPatch,
         string[] blueprintStageNameSet,
         bool flowRegistered,
         ref FindingBuffer findings)
@@ -854,6 +860,8 @@ public sealed class ConfigValidator
             flowName,
             emergencyPathPrefix: string.Concat(emergencyPathPrefix, ".patch"),
             patch,
+            hasBaseStagesPatch,
+            baseStagesPatch,
             blueprintStageNameSet,
             flowRegistered,
             ref findings);
@@ -863,6 +871,8 @@ public sealed class ConfigValidator
         string flowName,
         string emergencyPathPrefix,
         JsonElement patch,
+        bool hasBaseStagesPatch,
+        JsonElement baseStagesPatch,
         string[] blueprintStageNameSet,
         bool flowRegistered,
         ref FindingBuffer findings)
@@ -972,6 +982,54 @@ public sealed class ConfigValidator
             if (hasFanoutMax)
             {
                 ValidateEmergencyFanoutMax(stagePathPrefix, fanoutMax, ref findings);
+            }
+
+            if (hasFanoutMax
+                && hasBaseStagesPatch
+                && baseStagesPatch.ValueKind == JsonValueKind.Object
+                && baseStagesPatch.TryGetProperty(stageName, out var baseStagePatch)
+                && baseStagePatch.ValueKind == JsonValueKind.Object
+                && TryGetValidFanoutMaxValue(fanoutMax, out var emergencyFanoutMax)
+                && baseStagePatch.TryGetProperty("modules", out var baseModulesPatch)
+                && baseModulesPatch.ValueKind == JsonValueKind.Array)
+            {
+                HashSet<string>? disabledModuleIdSet = null;
+
+                if (hasModules && modulesPatch.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var moduleElement in modulesPatch.EnumerateArray())
+                    {
+                        if (moduleElement.ValueKind != JsonValueKind.Object)
+                        {
+                            continue;
+                        }
+
+                        if (!moduleElement.TryGetProperty("enabled", out var enabledElement)
+                            || enabledElement.ValueKind != JsonValueKind.False)
+                        {
+                            continue;
+                        }
+
+                        if (!moduleElement.TryGetProperty("id", out var idElement)
+                            || idElement.ValueKind != JsonValueKind.String)
+                        {
+                            continue;
+                        }
+
+                        var id = idElement.GetString();
+                        if (string.IsNullOrEmpty(id))
+                        {
+                            continue;
+                        }
+
+                        disabledModuleIdSet ??= new HashSet<string>();
+                        disabledModuleIdSet.Add(id);
+                    }
+                }
+
+                var enabledModuleCount = CountEnabledModules(baseModulesPatch, disabledModuleIdSet);
+
+                MaybeReportFanoutTrimLikely(stagePathPrefix, enabledModuleCount, emergencyFanoutMax, ref findings);
             }
 
             if (!hasModules)
@@ -1679,7 +1737,12 @@ public sealed class ConfigValidator
             return;
         }
 
-        var modulesPathPrefix = string.Concat("$.flows.", flowName, ".stages.", stageName, ".modules");
+        var stagePathPrefix = string.Concat("$.flows.", flowName, ".stages.", stageName);
+
+        var validFanoutMaxValue = 0;
+        var hasValidFanoutMaxValue = hasFanoutMax && TryGetValidFanoutMaxValue(fanoutMax, out validFanoutMaxValue);
+
+        var modulesPathPrefix = string.Concat(stagePathPrefix, ".modules");
 
         if (modulesPatch.ValueKind != JsonValueKind.Array)
         {
@@ -1692,7 +1755,23 @@ public sealed class ConfigValidator
             return;
         }
 
-        ValidateModulesPatch(flowName, stageName, modulesPathPrefix, modulesPatch, moduleCatalog, selectorRegistry, ref findings, ref moduleIdFirstOccurrenceMap);
+        var enabledModuleCount = 0;
+
+        ValidateModulesPatch(
+            flowName,
+            stageName,
+            modulesPathPrefix,
+            modulesPatch,
+            moduleCatalog,
+            selectorRegistry,
+            ref findings,
+            ref enabledModuleCount,
+            ref moduleIdFirstOccurrenceMap);
+
+        if (hasValidFanoutMaxValue)
+        {
+            MaybeReportFanoutTrimLikely(stagePathPrefix, enabledModuleCount, validFanoutMaxValue, ref findings);
+        }
     }
 
     private static void ValidateFanoutMax(
@@ -1794,6 +1873,7 @@ public sealed class ConfigValidator
         ModuleCatalog moduleCatalog,
         SelectorRegistry selectorRegistry,
         ref FindingBuffer findings,
+        ref int enabledModuleCount,
         ref Dictionary<string, ModuleIdFirstOccurrence>? moduleIdFirstOccurrenceMap)
     {
         Dictionary<string, int>? moduleIdIndexMap = null;
@@ -2036,6 +2116,7 @@ public sealed class ConfigValidator
             }
 
             var moduleArgsType = (Type?)null;
+            IModuleArgsValidatorInvoker? moduleArgsValidator = null;
 
             if (string.IsNullOrEmpty(moduleUse))
             {
@@ -2048,7 +2129,7 @@ public sealed class ConfigValidator
             }
             else
             {
-                if (!moduleCatalog.TryGetSignature(moduleUse, out var argsType, out _))
+                if (!moduleCatalog.TryGetSignature(moduleUse, out var argsType, out _, out var argsValidator))
                 {
                     findings.Add(
                         new ValidationFinding(
@@ -2060,6 +2141,7 @@ public sealed class ConfigValidator
                 else
                 {
                     moduleArgsType = argsType;
+                    moduleArgsValidator = argsValidator;
                 }
             }
 
@@ -2098,9 +2180,11 @@ public sealed class ConfigValidator
                     }
                 }
 
+                object? moduleArgs = null;
+
                 try
                 {
-                    _ = moduleWith.Deserialize(moduleArgsType);
+                    moduleArgs = moduleWith.Deserialize(moduleArgsType);
                 }
                 catch (JsonException ex)
                 {
@@ -2143,6 +2227,56 @@ public sealed class ConfigValidator
                             path: moduleWithPath,
                             message: message));
                 }
+
+                if (moduleArgs is not null && moduleArgsValidator is not null)
+                {
+                    try
+                    {
+                        if (!moduleArgsValidator.TryValidate(moduleArgs, out var relativePath, out var message))
+                        {
+                            if (string.IsNullOrEmpty(message))
+                            {
+                                message = "module args validation failed.";
+                            }
+
+                            var path = moduleWithPath;
+
+                            if (!string.IsNullOrEmpty(relativePath))
+                            {
+                                if (relativePath[0] == '[' || relativePath[0] == '.')
+                                {
+                                    path = string.Concat(moduleWithPath, relativePath);
+                                }
+                                else
+                                {
+                                    path = string.Concat(moduleWithPath, ".", relativePath);
+                                }
+                            }
+
+                            findings.Add(
+                                new ValidationFinding(
+                                    ValidationSeverity.Error,
+                                    code: CodeModuleArgsInvalid,
+                                    path: path,
+                                    message: message));
+                        }
+                    }
+                    catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
+                    {
+                        var message = ex.Message;
+                        if (string.IsNullOrEmpty(message))
+                        {
+                            message = "module args validation failed.";
+                        }
+
+                        findings.Add(
+                            new ValidationFinding(
+                                ValidationSeverity.Error,
+                                code: CodeModuleArgsInvalid,
+                                path: moduleWithPath,
+                                message: message));
+                    }
+                }
             }
 
             if (hasModuleGate)
@@ -2168,8 +2302,111 @@ public sealed class ConfigValidator
                 }
             }
 
+            if (!hasModuleEnabled || moduleEnabled)
+            {
+                enabledModuleCount++;
+            }
+
             index++;
         }
+    }
+
+    private static bool TryGetValidFanoutMaxValue(JsonElement fanoutMax, out int value)
+    {
+        if (fanoutMax.ValueKind != JsonValueKind.Number)
+        {
+            value = 0;
+            return false;
+        }
+
+        if (fanoutMax.TryGetInt32(out var value32))
+        {
+            if (value32 < 0 || value32 > MaxAllowedFanoutMax)
+            {
+                value = 0;
+                return false;
+            }
+
+            value = value32;
+            return true;
+        }
+
+        if (fanoutMax.TryGetInt64(out var value64))
+        {
+            if (value64 < 0 || value64 > MaxAllowedFanoutMax)
+            {
+                value = 0;
+                return false;
+            }
+
+            value = (int)value64;
+            return true;
+        }
+
+        value = 0;
+        return false;
+    }
+
+    private static int CountEnabledModules(JsonElement modulesPatch, HashSet<string>? disabledModuleIdSet)
+    {
+        var count = 0;
+
+        foreach (var modulePatch in modulesPatch.EnumerateArray())
+        {
+            if (modulePatch.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var enabled = true;
+
+            if (modulePatch.TryGetProperty("enabled", out var enabledElement)
+                && (enabledElement.ValueKind == JsonValueKind.True || enabledElement.ValueKind == JsonValueKind.False))
+            {
+                enabled = enabledElement.GetBoolean();
+            }
+
+            if (!enabled)
+            {
+                continue;
+            }
+
+            if (disabledModuleIdSet is not null
+                && modulePatch.TryGetProperty("id", out var idElement)
+                && idElement.ValueKind == JsonValueKind.String)
+            {
+                var id = idElement.GetString();
+
+                if (!string.IsNullOrEmpty(id) && disabledModuleIdSet.Contains(id))
+                {
+                    continue;
+                }
+            }
+
+            count++;
+        }
+
+        return count;
+    }
+
+    private static void MaybeReportFanoutTrimLikely(string stagePath, int enabledModuleCount, int fanoutMax, ref FindingBuffer findings)
+    {
+        if (enabledModuleCount <= fanoutMax)
+        {
+            return;
+        }
+
+        findings.Add(
+            new ValidationFinding(
+                ValidationSeverity.Warn,
+                code: CodeFanoutTrimLikely,
+                path: stagePath,
+                message: string.Concat(
+                    "enabledModules=",
+                    enabledModuleCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    " exceeds fanoutMax=",
+                    fanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ".")));
     }
 
     private static bool ShouldValidateUnknownFields(Type type)

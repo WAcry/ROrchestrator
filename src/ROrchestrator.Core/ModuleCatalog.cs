@@ -1,5 +1,10 @@
 namespace ROrchestrator.Core;
 
+internal interface IModuleArgsValidatorInvoker
+{
+    bool TryValidate(object args, out string? path, out string message);
+}
+
 public sealed class ModuleCatalog
 {
     private readonly Dictionary<string, Entry> _modules;
@@ -9,7 +14,10 @@ public sealed class ModuleCatalog
         _modules = new Dictionary<string, Entry>();
     }
 
-    public void Register<TArgs, TOut>(string typeName, Func<IServiceProvider, IModule<TArgs, TOut>> factory)
+    public void Register<TArgs, TOut>(
+        string typeName,
+        Func<IServiceProvider, IModule<TArgs, TOut>> factory,
+        IModuleArgsValidator<TArgs>? argsValidator = null)
     {
         if (string.IsNullOrEmpty(typeName))
         {
@@ -21,7 +29,14 @@ public sealed class ModuleCatalog
             throw new ArgumentNullException(nameof(factory));
         }
 
-        if (!_modules.TryAdd(typeName, new Entry(typeof(TArgs), typeof(TOut), factory)))
+        IModuleArgsValidatorInvoker? argsValidatorInvoker = null;
+
+        if (argsValidator is not null)
+        {
+            argsValidatorInvoker = new ModuleArgsValidatorInvoker<TArgs>(argsValidator);
+        }
+
+        if (!_modules.TryAdd(typeName, new Entry(typeof(TArgs), typeof(TOut), factory, argsValidatorInvoker)))
         {
             throw new ArgumentException($"TypeName '{typeName}' is already registered.", nameof(typeName));
         }
@@ -89,6 +104,27 @@ public sealed class ModuleCatalog
         return false;
     }
 
+    internal bool TryGetSignature(string typeName, out Type argsType, out Type outType, out IModuleArgsValidatorInvoker? argsValidator)
+    {
+        if (string.IsNullOrEmpty(typeName))
+        {
+            throw new ArgumentException("TypeName must be non-empty.", nameof(typeName));
+        }
+
+        if (_modules.TryGetValue(typeName, out var entry))
+        {
+            argsType = entry.ArgsType;
+            outType = entry.OutType;
+            argsValidator = entry.ArgsValidator;
+            return true;
+        }
+
+        argsType = default!;
+        outType = default!;
+        argsValidator = null;
+        return false;
+    }
+
     private readonly struct Entry
     {
         public Type ArgsType { get; }
@@ -97,11 +133,36 @@ public sealed class ModuleCatalog
 
         public Delegate Factory { get; }
 
-        public Entry(Type argsType, Type outType, Delegate factory)
+        public IModuleArgsValidatorInvoker? ArgsValidator { get; }
+
+        public Entry(Type argsType, Type outType, Delegate factory, IModuleArgsValidatorInvoker? argsValidator)
         {
             ArgsType = argsType;
             OutType = outType;
             Factory = factory;
+            ArgsValidator = argsValidator;
+        }
+    }
+
+    private sealed class ModuleArgsValidatorInvoker<TArgs> : IModuleArgsValidatorInvoker
+    {
+        private readonly IModuleArgsValidator<TArgs> _validator;
+
+        public ModuleArgsValidatorInvoker(IModuleArgsValidator<TArgs> validator)
+        {
+            _validator = validator;
+        }
+
+        public bool TryValidate(object args, out string? path, out string message)
+        {
+            if (args is not TArgs typedArgs)
+            {
+                path = null;
+                message = string.Concat("Expected module args type: ", typeof(TArgs).FullName);
+                return false;
+            }
+
+            return _validator.TryValidate(typedArgs, out path, out message);
         }
     }
 }

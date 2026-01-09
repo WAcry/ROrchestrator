@@ -180,6 +180,130 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
+    public void ValidatePatchJson_ShouldReportFanoutTrimLikely_WhenEnabledModulesCountExceedsFanoutMax()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[" +
+            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}," +
+            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}," +
+            "{\"id\":\"m3\",\"use\":\"test.module\",\"with\":{}}," +
+            "{\"id\":\"m4\",\"use\":\"test.module\",\"with\":{}}," +
+            "{\"id\":\"m5\",\"use\":\"test.module\",\"with\":{}}]}}}}}");
+
+        Assert.True(report.IsValid);
+        Assert.Single(report.Findings);
+
+        var finding = GetSingleFinding(report, "CFG_FANOUT_TRIM_LIKELY");
+        Assert.Equal(ValidationSeverity.Warn, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldNotReportFanoutTrimLikely_WhenEnabledModulesCountDoesNotExceedFanoutMax()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[" +
+            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}," +
+            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}," +
+            "{\"id\":\"m3\",\"use\":\"test.module\",\"with\":{},\"enabled\":false}]}}}}}");
+
+        Assert.True(report.IsValid);
+        AssertNoFinding(report, "CFG_FANOUT_TRIM_LIKELY");
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportFanoutTrimLikely_WhenEnabledModulesCountExceedsFanoutMaxInExperimentPatch()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[" +
+            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}," +
+            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}," +
+            "{\"id\":\"m3\",\"use\":\"test.module\",\"with\":{}}]}}}}]}}}");
+
+        Assert.True(report.IsValid);
+        Assert.Single(report.Findings);
+
+        var finding = GetSingleFinding(report, "CFG_FANOUT_TRIM_LIKELY");
+        Assert.Equal(ValidationSeverity.Warn, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportFanoutTrimLikely_WhenEmergencyFanoutMaxIsLowerThanEnabledModulesCount()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
+            "\"stages\":{\"s1\":{\"modules\":[" +
+            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}," +
+            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}," +
+            "{\"id\":\"m3\",\"use\":\"test.module\",\"with\":{}}]}},\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1}}}}}}}");
+
+        Assert.True(report.IsValid);
+        Assert.Single(report.Findings);
+
+        var finding = GetSingleFinding(report, "CFG_FANOUT_TRIM_LIKELY");
+        Assert.Equal(ValidationSeverity.Warn, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.emergency.patch.stages.s1", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldNotReportFanoutTrimLikely_WhenEmergencyDisablesModulesToFitFanoutMax()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
+            "\"stages\":{\"s1\":{\"modules\":[" +
+            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}," +
+            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}," +
+            "{\"id\":\"m3\",\"use\":\"test.module\",\"with\":{}}]}},\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m2\",\"enabled\":false},{\"id\":\"m3\",\"enabled\":false}]}}}}}}}");
+
+        Assert.True(report.IsValid);
+        AssertNoFinding(report, "CFG_FANOUT_TRIM_LIKELY");
+    }
+
+    [Fact]
     public void ValidatePatchJson_ShouldReportFanoutMaxInvalid_WhenFanoutMaxIsNotInteger()
     {
         var registry = new FlowRegistry();
@@ -1110,6 +1234,58 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
+    public void ValidatePatchJson_ShouldReportModuleArgsInvalid_WhenArgsValidatorReturnsFalse()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgsWithMaxCandidate, int>(
+            "test.module",
+            _ => new TestModuleWithMaxCandidateArgs(),
+            argsValidator: new MaxCandidateGreaterThanZeroValidator());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{\"MaxCandidate\":0}}]}}}}}");
+
+        Assert.False(report.IsValid);
+        Assert.Single(report.Findings);
+
+        var finding = GetSingleFinding(report, "CFG_MODULE_ARGS_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].with.MaxCandidate", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportModuleArgsInvalid_WhenArgsValidatorReturnsFalseInExperimentPatch()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgsWithMaxCandidate, int>(
+            "test.module",
+            _ => new TestModuleWithMaxCandidateArgs(),
+            argsValidator: new MaxCandidateGreaterThanZeroValidator());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{\"MaxCandidate\":0}}]}}}}]}}}");
+
+        Assert.False(report.IsValid);
+        Assert.Single(report.Findings);
+
+        var finding = GetSingleFinding(report, "CFG_MODULE_ARGS_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].with.MaxCandidate", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
     public void ValidatePatchJson_ShouldReportModuleArgsUnknownField_WhenModuleWithContainsUnknownField()
     {
         var registry = new FlowRegistry();
@@ -1932,6 +2108,23 @@ public sealed class ConfigValidatorTests
     private sealed class ModuleArgsWithMaxCandidate
     {
         public int MaxCandidate { get; set; }
+    }
+
+    private sealed class MaxCandidateGreaterThanZeroValidator : IModuleArgsValidator<ModuleArgsWithMaxCandidate>
+    {
+        public bool TryValidate(ModuleArgsWithMaxCandidate args, out string? path, out string message)
+        {
+            if (args.MaxCandidate > 0)
+            {
+                path = null;
+                message = string.Empty;
+                return true;
+            }
+
+            path = nameof(ModuleArgsWithMaxCandidate.MaxCandidate);
+            message = "MaxCandidate must be greater than 0.";
+            return false;
+        }
     }
 
     private sealed class TestModule : IModule<ModuleArgs, int>
