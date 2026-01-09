@@ -134,6 +134,28 @@ public static class GateEvaluator
             return !EvaluateAllowed(not.Child, in context);
         }
 
+        if (gate is SelectorGate selectorGate)
+        {
+            var registry = context.SelectorRegistry;
+            if (registry is null)
+            {
+                throw new InvalidOperationException("SelectorRegistry is required to evaluate SelectorGate.");
+            }
+
+            var flowContext = context.FlowContext;
+            if (flowContext is null)
+            {
+                throw new InvalidOperationException("FlowContext is required to evaluate SelectorGate.");
+            }
+
+            if (!registry.TryGet(selectorGate.SelectorName, out var selector))
+            {
+                throw new InvalidOperationException($"Selector '{selectorGate.SelectorName}' is not registered.");
+            }
+
+            return selector(flowContext);
+        }
+
         throw new InvalidOperationException($"Unsupported gate type: '{gate.GetType()}'.");
     }
 

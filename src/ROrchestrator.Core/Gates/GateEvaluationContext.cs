@@ -1,3 +1,5 @@
+using ROrchestrator.Core.Selectors;
+
 namespace ROrchestrator.Core.Gates;
 
 public readonly struct GateEvaluationContext
@@ -8,14 +10,21 @@ public readonly struct GateEvaluationContext
 
     public IReadOnlyDictionary<string, string>? RequestAttributes { get; }
 
+    public SelectorRegistry? SelectorRegistry { get; }
+
+    public FlowContext? FlowContext { get; }
+
     public GateEvaluationContext(
         VariantSet variants,
         string? userId = null,
-        IReadOnlyDictionary<string, string>? requestAttributes = null)
+        IReadOnlyDictionary<string, string>? requestAttributes = null,
+        SelectorRegistry? selectorRegistry = null,
+        FlowContext? flowContext = null)
     {
         Variants = variants;
         UserId = userId;
         RequestAttributes = requestAttributes;
+        SelectorRegistry = selectorRegistry;
+        FlowContext = flowContext;
     }
 }
-

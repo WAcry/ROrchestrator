@@ -459,7 +459,7 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
-    public void ValidatePatchJson_ShouldReportExperimentPatchInvalid_WhenExperimentPatchContainsInvalidParamsPatch()
+    public void ValidatePatchJson_ShouldReportParamsUnknownField_WhenExperimentPatchContainsUnknownParamsField()
     {
         var registry = new FlowRegistry();
         var blueprint = CreateBlueprint<int, int>("TestFlow", okValue: 0);
@@ -471,10 +471,160 @@ public sealed class ConfigValidatorTests
         var report = validator.ValidatePatchJson(
             "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"recall_layer\",\"variant\":\"B\",\"patch\":{\"params\":{\"MaxCandidate\":10}}}]}}}");
 
-        var finding = GetSingleFinding(report, "CFG_EXPERIMENT_PATCH_INVALID");
+        var finding = GetSingleFinding(report, "CFG_PARAMS_UNKNOWN_FIELD");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
         Assert.Equal("$.flows.HomeFeed.experiments[0].patch.params.MaxCandidate", finding.Path);
         Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportLayerConflict_WhenDifferentLayersOverrideSameParamsPath()
+    {
+        var registry = new FlowRegistry();
+        var blueprint = CreateBlueprint<int, int>("TestFlow", okValue: 0);
+        registry.Register<int, int, TestParams, ParamsPatchWithMaxCandidate>("HomeFeed", blueprint, new TestParams());
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[" +
+            "{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{\"params\":{\"MaxCandidate\":1}}}," +
+            "{\"layer\":\"l2\",\"variant\":\"B\",\"patch\":{\"params\":{\"MaxCandidate\":2}}}" +
+            "]}}}");
+
+        Assert.False(report.IsValid);
+
+        var findings = report.Findings;
+        var foundIndex0 = false;
+        var foundIndex1 = false;
+        var conflictCount = 0;
+
+        for (var i = 0; i < findings.Count; i++)
+        {
+            var finding = findings[i];
+            if (!string.Equals("CFG_LAYER_CONFLICT", finding.Code, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            conflictCount++;
+
+            if (string.Equals("$.flows.HomeFeed.experiments[0].patch.params.MaxCandidate", finding.Path, StringComparison.Ordinal))
+            {
+                foundIndex0 = true;
+                continue;
+            }
+
+            if (string.Equals("$.flows.HomeFeed.experiments[1].patch.params.MaxCandidate", finding.Path, StringComparison.Ordinal))
+            {
+                foundIndex1 = true;
+            }
+        }
+
+        Assert.Equal(2, conflictCount);
+        Assert.True(foundIndex0);
+        Assert.True(foundIndex1);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportLayerConflict_WhenDifferentLayersOverrideSameFanoutMax()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[" +
+            "{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1}}}}," +
+            "{\"layer\":\"l2\",\"variant\":\"B\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":2}}}}" +
+            "]}}}");
+
+        Assert.False(report.IsValid);
+
+        var findings = report.Findings;
+        var foundIndex0 = false;
+        var foundIndex1 = false;
+        var conflictCount = 0;
+
+        for (var i = 0; i < findings.Count; i++)
+        {
+            var finding = findings[i];
+            if (!string.Equals("CFG_LAYER_CONFLICT", finding.Code, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            conflictCount++;
+
+            if (string.Equals("$.flows.HomeFeed.experiments[0].patch.stages.s1.fanoutMax", finding.Path, StringComparison.Ordinal))
+            {
+                foundIndex0 = true;
+                continue;
+            }
+
+            if (string.Equals("$.flows.HomeFeed.experiments[1].patch.stages.s1.fanoutMax", finding.Path, StringComparison.Ordinal))
+            {
+                foundIndex1 = true;
+            }
+        }
+
+        Assert.Equal(2, conflictCount);
+        Assert.True(foundIndex0);
+        Assert.True(foundIndex1);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportLayerConflict_WhenDifferentLayersOverrideSameModuleId()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[" +
+            "{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}," +
+            "{\"layer\":\"l2\",\"variant\":\"B\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}" +
+            "]}}}");
+
+        Assert.False(report.IsValid);
+
+        var findings = report.Findings;
+        var foundIndex0 = false;
+        var foundIndex1 = false;
+        var conflictCount = 0;
+
+        for (var i = 0; i < findings.Count; i++)
+        {
+            var finding = findings[i];
+            if (!string.Equals("CFG_LAYER_CONFLICT", finding.Code, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            conflictCount++;
+
+            if (string.Equals("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].id", finding.Path, StringComparison.Ordinal))
+            {
+                foundIndex0 = true;
+                continue;
+            }
+
+            if (string.Equals("$.flows.HomeFeed.experiments[1].patch.stages.s1.modules[0].id", finding.Path, StringComparison.Ordinal))
+            {
+                foundIndex1 = true;
+            }
+        }
+
+        Assert.Equal(2, conflictCount);
+        Assert.True(foundIndex0);
+        Assert.True(foundIndex1);
     }
 
     [Fact]

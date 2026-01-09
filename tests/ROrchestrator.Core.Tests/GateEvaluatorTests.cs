@@ -1,9 +1,12 @@
 using ROrchestrator.Core.Gates;
+using ROrchestrator.Core.Selectors;
 
 namespace ROrchestrator.Core.Tests;
 
 public sealed class GateEvaluatorTests
 {
+    private static readonly DateTimeOffset FutureDeadline = new(2100, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
     [Fact]
     public void ExperimentGate_ShouldAllow_WhenVariantMatches()
     {
@@ -208,6 +211,42 @@ public sealed class GateEvaluatorTests
         Assert.Equal(GateDecision.DeniedCode, decision.Code);
     }
 
+    [Fact]
+    public void SelectorGate_ShouldAllow_WhenSelectorReturnsTrue()
+    {
+        var gate = new SelectorGate("is_allowed");
+
+        var selectors = new SelectorRegistry();
+        selectors.Register("is_allowed", _ => true);
+
+        var variants = new Dictionary<string, string>(0);
+        var context = new FlowContext(new DummyServiceProvider(), CancellationToken.None, FutureDeadline);
+        var evalContext = new GateEvaluationContext(new VariantSet(variants), selectorRegistry: selectors, flowContext: context);
+
+        var decision = GateEvaluator.Evaluate(gate, in evalContext);
+
+        Assert.True(decision.Allowed);
+        Assert.Equal(GateDecision.AllowedCode, decision.Code);
+    }
+
+    [Fact]
+    public void SelectorGate_ShouldDeny_WhenSelectorReturnsFalse()
+    {
+        var gate = new SelectorGate("is_denied");
+
+        var selectors = new SelectorRegistry();
+        selectors.Register("is_denied", _ => false);
+
+        var variants = new Dictionary<string, string>(0);
+        var context = new FlowContext(new DummyServiceProvider(), CancellationToken.None, FutureDeadline);
+        var evalContext = new GateEvaluationContext(new VariantSet(variants), selectorRegistry: selectors, flowContext: context);
+
+        var decision = GateEvaluator.Evaluate(gate, in evalContext);
+
+        Assert.False(decision.Allowed);
+        Assert.Equal(GateDecision.DeniedCode, decision.Code);
+    }
+
     private static int ComputeRolloutBucket(string userId, string salt)
     {
         const ulong offsetBasis = 14695981039346656037;
@@ -242,5 +281,10 @@ public sealed class GateEvaluatorTests
 
             return hash;
         }
+    }
+
+    private sealed class DummyServiceProvider : IServiceProvider
+    {
+        public object? GetService(Type serviceType) => null;
     }
 }

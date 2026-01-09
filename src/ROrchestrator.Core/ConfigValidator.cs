@@ -37,6 +37,7 @@ public sealed class ConfigValidator
     private const string CodeExperimentMappingInvalid = "CFG_EXPERIMENT_MAPPING_INVALID";
     private const string CodeExperimentMappingDuplicate = "CFG_EXPERIMENT_MAPPING_DUPLICATE";
     private const string CodeExperimentPatchInvalid = "CFG_EXPERIMENT_PATCH_INVALID";
+    private const string CodeLayerConflict = "CFG_LAYER_CONFLICT";
     private const string CodeGateRedundant = "CFG_GATE_REDUNDANT";
     private const string GateCodePrefix = "CFG_GATE_";
 
@@ -320,6 +321,9 @@ public sealed class ConfigValidator
         }
 
         Dictionary<(string Layer, string Variant), int>? experimentKeyIndexMap = null;
+        Dictionary<string, LayerConflictFirstOccurrence>? paramsConflictMap = null;
+        Dictionary<string, LayerConflictFirstOccurrence>? fanoutConflictMap = null;
+        Dictionary<string, LayerConflictFirstOccurrence>? moduleIdConflictMap = null;
 
         var index = 0;
 
@@ -491,6 +495,19 @@ public sealed class ConfigValidator
                 continue;
             }
 
+            if (hasLayer && !string.IsNullOrEmpty(layer))
+            {
+                var patchFlowName = string.Concat(flowName, ".experiments[", indexString, "].patch");
+                RecordExperimentPatchLayerConflicts(
+                    layer: layer!,
+                    patchFlowName,
+                    patch,
+                    ref paramsConflictMap,
+                    ref fanoutConflictMap,
+                    ref moduleIdConflictMap,
+                    ref findings);
+            }
+
             if (flowRegistered)
             {
                 var patchFlowName = string.Concat(flowName, ".experiments[", indexString, "].patch");
@@ -498,6 +515,232 @@ public sealed class ConfigValidator
             }
 
             index++;
+        }
+    }
+
+    private static void RecordExperimentPatchLayerConflicts(
+        string layer,
+        string patchFlowName,
+        JsonElement patch,
+        ref Dictionary<string, LayerConflictFirstOccurrence>? paramsConflictMap,
+        ref Dictionary<string, LayerConflictFirstOccurrence>? fanoutConflictMap,
+        ref Dictionary<string, LayerConflictFirstOccurrence>? moduleIdConflictMap,
+        ref FindingBuffer findings)
+    {
+        if (string.IsNullOrEmpty(layer))
+        {
+            throw new ArgumentException("Layer must be non-empty.", nameof(layer));
+        }
+
+        var patchValue = patch;
+        if (patchValue.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        if (patchValue.TryGetProperty("params", out var paramsPatch))
+        {
+            if (paramsPatch.ValueKind == JsonValueKind.Object)
+            {
+                RecordParamLayerConflicts(
+                    layer,
+                    patchFlowName,
+                    paramsPatch,
+                    parentPath: null,
+                    ref paramsConflictMap,
+                    ref findings);
+            }
+            else if (paramsPatch.ValueKind != JsonValueKind.Undefined)
+            {
+                var path = string.Concat("$.flows.", patchFlowName, ".params");
+                RecordLayerConflict(
+                    kind: "params",
+                    key: string.Empty,
+                    layer,
+                    path,
+                    ref paramsConflictMap,
+                    ref findings);
+            }
+        }
+
+        if (!patchValue.TryGetProperty("stages", out var stagesPatch) || stagesPatch.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        foreach (var stageProperty in stagesPatch.EnumerateObject())
+        {
+            var stageName = stageProperty.Name;
+            if (stageProperty.Value.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var stagePatch = stageProperty.Value;
+
+            if (stagePatch.TryGetProperty("fanoutMax", out _))
+            {
+                var path = string.Concat("$.flows.", patchFlowName, ".stages.", stageName, ".fanoutMax");
+                RecordLayerConflict(
+                    kind: "fanoutMax",
+                    key: stageName,
+                    layer,
+                    path,
+                    ref fanoutConflictMap,
+                    ref findings);
+            }
+
+            if (!stagePatch.TryGetProperty("modules", out var modulesPatch) || modulesPatch.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            var moduleIndex = 0;
+
+            foreach (var moduleElement in modulesPatch.EnumerateArray())
+            {
+                if (moduleElement.ValueKind != JsonValueKind.Object)
+                {
+                    moduleIndex++;
+                    continue;
+                }
+
+                if (!moduleElement.TryGetProperty("id", out var moduleIdElement) || moduleIdElement.ValueKind != JsonValueKind.String)
+                {
+                    moduleIndex++;
+                    continue;
+                }
+
+                var moduleId = moduleIdElement.GetString();
+                if (string.IsNullOrEmpty(moduleId))
+                {
+                    moduleIndex++;
+                    continue;
+                }
+
+                var path = string.Concat(
+                    "$.flows.",
+                    patchFlowName,
+                    ".stages.",
+                    stageName,
+                    ".modules[",
+                    moduleIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    "].id");
+
+                RecordLayerConflict(
+                    kind: "moduleId",
+                    key: moduleId!,
+                    layer,
+                    path,
+                    ref moduleIdConflictMap,
+                    ref findings);
+
+                moduleIndex++;
+            }
+        }
+    }
+
+    private static void RecordParamLayerConflicts(
+        string layer,
+        string patchFlowName,
+        JsonElement paramsPatch,
+        string? parentPath,
+        ref Dictionary<string, LayerConflictFirstOccurrence>? conflictMap,
+        ref FindingBuffer findings)
+    {
+        foreach (var property in paramsPatch.EnumerateObject())
+        {
+            var name = property.Name;
+
+            var currentPath = string.IsNullOrEmpty(parentPath) ? name : string.Concat(parentPath, ".", name);
+
+            if (property.Value.ValueKind == JsonValueKind.Object)
+            {
+                RecordParamLayerConflicts(layer, patchFlowName, property.Value, currentPath, ref conflictMap, ref findings);
+                continue;
+            }
+
+            var path = string.Concat("$.flows.", patchFlowName, ".params.", currentPath);
+            RecordLayerConflict(
+                kind: "params",
+                key: currentPath,
+                layer,
+                path,
+                ref conflictMap,
+                ref findings);
+        }
+    }
+
+    private static void RecordLayerConflict(
+        string kind,
+        string key,
+        string layer,
+        string path,
+        ref Dictionary<string, LayerConflictFirstOccurrence>? conflictMap,
+        ref FindingBuffer findings)
+    {
+        conflictMap ??= new Dictionary<string, LayerConflictFirstOccurrence>();
+
+        if (conflictMap.TryGetValue(key, out var first))
+        {
+            if (string.Equals(first.Layer, layer, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            if (!first.Reported)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeLayerConflict,
+                        path: first.Path,
+                        message: string.Concat(
+                            "Experiment layer conflict: ",
+                            kind,
+                            " is modified by multiple layers (",
+                            first.Layer,
+                            ", ",
+                            layer,
+                            ").")));
+
+                first.Reported = true;
+                conflictMap[key] = first;
+            }
+
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeLayerConflict,
+                    path: path,
+                    message: string.Concat(
+                        "Experiment layer conflict: ",
+                        kind,
+                        " is modified by multiple layers (",
+                        first.Layer,
+                        ", ",
+                        layer,
+                        ").")));
+
+            return;
+        }
+
+        conflictMap.Add(key, new LayerConflictFirstOccurrence(layer, path));
+    }
+
+    private struct LayerConflictFirstOccurrence
+    {
+        public string Layer { get; }
+
+        public string Path { get; }
+
+        public bool Reported { get; set; }
+
+        public LayerConflictFirstOccurrence(string layer, string path)
+        {
+            Layer = layer;
+            Path = path;
+            Reported = false;
         }
     }
 
@@ -559,29 +802,7 @@ public sealed class ConfigValidator
 
         for (var i = 0; i < items.Length; i++)
         {
-            var item = items[i];
-
-            if (item.Severity == ValidationSeverity.Error)
-            {
-                if (item.Code.StartsWith(GateCodePrefix, StringComparison.Ordinal)
-                    || string.Equals(item.Code, CodeFanoutMaxInvalid, StringComparison.Ordinal)
-                    || string.Equals(item.Code, CodeFanoutMaxExceeded, StringComparison.Ordinal))
-                {
-                    findings.Add(item);
-                    continue;
-                }
-
-                findings.Add(
-                    new ValidationFinding(
-                        ValidationSeverity.Error,
-                        code: CodeExperimentPatchInvalid,
-                        path: item.Path,
-                        message: item.Message));
-            }
-            else
-            {
-                findings.Add(item);
-            }
+            findings.Add(items[i]);
         }
     }
 
