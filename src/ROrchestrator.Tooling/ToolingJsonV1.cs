@@ -99,7 +99,8 @@ public static class ToolingJsonV1
         string patchJson,
         FlowRequestOptions requestOptions = default,
         bool includeMermaid = false,
-        SelectorRegistry? selectorRegistry = null)
+        SelectorRegistry? selectorRegistry = null,
+        QosTier qosTier = QosTier.Full)
     {
         if (flowName is null)
         {
@@ -113,8 +114,8 @@ public static class ToolingJsonV1
 
         try
         {
-            using var evaluation = PatchEvaluatorV1.Evaluate(flowName, patchJson, requestOptions);
-            var json = BuildExplainPatchJson(flowName, evaluation, requestOptions, includeMermaid, selectorRegistry);
+            using var evaluation = PatchEvaluatorV1.Evaluate(flowName, patchJson, requestOptions, qosTier: qosTier);
+            var json = BuildExplainPatchJson(flowName, evaluation, requestOptions, includeMermaid, selectorRegistry, qosTier);
             return new ToolingCommandResult(exitCode: 0, json);
         }
         catch (Exception ex) when (IsExplainPatchInputException(ex))
@@ -128,6 +129,49 @@ public static class ToolingJsonV1
         {
             var json = BuildExplainPatchErrorJson(
                 code: "EXPLAIN_PATCH_INTERNAL_ERROR",
+                message: string.IsNullOrEmpty(ex.Message) ? "Internal error." : ex.Message);
+            return new ToolingCommandResult(exitCode: 1, json);
+        }
+    }
+
+    public static ToolingCommandResult PreviewMatrixJson(
+        string flowName,
+        string patchJson,
+        IReadOnlyList<Dictionary<string, string>> variantsMatrix,
+        SelectorRegistry? selectorRegistry = null,
+        QosTier qosTier = QosTier.Full)
+    {
+        if (flowName is null)
+        {
+            throw new ArgumentNullException(nameof(flowName));
+        }
+
+        if (patchJson is null)
+        {
+            throw new ArgumentNullException(nameof(patchJson));
+        }
+
+        if (variantsMatrix is null)
+        {
+            throw new ArgumentNullException(nameof(variantsMatrix));
+        }
+
+        try
+        {
+            var json = BuildPreviewMatrixJson(flowName, patchJson, variantsMatrix, selectorRegistry, qosTier);
+            return new ToolingCommandResult(exitCode: 0, json);
+        }
+        catch (Exception ex) when (IsExplainPatchInputException(ex))
+        {
+            var json = BuildPreviewMatrixErrorJson(
+                code: "PREVIEW_MATRIX_INPUT_INVALID",
+                message: ex.Message);
+            return new ToolingCommandResult(exitCode: 2, json);
+        }
+        catch (Exception ex) when (ToolingExceptionGuard.ShouldHandle(ex))
+        {
+            var json = BuildPreviewMatrixErrorJson(
+                code: "PREVIEW_MATRIX_INTERNAL_ERROR",
                 message: string.IsNullOrEmpty(ex.Message) ? "Internal error." : ex.Message);
             return new ToolingCommandResult(exitCode: 1, json);
         }
@@ -152,7 +196,8 @@ public static class ToolingJsonV1
             var fanoutReport = PatchDiffV1.DiffFanoutMax(oldPatchJson, newPatchJson);
             var emergencyReport = PatchDiffV1.DiffEmergency(oldPatchJson, newPatchJson);
 
-            var json = BuildDiffJson(moduleReport, paramReport, fanoutReport, emergencyReport);
+            var riskReport = AnalyzeRiskReport(oldPatchJson, newPatchJson, moduleReport, paramReport, fanoutReport, emergencyReport);
+            var json = BuildDiffJson(moduleReport, paramReport, fanoutReport, emergencyReport, riskReport);
             return new ToolingCommandResult(exitCode: 0, json);
         }
         catch (Exception ex) when (IsDiffInputException(ex))
@@ -178,7 +223,8 @@ public static class ToolingJsonV1
         PatchEvaluatorV1.FlowPatchEvaluationV1 evaluation,
         FlowRequestOptions requestOptions,
         bool includeMermaid,
-        SelectorRegistry? selectorRegistry)
+        SelectorRegistry? selectorRegistry,
+        QosTier qosTier)
     {
         var output = new ArrayBufferWriter<byte>(256);
         using var writer = new Utf8JsonWriter(
@@ -193,6 +239,11 @@ public static class ToolingJsonV1
         writer.WriteString("kind", "explain_patch");
         writer.WriteString("tooling_json_version", ToolingJsonVersion);
         writer.WriteString("flow_name", flowName);
+
+        writer.WritePropertyName("qos");
+        writer.WriteStartObject();
+        writer.WriteString("selected_tier", GetQosTierString(qosTier));
+        writer.WriteEndObject();
 
         WriteSortedVariants(writer, requestOptions.Variants);
 
@@ -230,6 +281,389 @@ public static class ToolingJsonV1
         writer.Flush();
 
         return Encoding.UTF8.GetString(output.WrittenSpan);
+    }
+
+    private static string BuildPreviewMatrixJson(
+        string flowName,
+        string patchJson,
+        IReadOnlyList<Dictionary<string, string>> variantsMatrix,
+        SelectorRegistry? selectorRegistry,
+        QosTier qosTier)
+    {
+        var output = new ArrayBufferWriter<byte>(512);
+        using var writer = new Utf8JsonWriter(
+            output,
+            new JsonWriterOptions
+            {
+                Indented = false,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            });
+
+        writer.WriteStartObject();
+        writer.WriteString("kind", "preview_matrix");
+        writer.WriteString("tooling_json_version", ToolingJsonVersion);
+        writer.WriteString("flow_name", flowName);
+
+        writer.WritePropertyName("qos");
+        writer.WriteStartObject();
+        writer.WriteString("selected_tier", GetQosTierString(qosTier));
+        writer.WriteEndObject();
+
+        writer.WritePropertyName("previews");
+        writer.WriteStartArray();
+
+        var count = variantsMatrix.Count;
+        if (count != 0)
+        {
+            var entries = new PreviewMatrixEntry[count];
+
+            for (var i = 0; i < count; i++)
+            {
+                var variants = variantsMatrix[i];
+                entries[i] = new PreviewMatrixEntry(i, BuildVariantsSortKey(variants));
+            }
+
+            if (entries.Length > 1)
+            {
+                Array.Sort(entries, PreviewMatrixEntryComparer.Instance);
+            }
+
+            FlowContext? selectorFlowContext = null;
+
+            for (var i = 0; i < entries.Length; i++)
+            {
+                var variants = variantsMatrix[entries[i].Index];
+                var requestOptions = new FlowRequestOptions(variants: variants, userId: "preview");
+
+                using var evaluation = PatchEvaluatorV1.Evaluate(flowName, patchJson, requestOptions, qosTier: qosTier, configVersion: 1);
+
+                writer.WriteStartObject();
+
+                WriteSortedVariants(writer, requestOptions.Variants);
+
+                writer.WritePropertyName("overlays_applied");
+                writer.WriteStartArray();
+
+                var overlays = evaluation.OverlaysApplied;
+                for (var overlayIndex = 0; overlayIndex < overlays.Count; overlayIndex++)
+                {
+                    WriteExplainPatchOverlay(writer, overlays[overlayIndex]);
+                }
+
+                writer.WriteEndArray();
+
+                writer.WritePropertyName("stages");
+                writer.WriteStartArray();
+
+                WritePreviewMatrixStages(writer, evaluation.Stages, requestOptions, selectorRegistry, ref selectorFlowContext);
+
+                writer.WriteEndArray();
+
+                writer.WriteEndObject();
+            }
+        }
+
+        writer.WriteEndArray();
+        writer.WriteEndObject();
+        writer.Flush();
+
+        return Encoding.UTF8.GetString(output.WrittenSpan);
+    }
+
+    private static string BuildPreviewMatrixErrorJson(string code, string message)
+    {
+        var output = new ArrayBufferWriter<byte>(256);
+        using var writer = new Utf8JsonWriter(
+            output,
+            new JsonWriterOptions
+            {
+                Indented = false,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            });
+
+        writer.WriteStartObject();
+        writer.WriteString("kind", "preview_matrix");
+        writer.WriteString("tooling_json_version", ToolingJsonVersion);
+        writer.WritePropertyName("error");
+        writer.WriteStartObject();
+        writer.WriteString("code", code);
+        writer.WriteString("message", message);
+        writer.WriteEndObject();
+        writer.WriteEndObject();
+        writer.Flush();
+
+        return Encoding.UTF8.GetString(output.WrittenSpan);
+    }
+
+    private static void WritePreviewMatrixStages(
+        Utf8JsonWriter writer,
+        IReadOnlyList<PatchEvaluatorV1.StagePatchV1> stages,
+        FlowRequestOptions requestOptions,
+        SelectorRegistry? selectorRegistry,
+        ref FlowContext? selectorFlowContext)
+    {
+        if (stages.Count == 0)
+        {
+            return;
+        }
+
+        var sorted = new PatchEvaluatorV1.StagePatchV1[stages.Count];
+
+        for (var i = 0; i < sorted.Length; i++)
+        {
+            sorted[i] = stages[i];
+        }
+
+        if (sorted.Length > 1)
+        {
+            Array.Sort(sorted, StagePatchByNameComparer.Instance);
+        }
+
+        for (var i = 0; i < sorted.Length; i++)
+        {
+            WritePreviewMatrixStage(writer, sorted[i], requestOptions, selectorRegistry, ref selectorFlowContext);
+        }
+    }
+
+    private static void WritePreviewMatrixStage(
+        Utf8JsonWriter writer,
+        PatchEvaluatorV1.StagePatchV1 stage,
+        FlowRequestOptions requestOptions,
+        SelectorRegistry? selectorRegistry,
+        ref FlowContext? selectorFlowContext)
+    {
+        var modules = stage.Modules;
+        var moduleCount = modules.Count;
+
+        var candidates = moduleCount == 0 ? Array.Empty<StageModuleCandidate>() : new StageModuleCandidate[moduleCount];
+        var candidateCount = 0;
+
+        for (var i = 0; i < moduleCount; i++)
+        {
+            var module = modules[i];
+
+            if (!module.Enabled)
+            {
+                continue;
+            }
+
+            if (module.HasGate)
+            {
+                var gateDecision = EvaluateGateDecision(module.Gate, requestOptions, selectorRegistry, ref selectorFlowContext, out _);
+                if (!gateDecision.Allowed)
+                {
+                    continue;
+                }
+            }
+
+            candidates[candidateCount] = new StageModuleCandidate(i, module.Priority);
+            candidateCount++;
+        }
+
+        if (candidateCount > 1)
+        {
+            SortCandidates(candidates, candidateCount);
+        }
+
+        var fanoutMax = stage.HasFanoutMax ? stage.FanoutMax : int.MaxValue;
+
+        if (fanoutMax < 0)
+        {
+            fanoutMax = 0;
+        }
+
+        var executeCount = candidateCount;
+
+        if (fanoutMax < executeCount)
+        {
+            executeCount = fanoutMax;
+        }
+
+        if (executeCount < 0)
+        {
+            executeCount = 0;
+        }
+
+        var selectedModuleIds = executeCount == 0 ? Array.Empty<string>() : new string[executeCount];
+
+        for (var rank = 0; rank < executeCount; rank++)
+        {
+            var moduleIndex = candidates[rank].ModuleIndex;
+            selectedModuleIds[rank] = modules[moduleIndex].ModuleId;
+        }
+
+        var shadowModules = stage.ShadowModules;
+        var shadowCount = shadowModules.Count;
+
+        var userId = requestOptions.UserId;
+
+        var selectedShadowModuleIds = shadowCount == 0 ? Array.Empty<string>() : new string[shadowCount];
+        var selectedShadowCount = 0;
+
+        for (var i = 0; i < shadowCount; i++)
+        {
+            var module = shadowModules[i];
+
+            if (!module.Enabled)
+            {
+                continue;
+            }
+
+            if (module.HasGate)
+            {
+                var gateDecision = EvaluateGateDecision(module.Gate, requestOptions, selectorRegistry, ref selectorFlowContext, out _);
+                if (!gateDecision.Allowed)
+                {
+                    continue;
+                }
+            }
+
+            if (!ShouldExecuteShadow(module.ShadowSampleBps, userId, module.ModuleId))
+            {
+                continue;
+            }
+
+            selectedShadowModuleIds[selectedShadowCount] = module.ModuleId;
+            selectedShadowCount++;
+        }
+
+        if (selectedShadowCount != selectedShadowModuleIds.Length)
+        {
+            if (selectedShadowCount == 0)
+            {
+                selectedShadowModuleIds = Array.Empty<string>();
+            }
+            else
+            {
+                var trimmed = new string[selectedShadowCount];
+                Array.Copy(selectedShadowModuleIds, 0, trimmed, 0, selectedShadowCount);
+                selectedShadowModuleIds = trimmed;
+            }
+        }
+
+        writer.WriteStartObject();
+        writer.WriteString("stage_name", stage.StageName);
+
+        if (stage.HasFanoutMax)
+        {
+            writer.WriteNumber("fanout_max", stage.FanoutMax);
+        }
+        else
+        {
+            writer.WriteNull("fanout_max");
+        }
+
+        writer.WritePropertyName("selected_module_ids");
+        writer.WriteStartArray();
+
+        for (var i = 0; i < selectedModuleIds.Length; i++)
+        {
+            writer.WriteStringValue(selectedModuleIds[i]);
+        }
+
+        writer.WriteEndArray();
+
+        writer.WritePropertyName("selected_shadow_module_ids");
+        writer.WriteStartArray();
+
+        for (var i = 0; i < selectedShadowModuleIds.Length; i++)
+        {
+            writer.WriteStringValue(selectedShadowModuleIds[i]);
+        }
+
+        writer.WriteEndArray();
+
+        writer.WriteEndObject();
+    }
+
+    private static string BuildVariantsSortKey(Dictionary<string, string>? variants)
+    {
+        if (variants is null || variants.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        if (variants.Count == 1)
+        {
+            foreach (var pair in variants)
+            {
+                return string.Concat(pair.Key, "=", pair.Value);
+            }
+        }
+
+        var rented = ArrayPool<KeyValuePair<string, string>>.Shared.Rent(variants.Count);
+        var filledCount = 0;
+
+        try
+        {
+            foreach (var pair in variants)
+            {
+                rented[filledCount] = pair;
+                filledCount++;
+            }
+
+            Array.Sort(rented, 0, filledCount, KeyValuePairByKeyComparer.Instance);
+
+            var builder = new StringBuilder(capacity: filledCount * 16);
+
+            for (var i = 0; i < filledCount; i++)
+            {
+                if (i != 0)
+                {
+                    builder.Append('|');
+                }
+
+                builder.Append(rented[i].Key);
+                builder.Append('=');
+                builder.Append(rented[i].Value);
+            }
+
+            return builder.ToString();
+        }
+        finally
+        {
+            Array.Clear(rented, 0, filledCount);
+            ArrayPool<KeyValuePair<string, string>>.Shared.Return(rented);
+        }
+    }
+
+    private readonly struct PreviewMatrixEntry
+    {
+        public int Index { get; }
+
+        public string SortKey { get; }
+
+        public PreviewMatrixEntry(int index, string sortKey)
+        {
+            Index = index;
+            SortKey = sortKey;
+        }
+    }
+
+    private sealed class PreviewMatrixEntryComparer : IComparer<PreviewMatrixEntry>
+    {
+        public static readonly PreviewMatrixEntryComparer Instance = new();
+
+        public int Compare(PreviewMatrixEntry x, PreviewMatrixEntry y)
+        {
+            var c = string.CompareOrdinal(x.SortKey, y.SortKey);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            return x.Index.CompareTo(y.Index);
+        }
+    }
+
+    private sealed class StagePatchByNameComparer : IComparer<PatchEvaluatorV1.StagePatchV1>
+    {
+        public static readonly StagePatchByNameComparer Instance = new();
+
+        public int Compare(PatchEvaluatorV1.StagePatchV1 x, PatchEvaluatorV1.StagePatchV1 y)
+        {
+            return string.CompareOrdinal(x.StageName, y.StageName);
+        }
     }
 
     private static void WriteExplainPatchOverlay(Utf8JsonWriter writer, PatchEvaluatorV1.PatchOverlayAppliedV1 overlay)
@@ -1141,7 +1575,8 @@ public static class ToolingJsonV1
         PatchModuleDiffReport moduleReport,
         PatchParamDiffReport paramReport,
         PatchFanoutMaxDiffReport fanoutReport,
-        PatchEmergencyDiffReport emergencyReport)
+        PatchEmergencyDiffReport emergencyReport,
+        RiskReport riskReport)
     {
         var output = new ArrayBufferWriter<byte>(512);
         using var writer = new Utf8JsonWriter(output, new JsonWriterOptions { Indented = false });
@@ -1154,11 +1589,389 @@ public static class ToolingJsonV1
         WriteParamDiffs(writer, paramReport.Diffs);
         WriteFanoutMaxDiffs(writer, fanoutReport.Diffs);
         WriteEmergencyDiffs(writer, emergencyReport.Diffs);
+        WriteRiskReport(writer, riskReport);
 
         writer.WriteEndObject();
         writer.Flush();
 
         return Encoding.UTF8.GetString(output.WrittenSpan);
+    }
+
+    private enum RiskLevel
+    {
+        Low = 1,
+        Medium = 2,
+        High = 3,
+    }
+
+    private readonly struct RiskReport
+    {
+        public RiskLevel Level { get; }
+
+        public int FanoutIncreaseCount { get; }
+
+        public int ModuleAddedCount { get; }
+
+        public int ModuleRemovedCount { get; }
+
+        public int ShadowChangeCount { get; }
+
+        public int ParamChangeCount { get; }
+
+        public int EmergencyChangeCount { get; }
+
+        public RiskReport(
+            RiskLevel level,
+            int fanoutIncreaseCount,
+            int moduleAddedCount,
+            int moduleRemovedCount,
+            int shadowChangeCount,
+            int paramChangeCount,
+            int emergencyChangeCount)
+        {
+            Level = level;
+            FanoutIncreaseCount = fanoutIncreaseCount;
+            ModuleAddedCount = moduleAddedCount;
+            ModuleRemovedCount = moduleRemovedCount;
+            ShadowChangeCount = shadowChangeCount;
+            ParamChangeCount = paramChangeCount;
+            EmergencyChangeCount = emergencyChangeCount;
+        }
+    }
+
+    private static RiskReport AnalyzeRiskReport(
+        string oldPatchJson,
+        string newPatchJson,
+        PatchModuleDiffReport moduleReport,
+        PatchParamDiffReport paramReport,
+        PatchFanoutMaxDiffReport fanoutReport,
+        PatchEmergencyDiffReport emergencyReport)
+    {
+        var moduleAddedCount = 0;
+        var moduleRemovedCount = 0;
+        var shadowChangeCount = 0;
+
+        var moduleDiffs = moduleReport.Diffs;
+        for (var i = 0; i < moduleDiffs.Count; i++)
+        {
+            var diff = moduleDiffs[i];
+
+            if (diff.Kind == PatchModuleDiffKind.Added)
+            {
+                moduleAddedCount++;
+            }
+            else if (diff.Kind == PatchModuleDiffKind.Removed)
+            {
+                moduleRemovedCount++;
+            }
+            else if (diff.Kind == PatchModuleDiffKind.ShadowAdded
+                || diff.Kind == PatchModuleDiffKind.ShadowRemoved
+                || diff.Kind == PatchModuleDiffKind.ShadowSampleChanged)
+            {
+                shadowChangeCount++;
+            }
+        }
+
+        var paramChangeCount = paramReport.Diffs.Count;
+        var emergencyChangeCount = emergencyReport.Diffs.Count;
+        var fanoutIncreaseCount = ComputeFanoutIncreaseCount(oldPatchJson, newPatchJson, fanoutReport.Diffs);
+
+        var level = RiskLevel.Low;
+
+        if (fanoutIncreaseCount != 0 || moduleRemovedCount != 0 || emergencyChangeCount != 0)
+        {
+            level = RiskLevel.High;
+        }
+        else if (moduleAddedCount != 0 || shadowChangeCount != 0 || paramChangeCount != 0)
+        {
+            level = RiskLevel.Medium;
+        }
+
+        return new RiskReport(
+            level,
+            fanoutIncreaseCount,
+            moduleAddedCount,
+            moduleRemovedCount,
+            shadowChangeCount,
+            paramChangeCount,
+            emergencyChangeCount);
+    }
+
+    private static void WriteRiskReport(Utf8JsonWriter writer, RiskReport report)
+    {
+        writer.WritePropertyName("risk_report");
+        writer.WriteStartObject();
+        writer.WriteString("level", GetRiskLevelString(report.Level));
+        writer.WriteNumber("fanout_increase_count", report.FanoutIncreaseCount);
+        writer.WriteNumber("module_added_count", report.ModuleAddedCount);
+        writer.WriteNumber("module_removed_count", report.ModuleRemovedCount);
+        writer.WriteNumber("shadow_change_count", report.ShadowChangeCount);
+        writer.WriteNumber("param_change_count", report.ParamChangeCount);
+        writer.WriteNumber("emergency_change_count", report.EmergencyChangeCount);
+        writer.WriteEndObject();
+    }
+
+    private static string GetRiskLevelString(RiskLevel level)
+    {
+        return level switch
+        {
+            RiskLevel.Low => "low",
+            RiskLevel.Medium => "medium",
+            RiskLevel.High => "high",
+            _ => "unknown",
+        };
+    }
+
+    private static int ComputeFanoutIncreaseCount(
+        string oldPatchJson,
+        string newPatchJson,
+        IReadOnlyList<PatchFanoutMaxDiff> diffs)
+    {
+        if (diffs.Count == 0)
+        {
+            return 0;
+        }
+
+        var oldMap = CollectFanoutMaxMap(oldPatchJson);
+        var newMap = CollectFanoutMaxMap(newPatchJson);
+
+        if (oldMap is null)
+        {
+            oldMap = EmptyFanoutMaxMap;
+        }
+
+        if (newMap is null)
+        {
+            newMap = EmptyFanoutMaxMap;
+        }
+
+        var count = 0;
+
+        for (var i = 0; i < diffs.Count; i++)
+        {
+            var diff = diffs[i];
+            var key = new FanoutMaxKey(diff.FlowName, diff.StageName, diff.ExperimentLayer, diff.ExperimentVariant);
+
+            var oldExists = oldMap.TryGetValue(key, out var oldValue);
+            var newExists = newMap.TryGetValue(key, out var newValue);
+
+            if (oldExists)
+            {
+                if (!newExists || newValue > oldValue)
+                {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
+    private static readonly Dictionary<FanoutMaxKey, int> EmptyFanoutMaxMap = new(capacity: 0);
+
+    private static Dictionary<FanoutMaxKey, int>? CollectFanoutMaxMap(string patchJson)
+    {
+        if (patchJson.Length == 0)
+        {
+            return null;
+        }
+
+        using var document = JsonDocument.Parse(patchJson);
+
+        var root = document.RootElement;
+
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            throw new FormatException("patchJson must be a JSON object.");
+        }
+
+        if (!root.TryGetProperty("schemaVersion", out var schemaVersion)
+            || schemaVersion.ValueKind != JsonValueKind.String
+            || !schemaVersion.ValueEquals("v1"))
+        {
+            throw new FormatException("patchJson schemaVersion is missing or unsupported.");
+        }
+
+        if (!root.TryGetProperty("flows", out var flowsElement) || flowsElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new FormatException("flows must be an object.");
+        }
+
+        Dictionary<FanoutMaxKey, int>? map = null;
+
+        foreach (var flowProperty in flowsElement.EnumerateObject())
+        {
+            var flowName = flowProperty.Name;
+            var flowPatch = flowProperty.Value;
+
+            if (flowPatch.ValueKind != JsonValueKind.Object)
+            {
+                throw new FormatException(string.Concat("Flow patch must be an object. Flow: ", flowName));
+            }
+
+            CollectFlowFanoutMax(flowName, flowPatch, experimentLayer: null, experimentVariant: null, ref map);
+
+            if (!flowPatch.TryGetProperty("experiments", out var experimentsElement) || experimentsElement.ValueKind == JsonValueKind.Null)
+            {
+                continue;
+            }
+
+            if (experimentsElement.ValueKind != JsonValueKind.Array)
+            {
+                throw new FormatException(string.Concat("experiments must be an array. Flow: ", flowName));
+            }
+
+            foreach (var experimentMapping in experimentsElement.EnumerateArray())
+            {
+                if (experimentMapping.ValueKind != JsonValueKind.Object)
+                {
+                    throw new FormatException(string.Concat("experiments must be an array of objects. Flow: ", flowName));
+                }
+
+                string? layer = null;
+                string? variant = null;
+                JsonElement patch = default;
+                var hasPatch = false;
+
+                foreach (var field in experimentMapping.EnumerateObject())
+                {
+                    if (field.NameEquals("layer"))
+                    {
+                        layer = field.Value.ValueKind == JsonValueKind.String ? field.Value.GetString() : null;
+                        continue;
+                    }
+
+                    if (field.NameEquals("variant"))
+                    {
+                        variant = field.Value.ValueKind == JsonValueKind.String ? field.Value.GetString() : null;
+                        continue;
+                    }
+
+                    if (field.NameEquals("patch"))
+                    {
+                        hasPatch = true;
+                        patch = field.Value;
+                        continue;
+                    }
+                }
+
+                if (string.IsNullOrEmpty(layer) || variant is null || !hasPatch || patch.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                CollectFlowFanoutMax(flowName, patch, layer, variant, ref map);
+            }
+        }
+
+        return map;
+    }
+
+    private static void CollectFlowFanoutMax(
+        string flowName,
+        JsonElement flowPatch,
+        string? experimentLayer,
+        string? experimentVariant,
+        ref Dictionary<FanoutMaxKey, int>? map)
+    {
+        if (!flowPatch.TryGetProperty("stages", out var stagesElement) || stagesElement.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        foreach (var stageProperty in stagesElement.EnumerateObject())
+        {
+            var stageName = stageProperty.Name;
+            var stagePatch = stageProperty.Value;
+
+            if (stagePatch.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (!stagePatch.TryGetProperty("fanoutMax", out var fanoutElement))
+            {
+                continue;
+            }
+
+            if (!TryGetFanoutMaxValue(fanoutElement, out var fanoutMax))
+            {
+                continue;
+            }
+
+            map ??= new Dictionary<FanoutMaxKey, int>(capacity: 4);
+            map[new FanoutMaxKey(flowName, stageName, experimentLayer, experimentVariant)] = fanoutMax;
+        }
+    }
+
+    private static bool TryGetFanoutMaxValue(JsonElement fanoutElement, out int value)
+    {
+        value = 0;
+
+        if (fanoutElement.ValueKind != JsonValueKind.Number)
+        {
+            return false;
+        }
+
+        if (fanoutElement.TryGetInt32(out value))
+        {
+            return true;
+        }
+
+        if (fanoutElement.TryGetInt64(out var value64))
+        {
+            if (value64 < int.MinValue || value64 > int.MaxValue)
+            {
+                value = 0;
+                return false;
+            }
+
+            value = (int)value64;
+            return true;
+        }
+
+        return false;
+    }
+
+    private readonly struct FanoutMaxKey : IEquatable<FanoutMaxKey>
+    {
+        private readonly string _flowName;
+        private readonly string _stageName;
+        private readonly string? _experimentLayer;
+        private readonly string? _experimentVariant;
+
+        public FanoutMaxKey(string flowName, string stageName, string? experimentLayer, string? experimentVariant)
+        {
+            _flowName = flowName;
+            _stageName = stageName;
+            _experimentLayer = experimentLayer;
+            _experimentVariant = experimentVariant;
+        }
+
+        public bool Equals(FanoutMaxKey other)
+        {
+            return string.Equals(_flowName, other._flowName, StringComparison.Ordinal)
+                && string.Equals(_stageName, other._stageName, StringComparison.Ordinal)
+                && string.Equals(_experimentLayer, other._experimentLayer, StringComparison.Ordinal)
+                && string.Equals(_experimentVariant, other._experimentVariant, StringComparison.Ordinal);
+        }
+
+        public override bool Equals(object? obj)
+        {
+            return obj is FanoutMaxKey other && Equals(other);
+        }
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                var hashCode = StringComparer.Ordinal.GetHashCode(_flowName);
+                hashCode = (hashCode * 397) ^ StringComparer.Ordinal.GetHashCode(_stageName);
+                hashCode = (hashCode * 397) ^ (_experimentLayer is null ? 0 : StringComparer.Ordinal.GetHashCode(_experimentLayer));
+                hashCode = (hashCode * 397) ^ (_experimentVariant is null ? 0 : StringComparer.Ordinal.GetHashCode(_experimentVariant));
+                return hashCode;
+            }
+        }
     }
 
     private static string BuildDiffErrorJson(string code, string message)
@@ -1349,6 +2162,18 @@ public static class ToolingJsonV1
             ValidationSeverity.Warn => "warn",
             ValidationSeverity.Info => "info",
             _ => "unknown",
+        };
+    }
+
+    private static string GetQosTierString(QosTier tier)
+    {
+        return tier switch
+        {
+            QosTier.Full => "full",
+            QosTier.Conserve => "conserve",
+            QosTier.Emergency => "emergency",
+            QosTier.Fallback => "fallback",
+            _ => "full",
         };
     }
 

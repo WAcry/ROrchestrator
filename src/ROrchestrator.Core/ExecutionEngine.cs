@@ -20,9 +20,11 @@ public sealed class ExecutionEngine
     public const string GateFalseCode = "GATE_FALSE";
     public const string FanoutTrimCode = "FANOUT_TRIM";
     public const string ShadowNotSampledCode = "SHADOW_NOT_SAMPLED";
+    public const string BulkheadRejectedCode = "BULKHEAD_REJECTED";
 
     private readonly ModuleCatalog _catalog;
     private readonly SelectorRegistry _selectorRegistry;
+    private readonly ModuleConcurrencyLimitersV1 _moduleConcurrencyLimiters = new();
 
     public ExecutionEngine(ModuleCatalog catalog)
         : this(catalog, SelectorRegistry.Empty)
@@ -643,7 +645,7 @@ public sealed class ExecutionEngine
             $"Flow '{template.Name}' final node '{lastNode.Name}' has unsupported kind '{lastNode.Kind}'.");
     }
 
-    private static PatchEvaluatorV1.FlowPatchEvaluationV1? MaybeEvaluatePatch(string flowName, FlowContext context)
+    private PatchEvaluatorV1.FlowPatchEvaluationV1? MaybeEvaluatePatch(string flowName, FlowContext context)
     {
         if (context is null)
         {
@@ -656,6 +658,8 @@ public sealed class ExecutionEngine
         }
 
         var patchJson = snapshot.PatchJson;
+        _moduleConcurrencyLimiters.EnsureConfigured(patchJson, snapshot.ConfigVersion);
+
         if (patchJson.Length == 0)
         {
             return null;
@@ -665,7 +669,8 @@ public sealed class ExecutionEngine
             flowName,
             patchJson,
             new FlowRequestOptions(context.Variants, context.UserId, context.RequestAttributes),
-            snapshot.ConfigVersion);
+            qosTier: context.QosSelectedTier,
+            configVersion: snapshot.ConfigVersion);
     }
 
     private async ValueTask ExecuteStageFanoutIfAnyAsync(
@@ -742,6 +747,7 @@ public sealed class ExecutionEngine
             {
                 RecordStageModuleSkippedOutcome(outTypes[i], context, module.ModuleId, DisabledCode);
                 results[i] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, DisabledCode, isOverride: false, startTimestamp: 0, endTimestamp: 0);
+                RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, DisabledCode, isShadow: false);
                 continue;
             }
 
@@ -763,6 +769,7 @@ public sealed class ExecutionEngine
                 {
                     RecordStageModuleSkippedOutcome(outTypes[i], context, module.ModuleId, GateFalseCode);
                     results[i] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, GateFalseCode, isOverride: false, startTimestamp: 0, endTimestamp: 0);
+                    RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, GateFalseCode, isShadow: false);
                     continue;
                 }
             }
@@ -796,8 +803,30 @@ public sealed class ExecutionEngine
 
             if (rank < executeCount)
             {
+                var limiterKey = module.LimitKey ?? module.ModuleType;
+
+                if (!_moduleConcurrencyLimiters.TryEnter(limiterKey, out var limiterLease))
+                {
+                    RecordStageModuleSkippedOutcome(outTypes[moduleIndex], context, module.ModuleId, BulkheadRejectedCode);
+                    results[moduleIndex] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, BulkheadRejectedCode, isOverride: false, startTimestamp: 0, endTimestamp: 0);
+                    RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, BulkheadRejectedCode, isShadow: false);
+                    continue;
+                }
+
                 var executor = StageModuleExecutorCache.Get(argsTypes[moduleIndex], outTypes[moduleIndex]);
-                executeTasks[taskIndex] = executor(this, flowName, stageName, module.ModuleId, module.ModuleType, module.Args, context);
+                ValueTask<StageModuleOutcomeMetadata> task;
+
+                try
+                {
+                    task = executor(this, flowName, stageName, module.ModuleId, module.ModuleType, module.Args, context);
+                }
+                catch
+                {
+                    limiterLease.Dispose();
+                    throw;
+                }
+
+                executeTasks[taskIndex] = AttachLimiterLease(task, limiterLease);
                 executeIndices[taskIndex] = moduleIndex;
                 taskIndex++;
                 continue;
@@ -805,6 +834,7 @@ public sealed class ExecutionEngine
 
             RecordStageModuleSkippedOutcome(outTypes[moduleIndex], context, module.ModuleId, FanoutTrimCode);
             results[moduleIndex] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, FanoutTrimCode, isOverride: false, startTimestamp: 0, endTimestamp: 0);
+            RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, FanoutTrimCode, isShadow: false);
         }
 
         for (var i = 0; i < taskIndex; i++)
@@ -914,6 +944,7 @@ public sealed class ExecutionEngine
             if (!module.Enabled)
             {
                 results[i] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, DisabledCode, isOverride: false, startTimestamp: 0, endTimestamp: 0);
+                RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, DisabledCode, isShadow: true);
                 continue;
             }
 
@@ -934,6 +965,7 @@ public sealed class ExecutionEngine
                 if (!gateDecision.Allowed)
                 {
                     results[i] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, GateFalseCode, isOverride: false, startTimestamp: 0, endTimestamp: 0);
+                    RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, GateFalseCode, isShadow: true);
                     continue;
                 }
             }
@@ -941,12 +973,30 @@ public sealed class ExecutionEngine
             if (!ShouldExecuteShadow(module.ShadowSampleBps, userId, module.ModuleId))
             {
                 results[i] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, ShadowNotSampledCode, isOverride: false, startTimestamp: 0, endTimestamp: 0);
+                RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, ShadowNotSampledCode, isShadow: true);
+                continue;
+            }
+
+            var limiterKey = module.LimitKey ?? module.ModuleType;
+
+            if (!_moduleConcurrencyLimiters.TryEnter(limiterKey, out var limiterLease))
+            {
+                results[i] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, BulkheadRejectedCode, isOverride: false, startTimestamp: 0, endTimestamp: 0);
+                RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, BulkheadRejectedCode, isShadow: true);
                 continue;
             }
 
             var executor = ShadowStageModuleExecutorCache.Get(argsTypes[i], outTypes[i]);
-            results[i] = await executor(this, flowName, stageName, module.ModuleId, module.ModuleType, module.Args, context, module.ShadowSampleBps)
-                .ConfigureAwait(false);
+
+            try
+            {
+                results[i] = await executor(this, flowName, stageName, module.ModuleId, module.ModuleType, module.Args, context, module.ShadowSampleBps)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                limiterLease.Dispose();
+            }
         }
 
         if (execExplainCollector is not null)
@@ -1034,6 +1084,56 @@ public sealed class ExecutionEngine
     {
         var recorder = StageModuleSkipOutcomeCache.Get(outType);
         recorder(context, moduleId, code);
+    }
+
+    private static void RecordStageFanoutModuleSkipped(
+        string flowName,
+        string stageName,
+        string moduleType,
+        string code,
+        bool isShadow)
+    {
+        Observability.FlowMetricsV1.RecordStageFanoutModule(
+            startTimestamp: 0,
+            flowName,
+            stageName,
+            moduleType,
+            OutcomeKind.Skipped,
+            isShadow);
+        Observability.FlowMetricsV1.RecordStageFanoutModuleSkipReason(flowName, stageName, moduleType, code, isShadow);
+    }
+
+    private static ValueTask<StageModuleOutcomeMetadata> AttachLimiterLease(
+        ValueTask<StageModuleOutcomeMetadata> task,
+        ModuleConcurrencyLimitersV1.Lease limiterLease)
+    {
+        if (task.IsCompletedSuccessfully)
+        {
+            try
+            {
+                return new ValueTask<StageModuleOutcomeMetadata>(task.Result);
+            }
+            finally
+            {
+                limiterLease.Dispose();
+            }
+        }
+
+        return AwaitAndRelease(task, limiterLease);
+
+        static async ValueTask<StageModuleOutcomeMetadata> AwaitAndRelease(
+            ValueTask<StageModuleOutcomeMetadata> task,
+            ModuleConcurrencyLimitersV1.Lease limiterLease)
+        {
+            try
+            {
+                return await task.ConfigureAwait(false);
+            }
+            finally
+            {
+                limiterLease.Dispose();
+            }
+        }
     }
 
     private static void RecordStageFanoutSnapshot(

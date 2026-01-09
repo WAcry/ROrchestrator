@@ -446,6 +446,30 @@ public sealed class FlowContext
             CollectExperimentParamsPatches(flowName, experimentsPatch, variants, ref buffer);
         }
 
+        if (flowPatch.TryGetProperty("qos", out var qosElement)
+            && qosElement.ValueKind == JsonValueKind.Object
+            && qosElement.TryGetProperty("tiers", out var qosTiersElement)
+            && qosTiersElement.ValueKind == JsonValueKind.Object)
+        {
+            var tierName = GetQosTierPatchKey(_qosSelectedTier);
+
+            if (qosTiersElement.TryGetProperty(tierName, out var qosTierElement)
+                && qosTierElement.ValueKind == JsonValueKind.Object
+                && qosTierElement.TryGetProperty("patch", out var qosTierPatch)
+                && qosTierPatch.ValueKind == JsonValueKind.Object
+                && qosTierPatch.TryGetProperty("params", out var qosParamsPatch))
+            {
+                if (qosParamsPatch.ValueKind == JsonValueKind.Object)
+                {
+                    buffer.Add(qosParamsPatch);
+                }
+                else if (qosParamsPatch.ValueKind != JsonValueKind.Undefined)
+                {
+                    throw new InvalidOperationException($"qos.tiers[].patch.params must be an object. Flow: '{flowName}' tier: '{tierName}'.");
+                }
+            }
+        }
+
         if (flowPatch.TryGetProperty("emergency", out var emergencyPatch)
             && emergencyPatch.ValueKind == JsonValueKind.Object
             && emergencyPatch.TryGetProperty("patch", out var emergencyPatchBody)
@@ -487,6 +511,18 @@ public sealed class FlowContext
         }
 
         return merged!;
+    }
+
+    private static string GetQosTierPatchKey(QosTier tier)
+    {
+        return tier switch
+        {
+            QosTier.Full => "full",
+            QosTier.Conserve => "conserve",
+            QosTier.Emergency => "emergency",
+            QosTier.Fallback => "fallback",
+            _ => "full",
+        };
     }
 
     private static TParams DeserializeDefaultParams<TParams>(byte[] defaultParamsJson, string flowName)

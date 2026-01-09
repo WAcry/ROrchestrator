@@ -13,6 +13,16 @@ public static class PatchEvaluatorV1
 
     public static FlowPatchEvaluationV1 Evaluate(string flowName, string patchJson, FlowRequestOptions requestOptions, ulong configVersion = 0)
     {
+        return Evaluate(flowName, patchJson, requestOptions, qosTier: QosTier.Full, configVersion: configVersion);
+    }
+
+    public static FlowPatchEvaluationV1 Evaluate(
+        string flowName,
+        string patchJson,
+        FlowRequestOptions requestOptions,
+        QosTier qosTier,
+        ulong configVersion = 0)
+    {
         if (string.IsNullOrEmpty(flowName))
         {
             throw new ArgumentException("FlowName must be non-empty.", nameof(flowName));
@@ -27,6 +37,8 @@ public static class PatchEvaluatorV1
         {
             return FlowPatchEvaluationV1.CreateEmpty(flowName);
         }
+
+        qosTier = NormalizeQosTier(qosTier);
 
         JsonDocument document;
         CachedPatchDocument? cachedDocument = null;
@@ -60,7 +72,7 @@ public static class PatchEvaluatorV1
             }
 
             var stageMap = new StageMap();
-            var overlays = new List<PatchOverlayAppliedV1>(capacity: 4);
+            var overlays = new List<PatchOverlayAppliedV1>(capacity: 5);
             overlays.Add(PatchOverlayAppliedV1.Base);
 
             if (flowPatch.TryGetProperty("stages", out var baseStagesPatch) && baseStagesPatch.ValueKind == JsonValueKind.Object)
@@ -76,6 +88,17 @@ public static class PatchEvaluatorV1
                 && experimentsPatch.ValueKind == JsonValueKind.Array)
             {
                 ApplyExperimentsPatch(flowName, experimentsPatch, variants, overlays, ref stageMap);
+            }
+
+            if (TryGetQosTierPatchBody(flowPatch, qosTier, out var qosPatchBody))
+            {
+                overlays.Add(PatchOverlayAppliedV1.Qos);
+
+                if (qosPatchBody.TryGetProperty("stages", out var qosStagesPatch)
+                    && qosStagesPatch.ValueKind == JsonValueKind.Object)
+                {
+                    ApplyQosStagesPatch(flowName, qosStagesPatch, ref stageMap);
+                }
             }
 
             if (flowPatch.TryGetProperty("emergency", out var emergencyPatch)
@@ -101,6 +124,18 @@ public static class PatchEvaluatorV1
             ReleasePatchDocument(document, ownsDocument, cachedDocument);
             throw;
         }
+    }
+
+    private static QosTier NormalizeQosTier(QosTier tier)
+    {
+        return tier switch
+        {
+            QosTier.Full => QosTier.Full,
+            QosTier.Conserve => QosTier.Conserve,
+            QosTier.Emergency => QosTier.Emergency,
+            QosTier.Fallback => QosTier.Fallback,
+            _ => QosTier.Full,
+        };
     }
 
     private static JsonDocument ParsePatchDocument(string patchJson)
@@ -362,9 +397,68 @@ public static class PatchEvaluatorV1
         }
     }
 
+    private static void ApplyQosStagesPatch(string flowName, JsonElement qosStagesPatch, ref StageMap stageMap)
+    {
+        foreach (var stageProperty in qosStagesPatch.EnumerateObject())
+        {
+            if (stageProperty.Value.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var stageName = stageProperty.Name;
+            var stageBuilder = stageMap.GetOrAdd(stageName);
+            stageBuilder.ApplyQosStagePatch(flowName, stageName, stageProperty.Value);
+        }
+    }
+
+    private static bool TryGetQosTierPatchBody(JsonElement flowPatch, QosTier qosTier, out JsonElement qosPatchBody)
+    {
+        qosPatchBody = default;
+
+        if (!flowPatch.TryGetProperty("qos", out var qosElement) || qosElement.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        if (!qosElement.TryGetProperty("tiers", out var tiersElement) || tiersElement.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        var tierName = GetQosTierPatchKey(qosTier);
+
+        if (!tiersElement.TryGetProperty(tierName, out var tierElement) || tierElement.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        if (!tierElement.TryGetProperty("patch", out var patchElement) || patchElement.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        qosPatchBody = patchElement;
+        return true;
+    }
+
+    private static string GetQosTierPatchKey(QosTier tier)
+    {
+        return tier switch
+        {
+            QosTier.Full => "full",
+            QosTier.Conserve => "conserve",
+            QosTier.Emergency => "emergency",
+            QosTier.Fallback => "fallback",
+            _ => "full",
+        };
+    }
+
     public readonly struct PatchOverlayAppliedV1
     {
         public static readonly PatchOverlayAppliedV1 Base = new(layer: "base", experimentLayer: null, experimentVariant: null);
+
+        public static readonly PatchOverlayAppliedV1 Qos = new(layer: "qos", experimentLayer: null, experimentVariant: null);
 
         public static readonly PatchOverlayAppliedV1 Emergency = new(layer: "emergency", experimentLayer: null, experimentVariant: null);
 
@@ -418,6 +512,8 @@ public static class PatchEvaluatorV1
 
         public string ModuleType { get; }
 
+        public string? LimitKey { get; }
+
         public JsonElement Args { get; }
 
         public bool Enabled { get; }
@@ -437,6 +533,7 @@ public static class PatchEvaluatorV1
         internal StageModulePatchV1(
             string moduleId,
             string moduleType,
+            string? limitKey,
             JsonElement args,
             bool enabled,
             int priority,
@@ -448,6 +545,7 @@ public static class PatchEvaluatorV1
         {
             ModuleId = moduleId;
             ModuleType = moduleType;
+            LimitKey = limitKey;
             Args = args;
             Enabled = enabled;
             Priority = priority;
@@ -665,6 +763,57 @@ public static class PatchEvaluatorV1
             }
         }
 
+        public void ApplyQosStagePatch(string flowName, string stageName, JsonElement stagePatch)
+        {
+            foreach (var stageField in stagePatch.EnumerateObject())
+            {
+                if (stageField.NameEquals("fanoutMax"))
+                {
+                    if (TryGetNonNegativeInt32(stageField.Value, out var fanoutMax))
+                    {
+                        HasFanoutMax = true;
+                        FanoutMax = fanoutMax;
+                    }
+
+                    continue;
+                }
+
+                if (stageField.NameEquals("modules"))
+                {
+                    if (stageField.Value.ValueKind == JsonValueKind.Array)
+                    {
+                        ApplyQosModulesPatch(flowName, stageName, stageField.Value);
+                    }
+
+                    continue;
+                }
+            }
+        }
+
+        private void ApplyQosModulesPatch(string flowName, string stageName, JsonElement modulesPatch)
+        {
+            foreach (var moduleElement in modulesPatch.EnumerateArray())
+            {
+                if (moduleElement.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                if (!TryParseModuleId(moduleElement, out var moduleId))
+                {
+                    continue;
+                }
+
+                var index = TryGetModuleIndex(moduleId!);
+                if (index < 0)
+                {
+                    continue;
+                }
+
+                _modules[index].ApplyQosModulePatch(flowName, stageName, moduleElement);
+            }
+        }
+
         private int TryGetModuleIndex(string moduleId)
         {
             if (_moduleIndex is null)
@@ -806,6 +955,8 @@ public static class PatchEvaluatorV1
 
         public ushort ShadowSampleBps { get; private set; }
 
+        public string? LimitKey { get; private set; }
+
         public ModuleBuilder(string moduleId)
         {
             ModuleId = moduleId;
@@ -816,6 +967,7 @@ public static class PatchEvaluatorV1
             DisabledByEmergency = false;
             IsShadow = false;
             ShadowSampleBps = 0;
+            LimitKey = null;
         }
 
         public void ApplyFullModulePatch(string flowName, string stageName, JsonElement modulePatch)
@@ -831,6 +983,8 @@ public static class PatchEvaluatorV1
             JsonElement gate = default;
             var hasShadow = false;
             ushort shadowSampleBps = 0;
+            var hasLimitKey = false;
+            string? limitKey = null;
 
             foreach (var moduleField in modulePatch.EnumerateObject())
             {
@@ -880,6 +1034,13 @@ public static class PatchEvaluatorV1
                     shadowSampleBps = ParseShadowSampleBps(moduleField.Value, flowName, stageName, ModuleId);
                     continue;
                 }
+
+                if (moduleField.NameEquals("limitKey"))
+                {
+                    hasLimitKey = true;
+                    limitKey = moduleField.Value.ValueKind == JsonValueKind.String ? moduleField.Value.GetString() : null;
+                    continue;
+                }
             }
 
             if (string.IsNullOrEmpty(use))
@@ -918,6 +1079,11 @@ public static class PatchEvaluatorV1
                 IsShadow = true;
                 ShadowSampleBps = shadowSampleBps;
             }
+
+            if (hasLimitKey)
+            {
+                LimitKey = string.IsNullOrEmpty(limitKey) ? null : limitKey;
+            }
         }
 
         public void ApplyEmergencyDisable()
@@ -926,11 +1092,53 @@ public static class PatchEvaluatorV1
             DisabledByEmergency = true;
         }
 
+        public void ApplyQosModulePatch(string flowName, string stageName, JsonElement modulePatch)
+        {
+            var hasEnabled = false;
+            var enabled = true;
+
+            var hasShadow = false;
+            ushort shadowSampleBps = 0;
+
+            foreach (var moduleField in modulePatch.EnumerateObject())
+            {
+                if (moduleField.NameEquals("enabled"))
+                {
+                    hasEnabled = true;
+                    if (moduleField.Value.ValueKind == JsonValueKind.True || moduleField.Value.ValueKind == JsonValueKind.False)
+                    {
+                        enabled = moduleField.Value.GetBoolean();
+                    }
+
+                    continue;
+                }
+
+                if (moduleField.NameEquals("shadow"))
+                {
+                    hasShadow = true;
+                    shadowSampleBps = ParseShadowSampleBps(moduleField.Value, flowName, stageName, ModuleId);
+                    continue;
+                }
+            }
+
+            if (hasEnabled)
+            {
+                Enabled = enabled;
+            }
+
+            if (hasShadow)
+            {
+                IsShadow = true;
+                ShadowSampleBps = shadowSampleBps;
+            }
+        }
+
         public StageModulePatchV1 Build()
         {
             return new StageModulePatchV1(
                 ModuleId,
                 ModuleType,
+                LimitKey,
                 _args,
                 Enabled,
                 Priority,

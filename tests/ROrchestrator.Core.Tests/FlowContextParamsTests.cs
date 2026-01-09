@@ -7,12 +7,13 @@ public sealed class FlowContextParamsTests
     private static readonly DateTimeOffset FutureDeadline = new DateTimeOffset(2100, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task Params_ShouldMergeDefaultBaseExperimentEmergency_InOrder()
+    public async Task Params_ShouldMergeDefaultBaseExperimentQosEmergency_InOrder()
     {
         var patchJson =
             "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
             "\"params\":{\"MaxCandidate\":10,\"Nested\":{\"Mode\":\"base\"}}," +
             "\"experiments\":[{\"layer\":\"l1\",\"variant\":\"B\",\"patch\":{\"params\":{\"MaxCandidate\":20,\"Nested\":{\"Threshold\":99}}}}]," +
+            "\"qos\":{\"tiers\":{\"emergency\":{\"patch\":{\"params\":{\"MaxCandidate\":25,\"Nested\":{\"Mode\":\"qos\",\"Threshold\":123}}}}}}," +
             "\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"params\":{\"MaxCandidate\":30,\"Nested\":{\"Mode\":\"emergency\"}}}}" +
             "}}}";
 
@@ -26,6 +27,8 @@ public sealed class FlowContextParamsTests
                 {
                     { "l1", "B" },
                 }));
+
+        flowContext.SetQosSelectedTier(QosTier.Emergency);
 
         flowContext.ConfigureFlowBinding(
             flowName: "HomeFeed",
@@ -44,7 +47,7 @@ public sealed class FlowContextParamsTests
         Assert.Equal(30, @params.MaxCandidate);
         Assert.NotNull(@params.Nested);
         Assert.Equal("emergency", @params.Nested.Mode);
-        Assert.Equal(99, @params.Nested.Threshold);
+        Assert.Equal(123, @params.Nested.Threshold);
 
         var second = flowContext.Params<TestParams>();
         Assert.Same(@params, second);
@@ -146,4 +149,3 @@ public sealed class FlowContextParamsTests
         }
     }
 }
-

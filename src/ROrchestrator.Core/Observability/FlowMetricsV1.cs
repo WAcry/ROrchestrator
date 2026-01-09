@@ -58,6 +58,11 @@ internal static class FlowMetricsV1
         unit: CountUnit,
         description: "Stage fanout module outcomes count for plan-template execution.");
 
+    private static readonly Counter<long> StageFanoutModuleSkippedReasons = Meter.CreateCounter<long>(
+        name: "rorchestrator.stage.fanout.module.skipped.reasons",
+        unit: CountUnit,
+        description: "Stage fanout module skip reasons count for plan-template execution.");
+
     internal static bool IsFlowEnabled => FlowLatencyMs.Enabled || FlowOutcomes.Enabled;
 
     internal static bool IsStepEnabled => StepLatencyMs.Enabled || StepOutcomes.Enabled;
@@ -67,6 +72,8 @@ internal static class FlowMetricsV1
     internal static bool IsJoinEnabled => JoinLatencyMs.Enabled || JoinOutcomes.Enabled;
 
     internal static bool IsStageFanoutModuleEnabled => StageFanoutModuleLatencyMs.Enabled || StageFanoutModuleOutcomes.Enabled;
+
+    internal static bool IsStageFanoutModuleSkipReasonEnabled => StageFanoutModuleSkippedReasons.Enabled;
 
     internal static long StartFlowTimer()
     {
@@ -216,6 +223,30 @@ internal static class FlowMetricsV1
         {
             StageFanoutModuleOutcomes.Add(1, tags);
         }
+    }
+
+    internal static void RecordStageFanoutModuleSkipReason(
+        string flowName,
+        string stageName,
+        string moduleType,
+        string code,
+        bool isShadow)
+    {
+        if (!StageFanoutModuleSkippedReasons.Enabled)
+        {
+            return;
+        }
+
+        var codeTagValue = GetSkipCodeTagValue(code);
+
+        TagList tags = default;
+        tags.Add(FlowActivitySource.TagFlowName, flowName);
+        tags.Add(FlowActivitySource.TagStageName, stageName);
+        tags.Add(FlowActivitySource.TagModuleType, moduleType);
+        tags.Add(FlowActivitySource.TagExecutionPath, isShadow ? FlowActivitySource.ExecutionPathShadow : FlowActivitySource.ExecutionPathPrimary);
+        tags.Add(FlowActivitySource.TagSkipCode, codeTagValue);
+
+        StageFanoutModuleSkippedReasons.Add(1, tags);
     }
 
     private static string GetSkipCodeTagValue(string code)

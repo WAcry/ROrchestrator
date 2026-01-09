@@ -13,6 +13,19 @@ public sealed class ConfigValidator
     private const string CodeParseError = "CFG_PARSE_ERROR";
     private const string CodeSchemaVersionUnsupported = "CFG_SCHEMA_VERSION_UNSUPPORTED";
     private const string CodeUnknownField = "CFG_UNKNOWN_FIELD";
+    private const string CodeLimitsNotObject = "CFG_LIMITS_NOT_OBJECT";
+    private const string CodeLimitModuleConcurrencyNotObject = "CFG_LIMIT_MODULE_CONCURRENCY_NOT_OBJECT";
+    private const string CodeLimitMaxInFlightNotObject = "CFG_LIMIT_MAX_IN_FLIGHT_NOT_OBJECT";
+    private const string CodeLimitMaxInFlightInvalid = "CFG_LIMIT_MAX_IN_FLIGHT_INVALID";
+    private const string CodeLimitKeyInvalid = "CFG_LIMIT_KEY_INVALID";
+    private const string CodeQosNotObject = "CFG_QOS_NOT_OBJECT";
+    private const string CodeQosTiersNotObject = "CFG_QOS_TIERS_NOT_OBJECT";
+    private const string CodeQosTierUnknown = "CFG_QOS_TIER_UNKNOWN";
+    private const string CodeQosTierNotObject = "CFG_QOS_TIER_NOT_OBJECT";
+    private const string CodeQosPatchNotObject = "CFG_QOS_PATCH_NOT_OBJECT";
+    private const string CodeQosFanoutMaxIncreaseForbidden = "CFG_QOS_FANOUT_MAX_INCREASE_FORBIDDEN";
+    private const string CodeQosModuleEnableForbidden = "CFG_QOS_MODULE_ENABLE_FORBIDDEN";
+    private const string CodeQosShadowSampleIncreaseForbidden = "CFG_QOS_SHADOW_SAMPLE_INCREASE_FORBIDDEN";
     private const string CodeFanoutMaxInvalid = "CFG_FANOUT_MAX_INVALID";
     private const string CodeFanoutMaxExceeded = "CFG_FANOUT_MAX_EXCEEDED";
     private const string CodeFanoutTrimLikely = "CFG_FANOUT_TRIM_LIKELY";
@@ -116,6 +129,9 @@ public sealed class ConfigValidator
             var hasFlows = false;
             JsonElement flowsElement = default;
 
+            var hasLimits = false;
+            JsonElement limitsElement = default;
+
             foreach (var property in root.EnumerateObject())
             {
                 if (property.NameEquals("schemaVersion"))
@@ -137,6 +153,13 @@ public sealed class ConfigValidator
                     continue;
                 }
 
+                if (property.NameEquals("limits"))
+                {
+                    hasLimits = true;
+                    limitsElement = property.Value;
+                    continue;
+                }
+
                 var name = property.Name;
                 findings.Add(
                     new ValidationFinding(
@@ -150,6 +173,8 @@ public sealed class ConfigValidator
             {
                 findings.Add(CreateSchemaVersionUnsupportedFinding());
             }
+
+            ValidateLimits(hasLimits, limitsElement, ref findings);
 
             if (hasFlows && flowsElement.ValueKind != JsonValueKind.Object)
             {
@@ -212,6 +237,8 @@ public sealed class ConfigValidator
                         out var hasParamsPatch,
                         out var hasExperimentsPatch,
                         out var experimentsPatch,
+                        out var hasQosPatch,
+                        out var qosPatch,
                         out var hasEmergencyPatch,
                         out var emergencyPatch);
 
@@ -245,6 +272,17 @@ public sealed class ConfigValidator
                         flowRegistered,
                         ref findings);
 
+                    ValidateQos(
+                        flowName,
+                        hasQosPatch,
+                        qosPatch,
+                        hasStagesPatch,
+                        stagesPatch,
+                        patchType,
+                        blueprintStageNameSet,
+                        flowRegistered,
+                        ref findings);
+
                     ValidateExperiments(
                         flowName,
                         hasExperimentsPatch,
@@ -264,6 +302,148 @@ public sealed class ConfigValidator
         }
     }
 
+    private static void ValidateLimits(bool hasLimits, JsonElement limitsPatch, ref FindingBuffer findings)
+    {
+        if (!hasLimits)
+        {
+            return;
+        }
+
+        const string limitsPath = "$.limits";
+
+        if (limitsPatch.ValueKind != JsonValueKind.Object)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeLimitsNotObject,
+                    path: limitsPath,
+                    message: "limits must be an object."));
+            return;
+        }
+
+        foreach (var limitsField in limitsPatch.EnumerateObject())
+        {
+            if (limitsField.NameEquals("moduleConcurrency"))
+            {
+                ValidateModuleConcurrencyLimits(limitsField.Value, limitsPath, ref findings);
+                continue;
+            }
+
+            var fieldName = limitsField.Name;
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeUnknownField,
+                    path: string.Concat(limitsPath, ".", fieldName),
+                    message: string.Concat("Unknown field: ", fieldName)));
+        }
+    }
+
+    private static void ValidateModuleConcurrencyLimits(JsonElement moduleConcurrencyPatch, string limitsPath, ref FindingBuffer findings)
+    {
+        var moduleConcurrencyPath = string.Concat(limitsPath, ".moduleConcurrency");
+
+        if (moduleConcurrencyPatch.ValueKind != JsonValueKind.Object)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeLimitModuleConcurrencyNotObject,
+                    path: moduleConcurrencyPath,
+                    message: "limits.moduleConcurrency must be an object."));
+            return;
+        }
+
+        var hasMaxInFlight = false;
+        JsonElement maxInFlightPatch = default;
+
+        foreach (var field in moduleConcurrencyPatch.EnumerateObject())
+        {
+            if (field.NameEquals("maxInFlight"))
+            {
+                hasMaxInFlight = true;
+                maxInFlightPatch = field.Value;
+                continue;
+            }
+
+            var fieldName = field.Name;
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeUnknownField,
+                    path: string.Concat(moduleConcurrencyPath, ".", fieldName),
+                    message: string.Concat("Unknown field: ", fieldName)));
+        }
+
+        if (!hasMaxInFlight)
+        {
+            return;
+        }
+
+        var maxInFlightPath = string.Concat(moduleConcurrencyPath, ".maxInFlight");
+
+        if (maxInFlightPatch.ValueKind != JsonValueKind.Object)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeLimitMaxInFlightNotObject,
+                    path: maxInFlightPath,
+                    message: "limits.moduleConcurrency.maxInFlight must be an object."));
+            return;
+        }
+
+        foreach (var entry in maxInFlightPatch.EnumerateObject())
+        {
+            if (!IsValidLimitKey(entry.Name))
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeLimitKeyInvalid,
+                        path: string.Concat(maxInFlightPath, ".", entry.Name),
+                        message: "limits.moduleConcurrency.maxInFlight has an invalid key."));
+            }
+
+            if (entry.Value.ValueKind != JsonValueKind.Number
+                || !entry.Value.TryGetInt32(out var max)
+                || max <= 0)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeLimitMaxInFlightInvalid,
+                        path: string.Concat(maxInFlightPath, ".", entry.Name),
+                        message: "limits.moduleConcurrency.maxInFlight must be a positive int32."));
+            }
+        }
+    }
+
+    private static bool IsValidLimitKey(string? key)
+    {
+        if (string.IsNullOrEmpty(key))
+        {
+            return false;
+        }
+
+        if (key.Length > 128)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < key.Length; i++)
+        {
+            var ch = key[i];
+            if (char.IsWhiteSpace(ch) || char.IsControl(ch))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static void ValidateFlowPatchTopLevelFields(
         string flowName,
         JsonElement flowPatch,
@@ -274,6 +454,8 @@ public sealed class ConfigValidator
         out bool hasParamsPatch,
         out bool hasExperimentsPatch,
         out JsonElement experimentsPatch,
+        out bool hasQosPatch,
+        out JsonElement qosPatch,
         out bool hasEmergencyPatch,
         out JsonElement emergencyPatch)
     {
@@ -283,6 +465,8 @@ public sealed class ConfigValidator
         hasParamsPatch = false;
         hasExperimentsPatch = false;
         experimentsPatch = default;
+        hasQosPatch = false;
+        qosPatch = default;
         hasEmergencyPatch = false;
         emergencyPatch = default;
 
@@ -306,6 +490,13 @@ public sealed class ConfigValidator
             {
                 hasEmergencyPatch = true;
                 emergencyPatch = flowField.Value;
+                continue;
+            }
+
+            if (flowField.NameEquals("qos"))
+            {
+                hasQosPatch = true;
+                qosPatch = flowField.Value;
                 continue;
             }
 
@@ -553,6 +744,18 @@ public sealed class ConfigValidator
                         code: CodeExperimentOverrideForbidden,
                         path: string.Concat(patchPath, ".emergency"),
                         message: "experiments[].patch must not override structural field: emergency."));
+                index++;
+                continue;
+            }
+
+            if (patch.TryGetProperty("qos", out _))
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeExperimentOverrideForbidden,
+                        path: string.Concat(patchPath, ".qos"),
+                        message: "experiments[].patch must not override structural field: qos."));
                 index++;
                 continue;
             }
@@ -874,6 +1077,856 @@ public sealed class ConfigValidator
             blueprintNodeNameSet,
             flowRegistered,
             ref findings);
+    }
+
+    private static void ValidateQos(
+        string flowName,
+        bool hasQosPatch,
+        JsonElement qosPatch,
+        bool hasBaseStagesPatch,
+        JsonElement baseStagesPatch,
+        Type? patchType,
+        string[] blueprintStageNameSet,
+        bool flowRegistered,
+        ref FindingBuffer findings)
+    {
+        if (!hasQosPatch)
+        {
+            return;
+        }
+
+        var qosPathPrefix = string.Concat("$.flows.", flowName, ".qos");
+
+        if (qosPatch.ValueKind != JsonValueKind.Object)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeQosNotObject,
+                    path: qosPathPrefix,
+                    message: "qos must be an object."));
+            return;
+        }
+
+        var hasTiers = false;
+        JsonElement tiers = default;
+
+        foreach (var field in qosPatch.EnumerateObject())
+        {
+            if (field.NameEquals("tiers"))
+            {
+                hasTiers = true;
+                tiers = field.Value;
+                continue;
+            }
+
+            var fieldName = field.Name;
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeUnknownField,
+                    path: string.Concat(qosPathPrefix, ".", fieldName),
+                    message: string.Concat("Unknown field: ", fieldName)));
+        }
+
+        if (!hasTiers)
+        {
+            return;
+        }
+
+        var tiersPathPrefix = string.Concat(qosPathPrefix, ".tiers");
+
+        if (tiers.ValueKind != JsonValueKind.Object)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeQosTiersNotObject,
+                    path: tiersPathPrefix,
+                    message: "qos.tiers must be an object."));
+            return;
+        }
+
+        var hasValidBaseStages = hasBaseStagesPatch && baseStagesPatch.ValueKind == JsonValueKind.Object;
+
+        foreach (var tierProperty in tiers.EnumerateObject())
+        {
+            var tierName = tierProperty.Name;
+            var tierPathPrefix = string.Concat(tiersPathPrefix, ".", tierName);
+
+            if (!IsKnownQosTierName(tierName))
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeQosTierUnknown,
+                        path: tierPathPrefix,
+                        message: string.Concat("Unknown QoS tier: ", tierName)));
+                continue;
+            }
+
+            if (tierProperty.Value.ValueKind != JsonValueKind.Object)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeQosTierNotObject,
+                        path: tierPathPrefix,
+                        message: "qos.tiers.<tier> must be an object."));
+                continue;
+            }
+
+            var tierElement = tierProperty.Value;
+
+            var hasPatch = false;
+            JsonElement patch = default;
+
+            foreach (var field in tierElement.EnumerateObject())
+            {
+                if (field.NameEquals("patch"))
+                {
+                    hasPatch = true;
+                    patch = field.Value;
+                    continue;
+                }
+
+                var fieldName = field.Name;
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeUnknownField,
+                        path: string.Concat(tierPathPrefix, ".", fieldName),
+                        message: string.Concat("Unknown field: ", fieldName)));
+            }
+
+            if (!hasPatch)
+            {
+                continue;
+            }
+
+            var patchPathPrefix = string.Concat(tierPathPrefix, ".patch");
+
+            if (patch.ValueKind != JsonValueKind.Object)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeQosPatchNotObject,
+                        path: patchPathPrefix,
+                        message: "qos.tiers.<tier>.patch must be an object."));
+                continue;
+            }
+
+            var hasStagesPatch = false;
+            JsonElement stagesPatch = default;
+
+            var hasParamsPatch = false;
+            JsonElement paramsPatch = default;
+
+            foreach (var field in patch.EnumerateObject())
+            {
+                if (field.NameEquals("stages"))
+                {
+                    hasStagesPatch = true;
+                    stagesPatch = field.Value;
+                    continue;
+                }
+
+                if (field.NameEquals("params"))
+                {
+                    hasParamsPatch = true;
+                    paramsPatch = field.Value;
+                    continue;
+                }
+
+                var fieldName = field.Name;
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeUnknownField,
+                        path: string.Concat(patchPathPrefix, ".", fieldName),
+                        message: string.Concat("Unknown field: ", fieldName)));
+            }
+
+            if (hasParamsPatch)
+            {
+                ValidateParamsPatchAtPath(patchPathPrefix, paramsPatch, patchType, ref findings);
+            }
+
+            if (hasStagesPatch)
+            {
+                ValidateQosStagesPatch(
+                    patchPathPrefix,
+                    stagesPatch,
+                    hasValidBaseStages,
+                    baseStagesPatch,
+                    blueprintStageNameSet,
+                    flowRegistered,
+                    ref findings);
+            }
+        }
+    }
+
+    private static bool IsKnownQosTierName(string tierName)
+    {
+        return string.Equals(tierName, "full", StringComparison.Ordinal)
+            || string.Equals(tierName, "conserve", StringComparison.Ordinal)
+            || string.Equals(tierName, "emergency", StringComparison.Ordinal)
+            || string.Equals(tierName, "fallback", StringComparison.Ordinal);
+    }
+
+    private static void ValidateParamsPatchAtPath(
+        string patchPathPrefix,
+        JsonElement paramsPatch,
+        Type? patchType,
+        ref FindingBuffer findings)
+    {
+        var paramsPath = string.Concat(patchPathPrefix, ".params");
+
+        if (patchType is null)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeParamsBindFailed,
+                    path: paramsPath,
+                    message: "params is not allowed for this flow."));
+            return;
+        }
+
+        if (paramsPatch.ValueKind == JsonValueKind.Object
+            && patchType != typeof(JsonElement)
+            && patchType != typeof(JsonDocument)
+            && !typeof(System.Collections.IDictionary).IsAssignableFrom(patchType))
+        {
+            var knownFieldNameSet = BuildJsonPropertyNameSet(patchType);
+
+            foreach (var property in paramsPatch.EnumerateObject())
+            {
+                var name = property.Name;
+
+                if (NameSetContains(knownFieldNameSet, name))
+                {
+                    continue;
+                }
+
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeParamsUnknownField,
+                        path: string.Concat(paramsPath, ".", name),
+                        message: string.Concat("Unknown params field: ", name)));
+            }
+        }
+
+        if (paramsPatch.ValueKind == JsonValueKind.Null)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeParamsBindFailed,
+                    path: paramsPath,
+                    message: "params must not be null."));
+            return;
+        }
+
+        try
+        {
+            _ = paramsPatch.Deserialize(patchType);
+        }
+        catch (JsonException ex)
+        {
+            var path = BuildParamsBindFailedPath(paramsPath, ex.Path);
+
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeParamsBindFailed,
+                    path: path,
+                    message: ex.Message));
+        }
+        catch (NotSupportedException ex)
+        {
+            var message = ex.Message;
+            if (string.IsNullOrEmpty(message))
+            {
+                message = "params binding is not supported.";
+            }
+
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeParamsBindFailed,
+                    path: paramsPath,
+                    message: message));
+        }
+        catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
+        {
+            var message = ex.Message;
+            if (string.IsNullOrEmpty(message))
+            {
+                message = "params binding failed.";
+            }
+
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeParamsBindFailed,
+                    path: paramsPath,
+                    message: message));
+        }
+    }
+
+    private static void ValidateQosStagesPatch(
+        string patchPathPrefix,
+        JsonElement qosStagesPatch,
+        bool hasValidBaseStages,
+        JsonElement baseStagesPatch,
+        string[] blueprintStageNameSet,
+        bool flowRegistered,
+        ref FindingBuffer findings)
+    {
+        var qosStagesPathPrefix = string.Concat(patchPathPrefix, ".stages");
+
+        if (qosStagesPatch.ValueKind != JsonValueKind.Object)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeStagesNotObject,
+                    path: qosStagesPathPrefix,
+                    message: "qos.tiers.<tier>.patch.stages must be an object."));
+            return;
+        }
+
+        foreach (var stageProperty in qosStagesPatch.EnumerateObject())
+        {
+            var stageName = stageProperty.Name;
+            var stagePathPrefix = string.Concat(qosStagesPathPrefix, ".", stageName);
+
+            var stageNameInBlueprint = flowRegistered && StageNameSetContains(blueprintStageNameSet, stageName);
+
+            if (flowRegistered && !stageNameInBlueprint)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeStageNotInBlueprint,
+                        path: stagePathPrefix,
+                        message: string.Concat("Stage is not in blueprint: ", stageName)));
+            }
+
+            if (stageProperty.Value.ValueKind != JsonValueKind.Object)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeStagePatchNotObject,
+                        path: stagePathPrefix,
+                        message: "Stage patch must be an object."));
+                continue;
+            }
+
+            JsonElement baseStagePatch = default;
+            var hasValidBaseStagePatch = hasValidBaseStages
+                && baseStagesPatch.TryGetProperty(stageName, out baseStagePatch)
+                && baseStagePatch.ValueKind == JsonValueKind.Object;
+
+            ValidateQosStagePatch(stagePathPrefix, stageProperty.Value, hasValidBaseStagePatch, baseStagePatch, ref findings);
+        }
+    }
+
+    private static void ValidateQosStagePatch(
+        string stagePathPrefix,
+        JsonElement qosStagePatch,
+        bool hasValidBaseStagePatch,
+        JsonElement baseStagePatch,
+        ref FindingBuffer findings)
+    {
+        var hasFanoutMax = false;
+        JsonElement fanoutMax = default;
+
+        var hasModules = false;
+        JsonElement modules = default;
+
+        foreach (var stageField in qosStagePatch.EnumerateObject())
+        {
+            if (stageField.NameEquals("fanoutMax"))
+            {
+                hasFanoutMax = true;
+                fanoutMax = stageField.Value;
+                continue;
+            }
+
+            if (stageField.NameEquals("modules"))
+            {
+                hasModules = true;
+                modules = stageField.Value;
+                continue;
+            }
+
+            var fieldName = stageField.Name;
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeUnknownField,
+                    path: string.Concat(stagePathPrefix, ".", fieldName),
+                    message: string.Concat("Unknown field: ", fieldName)));
+        }
+
+        if (hasFanoutMax)
+        {
+            ValidateFanoutMaxAtPath(string.Concat(stagePathPrefix, ".fanoutMax"), fanoutMax, ref findings);
+
+            if (hasValidBaseStagePatch
+                && TryGetStageFanoutMax(baseStagePatch, out var baseFanoutMax)
+                && TryGetValidFanoutMaxValue(fanoutMax, out var qosFanoutMax)
+                && qosFanoutMax > baseFanoutMax)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeQosFanoutMaxIncreaseForbidden,
+                        path: string.Concat(stagePathPrefix, ".fanoutMax"),
+                        message: "QoS must not increase fanoutMax."));
+            }
+        }
+
+        if (!hasModules)
+        {
+            return;
+        }
+
+        var modulesPathPrefix = string.Concat(stagePathPrefix, ".modules");
+
+        if (modules.ValueKind != JsonValueKind.Array)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeModulesNotArray,
+                    path: modulesPathPrefix,
+                    message: "modules must be an array."));
+            return;
+        }
+
+        var index = 0;
+        foreach (var modulePatch in modules.EnumerateArray())
+        {
+            var modulePathPrefix = string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "]");
+
+            if (modulePatch.ValueKind != JsonValueKind.Object)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeModulesNotArray,
+                        path: modulePathPrefix,
+                        message: "modules must be an array of objects."));
+                index++;
+                continue;
+            }
+
+            string? moduleId = null;
+            var hasEnabled = false;
+            var enabled = true;
+            var hasShadow = false;
+            JsonElement shadow = default;
+
+            foreach (var field in modulePatch.EnumerateObject())
+            {
+                if (field.NameEquals("id"))
+                {
+                    if (field.Value.ValueKind == JsonValueKind.String)
+                    {
+                        moduleId = field.Value.GetString();
+                    }
+
+                    continue;
+                }
+
+                if (field.NameEquals("enabled"))
+                {
+                    hasEnabled = true;
+
+                    if (field.Value.ValueKind == JsonValueKind.True || field.Value.ValueKind == JsonValueKind.False)
+                    {
+                        enabled = field.Value.GetBoolean();
+                    }
+                    else
+                    {
+                        findings.Add(
+                            new ValidationFinding(
+                                ValidationSeverity.Error,
+                                code: CodeModuleEnabledInvalid,
+                                path: string.Concat(modulePathPrefix, ".enabled"),
+                                message: "modules[].enabled must be a boolean."));
+                    }
+
+                    continue;
+                }
+
+                if (field.NameEquals("shadow"))
+                {
+                    hasShadow = true;
+                    shadow = field.Value;
+                    continue;
+                }
+
+                var fieldName = field.Name;
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeUnknownField,
+                        path: string.Concat(modulePathPrefix, ".", fieldName),
+                        message: string.Concat("Unknown field: ", fieldName)));
+            }
+
+            if (string.IsNullOrEmpty(moduleId))
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeModuleIdMissing,
+                        path: string.Concat(modulePathPrefix, ".id"),
+                        message: "modules[].id is required."));
+            }
+            else
+            {
+                if (!IsValidModuleIdFormat(moduleId))
+                {
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Warn,
+                            code: CodeModuleIdInvalidFormat,
+                            path: string.Concat(modulePathPrefix, ".id"),
+                            message: "modules[].id must match [a-z0-9_]+ and length <= 64."));
+                }
+
+                if (hasEnabled
+                    && enabled
+                    && hasValidBaseStagePatch
+                    && TryGetBaseModuleEnabled(baseStagePatch, moduleId, out var baseEnabled)
+                    && !baseEnabled)
+                {
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Error,
+                            code: CodeQosModuleEnableForbidden,
+                            path: string.Concat(modulePathPrefix, ".enabled"),
+                            message: "QoS must not enable modules that are disabled in the base patch."));
+                }
+
+                if (hasShadow && hasValidBaseStagePatch)
+                {
+                    var baseShadowSample = 0.0;
+                    _ = TryGetBaseModuleShadowSample(baseStagePatch, moduleId, out baseShadowSample);
+
+                    if (TryGetShadowSample(shadow, out var qosShadowSample) && qosShadowSample > baseShadowSample)
+                    {
+                        findings.Add(
+                            new ValidationFinding(
+                                ValidationSeverity.Error,
+                                code: CodeQosShadowSampleIncreaseForbidden,
+                                path: string.Concat(modulePathPrefix, ".shadow.sample"),
+                                message: "QoS must not increase shadow sampling rate."));
+                    }
+                }
+            }
+
+            if (hasShadow)
+            {
+                ValidateShadowPatchAtPath(string.Concat(modulePathPrefix, ".shadow"), shadow, ref findings);
+            }
+
+            index++;
+        }
+    }
+
+    private static void ValidateFanoutMaxAtPath(string path, JsonElement fanoutMax, ref FindingBuffer findings)
+    {
+        if (fanoutMax.ValueKind != JsonValueKind.Number)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeFanoutMaxInvalid,
+                    path: path,
+                    message: "fanoutMax must be a non-negative integer."));
+            return;
+        }
+
+        if (fanoutMax.TryGetInt32(out var value32))
+        {
+            if (value32 < 0)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeFanoutMaxInvalid,
+                        path: path,
+                        message: "fanoutMax must be a non-negative integer."));
+                return;
+            }
+
+            if (value32 > MaxAllowedFanoutMax)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeFanoutMaxExceeded,
+                        path: path,
+                        message: string.Concat(
+                            "fanoutMax=",
+                            value32.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            " exceeds maxAllowed=",
+                            MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            ".")));
+                return;
+            }
+
+            return;
+        }
+
+        if (fanoutMax.TryGetInt64(out var value64))
+        {
+            if (value64 < 0)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeFanoutMaxInvalid,
+                        path: path,
+                        message: "fanoutMax must be a non-negative integer."));
+                return;
+            }
+
+            if (value64 > MaxAllowedFanoutMax)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeFanoutMaxExceeded,
+                        path: path,
+                        message: string.Concat(
+                            "fanoutMax=",
+                            value64.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            " exceeds maxAllowed=",
+                            MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            ".")));
+                return;
+            }
+
+            return;
+        }
+
+        findings.Add(
+            new ValidationFinding(
+                ValidationSeverity.Error,
+                code: CodeFanoutMaxInvalid,
+                path: path,
+                message: "fanoutMax must be a non-negative integer."));
+    }
+
+    private static void ValidateShadowPatchAtPath(string shadowPath, JsonElement shadow, ref FindingBuffer findings)
+    {
+        if (shadow.ValueKind != JsonValueKind.Object)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeShadowSampleInvalid,
+                    path: shadowPath,
+                    message: "modules[].shadow must be an object."));
+            return;
+        }
+
+        var hasSample = false;
+        JsonElement sampleElement = default;
+
+        foreach (var shadowField in shadow.EnumerateObject())
+        {
+            if (shadowField.NameEquals("sample"))
+            {
+                hasSample = true;
+                sampleElement = shadowField.Value;
+                continue;
+            }
+
+            var fieldName = shadowField.Name;
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeUnknownField,
+                    path: string.Concat(shadowPath, ".", fieldName),
+                    message: string.Concat("Unknown field: ", fieldName)));
+        }
+
+        if (!hasSample)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeShadowSampleInvalid,
+                    path: string.Concat(shadowPath, ".sample"),
+                    message: "modules[].shadow.sample is required."));
+            return;
+        }
+
+        if (sampleElement.ValueKind != JsonValueKind.Number
+            || !sampleElement.TryGetDouble(out var sampleRate)
+            || sampleRate < 0
+            || sampleRate > 1)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeShadowSampleInvalid,
+                    path: string.Concat(shadowPath, ".sample"),
+                    message: "modules[].shadow.sample must be a number in range 0..1."));
+        }
+    }
+
+    private static bool TryGetShadowSample(JsonElement shadow, out double sample)
+    {
+        sample = 0;
+
+        if (shadow.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        foreach (var field in shadow.EnumerateObject())
+        {
+            if (!field.NameEquals("sample"))
+            {
+                continue;
+            }
+
+            if (field.Value.ValueKind != JsonValueKind.Number)
+            {
+                return false;
+            }
+
+            if (!field.Value.TryGetDouble(out sample))
+            {
+                return false;
+            }
+
+            if (sample < 0 || sample > 1)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryGetStageFanoutMax(JsonElement stagePatch, out int fanoutMax)
+    {
+        if (!stagePatch.TryGetProperty("fanoutMax", out var fanoutElement))
+        {
+            fanoutMax = 0;
+            return false;
+        }
+
+        if (!TryGetValidFanoutMaxValue(fanoutElement, out fanoutMax))
+        {
+            fanoutMax = 0;
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryGetBaseModuleEnabled(JsonElement baseStagePatch, string moduleId, out bool enabled)
+    {
+        enabled = true;
+
+        if (!baseStagePatch.TryGetProperty("modules", out var modules) || modules.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var module in modules.EnumerateArray())
+        {
+            if (module.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (!module.TryGetProperty("id", out var idElement) || idElement.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var id = idElement.GetString();
+
+            if (!string.Equals(id, moduleId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (module.TryGetProperty("enabled", out var enabledElement)
+                && (enabledElement.ValueKind == JsonValueKind.True || enabledElement.ValueKind == JsonValueKind.False))
+            {
+                enabled = enabledElement.GetBoolean();
+                return true;
+            }
+
+            enabled = true;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryGetBaseModuleShadowSample(JsonElement baseStagePatch, string moduleId, out double sample)
+    {
+        sample = 0;
+
+        if (!baseStagePatch.TryGetProperty("modules", out var modules) || modules.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var module in modules.EnumerateArray())
+        {
+            if (module.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (!module.TryGetProperty("id", out var idElement) || idElement.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var id = idElement.GetString();
+
+            if (!string.Equals(id, moduleId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!module.TryGetProperty("shadow", out var shadow))
+            {
+                sample = 0;
+                return true;
+            }
+
+            if (TryGetShadowSample(shadow, out sample))
+            {
+                return true;
+            }
+
+            sample = 0;
+            return true;
+        }
+
+        return false;
     }
 
     private static void ValidateEmergencyPatch(
@@ -1513,6 +2566,8 @@ public sealed class ConfigValidator
             out var hasExperimentsPatch,
             out var experimentsPatch,
             out _,
+            out _,
+            out _,
             out _);
 
         ValidateFlowParamsPatch(patchFlowName, hasParamsPatch, paramsPatch, patchType, ref patchFindings);
@@ -1932,6 +2987,8 @@ public sealed class ConfigValidator
             JsonElement modulePriority = default;
             var hasModuleShadow = false;
             JsonElement moduleShadow = default;
+            var hasModuleLimitKey = false;
+            string? moduleLimitKey = null;
 
             foreach (var moduleField in modulePatch.EnumerateObject())
             {
@@ -2008,6 +3065,13 @@ public sealed class ConfigValidator
                     continue;
                 }
 
+                if (moduleField.NameEquals("limitKey"))
+                {
+                    hasModuleLimitKey = true;
+                    moduleLimitKey = moduleField.Value.ValueKind == JsonValueKind.String ? moduleField.Value.GetString() : null;
+                    continue;
+                }
+
                 var fieldName = moduleField.Name;
                 findings.Add(
                     new ValidationFinding(
@@ -2020,6 +3084,16 @@ public sealed class ConfigValidator
                             "].",
                             fieldName),
                         message: string.Concat("Unknown field: ", fieldName)));
+            }
+
+            if (hasModuleLimitKey && !IsValidLimitKey(moduleLimitKey))
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeLimitKeyInvalid,
+                        path: string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].limitKey"),
+                        message: "modules[].limitKey must be a non-empty string with no whitespace."));
             }
 
             if (hasModulePriority)
