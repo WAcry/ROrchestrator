@@ -20,10 +20,22 @@ public sealed class FlowTestHost
         return new FlowTestHostBuilder(registry, catalog);
     }
 
-    public async ValueTask<TestRunResult<TResp>> RunAsync<TReq, TResp>(string flowName, TReq req)
+    public async ValueTask<TestRunResult<TResp>> RunAsync<TReq, TResp>(
+        string flowName,
+        TReq req,
+        FlowRequestOptions? requestOptions = null,
+        ConfigSnapshot? configSnapshot = null)
     {
-        var flowContext = new FlowContext(_services, CancellationToken.None, _deadline);
-        flowContext.EnableExecExplain();
+        var flowContext = requestOptions.HasValue
+            ? new FlowContext(_services, CancellationToken.None, _deadline, requestOptions.Value)
+            : new FlowContext(_services, CancellationToken.None, _deadline);
+
+        if (configSnapshot.HasValue)
+        {
+            flowContext.SetConfigSnapshotForTesting(configSnapshot.Value);
+        }
+
+        flowContext.EnableExecExplain(ExplainLevel.Standard);
 
         var invocationCollector = new FlowTestInvocationCollector();
         flowContext.ConfigureForTesting(_overrideProvider, invocationCollector);
@@ -38,4 +50,3 @@ public sealed class FlowTestHost
         return new TestRunResult<TResp>(outcome, explain, invocationCollector.ToArray());
     }
 }
-

@@ -42,6 +42,11 @@ public static class ExecExplainJsonV1
             writer.WriteNull("config_version");
         }
 
+        writer.WritePropertyName("qos");
+        writer.WriteStartObject();
+        writer.WriteString("selected_tier", GetQosTierString(explain.QosSelectedTier));
+        writer.WriteEndObject();
+
         WriteSortedStringDictionaryOrNull(writer, "variants", explain.Variants);
 
         writer.WritePropertyName("overlays_applied");
@@ -282,6 +287,18 @@ public static class ExecExplainJsonV1
         };
     }
 
+    private static string GetQosTierString(QosTier tier)
+    {
+        return tier switch
+        {
+            QosTier.Full => "full",
+            QosTier.Conserve => "conserve",
+            QosTier.Emergency => "emergency",
+            QosTier.Fallback => "fallback",
+            _ => "unknown",
+        };
+    }
+
     private sealed class KeyValuePairByKeyComparer : IComparer<KeyValuePair<string, string>>
     {
         public static readonly KeyValuePairByKeyComparer Instance = new();
@@ -296,4 +313,3 @@ public static class ExecExplainJsonV1
         }
     }
 }
-

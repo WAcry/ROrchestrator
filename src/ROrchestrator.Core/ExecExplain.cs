@@ -14,6 +14,7 @@ public sealed class ExecExplain
     private readonly IReadOnlyDictionary<string, string> _variants;
     private readonly ulong _configVersion;
     private readonly bool _hasConfigVersion;
+    private readonly QosTier _qosSelectedTier;
 
     public string FlowName { get; }
 
@@ -35,12 +36,15 @@ public sealed class ExecExplain
 
     public IReadOnlyDictionary<string, string> Variants => _variants;
 
+    public QosTier QosSelectedTier => _qosSelectedTier;
+
     internal ExecExplain(
         string flowName,
         ExplainLevel level,
         ulong planHash,
         bool hasConfigVersion,
         ulong configVersion,
+        QosTier qosSelectedTier,
         PatchEvaluatorV1.PatchOverlayAppliedV1[]? overlaysApplied,
         IReadOnlyDictionary<string, string>? variants,
         long startTimestamp,
@@ -82,6 +86,7 @@ public sealed class ExecExplain
         PlanHash = planHash;
         _hasConfigVersion = hasConfigVersion;
         _configVersion = configVersion;
+        _qosSelectedTier = qosSelectedTier;
         StartTimestamp = startTimestamp;
         EndTimestamp = endTimestamp;
         _nodes = nodes;

@@ -214,6 +214,7 @@ internal sealed class ExecExplainCollectorV1
 
         _flowEndTimestamp = Stopwatch.GetTimestamp();
         var hasConfigVersion = context.TryGetConfigVersion(out var configVersion);
+        var qosSelectedTier = context.QosSelectedTier;
         var nodes = _nodes;
         if (nodes is null)
         {
@@ -231,6 +232,7 @@ internal sealed class ExecExplainCollectorV1
             _planHash,
             hasConfigVersion,
             configVersion,
+            qosSelectedTier,
             _overlaysApplied,
             _variants,
             _flowStartTimestamp,

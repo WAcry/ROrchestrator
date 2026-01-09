@@ -146,7 +146,7 @@ public sealed class ExecutionEngine
         return finalOutcome;
     }
 
-    public async ValueTask<Outcome<TResp>> ExecuteAsync<TReq, TResp>(
+    public ValueTask<Outcome<TResp>> ExecuteAsync<TReq, TResp>(
         PlanTemplate<TReq, TResp> template,
         TReq request,
         FlowContext context)
@@ -154,6 +154,25 @@ public sealed class ExecutionEngine
         if (template is null)
         {
             throw new ArgumentNullException(nameof(template));
+        }
+
+        return ExecuteAsync(template.Name, template, request, context);
+    }
+
+    public async ValueTask<Outcome<TResp>> ExecuteAsync<TReq, TResp>(
+        string flowName,
+        PlanTemplate<TReq, TResp> template,
+        TReq request,
+        FlowContext context)
+    {
+        if (template is null)
+        {
+            throw new ArgumentNullException(nameof(template));
+        }
+
+        if (string.IsNullOrEmpty(flowName))
+        {
+            throw new ArgumentException("FlowName must be non-empty.", nameof(flowName));
         }
 
         if (context is null)
@@ -166,7 +185,6 @@ public sealed class ExecutionEngine
             throw new ArgumentNullException(nameof(request));
         }
 
-        var flowName = template.Name;
         var execExplainCollector = context.ExecExplainCollector;
         execExplainCollector?.Clear();
         var recordFlowMetrics = FlowMetricsV1.IsFlowEnabled;

@@ -14,6 +14,7 @@ public sealed class FlowContext
     private readonly IReadOnlyDictionary<string, string> _variants;
     private readonly string? _userId;
     private readonly IReadOnlyDictionary<string, string> _requestAttributes;
+    private QosTier _qosSelectedTier;
     private readonly IExplainSink _explainSink;
     private ExecExplainCollectorV1? _execExplainCollector;
     private PatchEvaluatorV1.FlowPatchEvaluationV1? _activePatchEvaluation;
@@ -53,6 +54,8 @@ public sealed class FlowContext
 
     public IReadOnlyDictionary<string, string> RequestAttributes => _requestAttributes;
 
+    internal QosTier QosSelectedTier => _qosSelectedTier;
+
     public IExplainSink ExplainSink => _explainSink;
 
     public FlowContext(IServiceProvider services, CancellationToken cancellationToken, DateTimeOffset deadline, IExplainSink? explainSink = null)
@@ -71,6 +74,7 @@ public sealed class FlowContext
         _variants = EmptyStringDictionary;
         _userId = null;
         _requestAttributes = EmptyStringDictionary;
+        _qosSelectedTier = QosTier.Full;
         _explainSink = explainSink ?? NullExplainSink.Instance;
         CancellationToken = cancellationToken;
         Deadline = deadline;
@@ -97,9 +101,15 @@ public sealed class FlowContext
         _variants = requestOptions.Variants ?? EmptyStringDictionary;
         _userId = requestOptions.UserId;
         _requestAttributes = requestOptions.RequestAttributes ?? EmptyStringDictionary;
+        _qosSelectedTier = QosTier.Full;
         _explainSink = explainSink ?? NullExplainSink.Instance;
         CancellationToken = cancellationToken;
         Deadline = deadline;
+    }
+
+    internal void SetQosSelectedTier(QosTier tier)
+    {
+        _qosSelectedTier = tier;
     }
 
     public void EnableExecExplain(ExplainLevel level = ExplainLevel.Minimal)
@@ -580,6 +590,16 @@ public sealed class FlowContext
 
         snapshot = default;
         return false;
+    }
+
+    internal void SetConfigSnapshotForTesting(ConfigSnapshot snapshot)
+    {
+        lock (_configSnapshotGate)
+        {
+            _configSnapshot = snapshot;
+            _configSnapshotTask = null;
+            Volatile.Write(ref _configSnapshotState, 2);
+        }
     }
 
     internal ValueTask<ConfigSnapshot> GetConfigSnapshotAsync(IConfigProvider provider)
