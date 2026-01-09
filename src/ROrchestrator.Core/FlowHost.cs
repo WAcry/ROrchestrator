@@ -12,7 +12,7 @@ public sealed class FlowHost
     private readonly IPlanCompiler _planCompiler;
 
     private readonly Lock _cacheGate;
-    private Dictionary<PlanTemplateCacheKey, object>? _templateCache;
+    private Dictionary<string, object>? _templateCache;
 
     public int CachedPlanTemplateCount
     {
@@ -91,7 +91,8 @@ public sealed class FlowHost
             return ExecuteWithSnapshotAsync<TReq, TResp>(flowName, request, flowContext, snapshotTask);
         }
 
-        return ExecuteWithSnapshot<TReq, TResp>(flowName, request, flowContext, snapshotTask.Result);
+        _ = snapshotTask.Result;
+        return ExecuteWithSnapshot<TReq, TResp>(flowName, request, flowContext);
     }
 
     private async ValueTask<Outcome<TResp>> ExecuteWithSnapshotAsync<TReq, TResp>(
@@ -100,21 +101,18 @@ public sealed class FlowHost
         FlowContext flowContext,
         ValueTask<ConfigSnapshot> snapshotTask)
     {
-        var snapshot = await snapshotTask.ConfigureAwait(false);
-        return await ExecuteWithSnapshot<TReq, TResp>(flowName, request, flowContext, snapshot).ConfigureAwait(false);
+        _ = await snapshotTask.ConfigureAwait(false);
+        return await ExecuteWithSnapshot<TReq, TResp>(flowName, request, flowContext).ConfigureAwait(false);
     }
 
     private ValueTask<Outcome<TResp>> ExecuteWithSnapshot<TReq, TResp>(
         string flowName,
         TReq request,
-        FlowContext flowContext,
-        ConfigSnapshot snapshot)
+        FlowContext flowContext)
     {
-        var key = new PlanTemplateCacheKey(flowName, snapshot.ConfigVersion);
-
         var cache = Volatile.Read(ref _templateCache);
 
-        if (cache is not null && cache.TryGetValue(key, out var cached))
+        if (cache is not null && cache.TryGetValue(flowName, out var cached))
         {
             if (cached is PlanTemplate<TReq, TResp> typedTemplate)
             {
@@ -136,7 +134,7 @@ public sealed class FlowHost
         {
             cache = _templateCache;
 
-            if (cache is not null && cache.TryGetValue(key, out cached))
+            if (cache is not null && cache.TryGetValue(flowName, out cached))
             {
                 if (cached is PlanTemplate<TReq, TResp> typedTemplate)
                 {
@@ -153,15 +151,15 @@ public sealed class FlowHost
                 var blueprint = _registry.Get<TReq, TResp>(flowName);
                 template = _planCompiler.Compile(blueprint, _catalog);
 
-                Dictionary<PlanTemplateCacheKey, object> newCache;
+                Dictionary<string, object> newCache;
 
                 if (cache is null || cache.Count == 0)
                 {
-                    newCache = new Dictionary<PlanTemplateCacheKey, object>(1);
+                    newCache = new Dictionary<string, object>(1);
                 }
                 else
                 {
-                    newCache = new Dictionary<PlanTemplateCacheKey, object>(cache.Count + 1);
+                    newCache = new Dictionary<string, object>(cache.Count + 1);
 
                     foreach (var pair in cache)
                     {
@@ -169,7 +167,7 @@ public sealed class FlowHost
                     }
                 }
 
-                newCache.Add(key, template);
+                newCache.Add(flowName, template);
                 Volatile.Write(ref _templateCache, newCache);
             }
         }
@@ -180,41 +178,6 @@ public sealed class FlowHost
         }
 
         return _engine.ExecuteAsync(template, request, flowContext);
-    }
-
-    private readonly struct PlanTemplateCacheKey : IEquatable<PlanTemplateCacheKey>
-    {
-        public string FlowName { get; }
-
-        public ulong ConfigVersion { get; }
-
-        public PlanTemplateCacheKey(string flowName, ulong configVersion)
-        {
-            FlowName = flowName;
-            ConfigVersion = configVersion;
-        }
-
-        public bool Equals(PlanTemplateCacheKey other)
-        {
-            return ConfigVersion == other.ConfigVersion
-                && string.Equals(FlowName, other.FlowName, StringComparison.Ordinal);
-        }
-
-        public override bool Equals(object? obj)
-        {
-            return obj is PlanTemplateCacheKey other && Equals(other);
-        }
-
-        public override int GetHashCode()
-        {
-            unchecked
-            {
-                var hash = StringComparer.Ordinal.GetHashCode(FlowName);
-                hash = (hash * 397) ^ ((int)ConfigVersion);
-                hash = (hash * 397) ^ ((int)(ConfigVersion >> 32));
-                return hash;
-            }
-        }
     }
 
     private sealed class EmptyConfigProvider : IConfigProvider

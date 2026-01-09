@@ -151,7 +151,7 @@ public sealed class FlowHostTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_ShouldRecompile_WhenConfigVersionChanges()
+    public async Task ExecuteAsync_ShouldNotRecompile_WhenConfigVersionChanges()
     {
         var services = new DummyServiceProvider();
 
@@ -178,12 +178,12 @@ public sealed class FlowHostTests
         Assert.True(resultB.IsOk);
         Assert.Equal(2, resultB.Value);
 
-        Assert.Equal(2, compiler.CompileCallCount);
-        Assert.Equal(2, host.CachedPlanTemplateCount);
+        Assert.Equal(1, compiler.CompileCallCount);
+        Assert.Equal(1, host.CachedPlanTemplateCount);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ShouldCompileOnce_ForConcurrentCallsWithSameConfigVersion()
+    public async Task ExecuteAsync_ShouldCompileOnce_ForConcurrentCalls()
     {
         var services = new DummyServiceProvider();
 
@@ -193,7 +193,7 @@ public sealed class FlowHostTests
         var registry = new FlowRegistry();
         registry.Register<int, int>("test_flow", CreateTestFlowBlueprint());
 
-        var configProvider = new StaticConfigProvider(configVersion: 123, patchJson: string.Empty);
+        var configProvider = new IncrementingConfigProvider();
         using var compiler = new BlockingCountingPlanCompiler();
 
         var host = new FlowHost(registry, catalog, configProvider, compiler);
