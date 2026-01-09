@@ -5,6 +5,7 @@ namespace ROrchestrator.Core;
 internal sealed class ExecExplainCollectorV1
 {
     private ExecExplainNode[]? _nodes;
+    private List<ExecExplainStageModule>? _stageModules;
     private ExecExplain? _explain;
     private string? _flowName;
     private ulong _planHash;
@@ -17,6 +18,7 @@ internal sealed class ExecExplainCollectorV1
     public void Clear()
     {
         _nodes = null;
+        _stageModules = null;
         _explain = null;
         _flowName = null;
         _planHash = 0;
@@ -50,6 +52,11 @@ internal sealed class ExecExplainCollectorV1
         _active = true;
         _explain = null;
 
+        if (_stageModules is not null)
+        {
+            _stageModules.Clear();
+        }
+
         var explainNodes = new ExecExplainNode[nodeCount];
         for (var i = 0; i < nodeCount; i++)
         {
@@ -66,6 +73,24 @@ internal sealed class ExecExplainCollectorV1
         }
 
         _nodes = explainNodes;
+    }
+
+    public void RecordStageModule(
+        string stageName,
+        string moduleId,
+        string moduleType,
+        int priority,
+        OutcomeKind outcomeKind,
+        string outcomeCode,
+        bool isOverride)
+    {
+        if (!_active)
+        {
+            return;
+        }
+
+        _stageModules ??= new List<ExecExplainStageModule>(capacity: 8);
+        _stageModules.Add(new ExecExplainStageModule(stageName, moduleId, moduleType, priority, outcomeKind, outcomeCode, isOverride));
     }
 
     public void RecordNode(PlanNodeTemplate node, long startTimestamp, long endTimestamp, OutcomeKind outcomeKind, string outcomeCode)
@@ -106,6 +131,11 @@ internal sealed class ExecExplainCollectorV1
             throw new InvalidOperationException("ExecExplainCollectorV1 has not been started.");
         }
 
+        var stageModules = _stageModules;
+        var stageModulesArray = stageModules is null || stageModules.Count == 0
+            ? Array.Empty<ExecExplainStageModule>()
+            : stageModules.ToArray();
+
         _explain = new ExecExplain(
             _flowName!,
             _planHash,
@@ -113,7 +143,8 @@ internal sealed class ExecExplainCollectorV1
             configVersion,
             _flowStartTimestamp,
             _flowEndTimestamp,
-            nodes);
+            nodes,
+            stageModulesArray);
         _active = false;
     }
 

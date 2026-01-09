@@ -6,6 +6,7 @@ namespace ROrchestrator.Core;
 public sealed class ExecExplain
 {
     private readonly ExecExplainNode[] _nodes;
+    private readonly ExecExplainStageModule[] _stageModules;
     private readonly ulong _configVersion;
     private readonly bool _hasConfigVersion;
 
@@ -21,6 +22,8 @@ public sealed class ExecExplain
 
     public IReadOnlyList<ExecExplainNode> Nodes => _nodes;
 
+    public IReadOnlyList<ExecExplainStageModule> StageModules => _stageModules;
+
     internal ExecExplain(
         string flowName,
         ulong planHash,
@@ -28,7 +31,8 @@ public sealed class ExecExplain
         ulong configVersion,
         long startTimestamp,
         long endTimestamp,
-        ExecExplainNode[] nodes)
+        ExecExplainNode[] nodes,
+        ExecExplainStageModule[] stageModules)
     {
         if (string.IsNullOrEmpty(flowName))
         {
@@ -44,6 +48,8 @@ public sealed class ExecExplain
         {
             throw new ArgumentException("Nodes must be non-empty.", nameof(nodes));
         }
+
+        _stageModules = stageModules ?? throw new ArgumentNullException(nameof(stageModules));
 
         if (startTimestamp < 0)
         {
@@ -79,6 +85,41 @@ public sealed class ExecExplain
     public TimeSpan GetDuration()
     {
         return Stopwatch.GetElapsedTime(StartTimestamp, EndTimestamp);
+    }
+}
+
+public readonly struct ExecExplainStageModule
+{
+    public string StageName { get; }
+
+    public string ModuleId { get; }
+
+    public string ModuleType { get; }
+
+    public int Priority { get; }
+
+    public OutcomeKind OutcomeKind { get; }
+
+    public string OutcomeCode { get; }
+
+    public bool IsOverride { get; }
+
+    internal ExecExplainStageModule(
+        string stageName,
+        string moduleId,
+        string moduleType,
+        int priority,
+        OutcomeKind outcomeKind,
+        string outcomeCode,
+        bool isOverride)
+    {
+        StageName = stageName;
+        ModuleId = moduleId;
+        ModuleType = moduleType;
+        Priority = priority;
+        OutcomeKind = outcomeKind;
+        OutcomeCode = outcomeCode;
+        IsOverride = isOverride;
     }
 }
 

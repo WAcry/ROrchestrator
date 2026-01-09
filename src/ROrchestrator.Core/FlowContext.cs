@@ -249,14 +249,18 @@ public sealed class FlowContext
 
         lock (_nodeOutcomeGate)
         {
+            var previousCount = _nodeCount;
             _nodeNameToIndexView = nodeNameToIndex;
             _nodeCount = nodeCount;
+            _nextDynamicIndex = nodeCount;
+            _nodeNameToIndex?.Clear();
             EnsureOutcomeCapacity(nodeCount);
 
             if (_hasRecordedOutcomes)
             {
-                Array.Clear(_nodeOutcomeStates!, 0, nodeCount);
-                Array.Clear(_nodeOutcomes!, 0, nodeCount);
+                var clearCount = previousCount > nodeCount ? previousCount : nodeCount;
+                Array.Clear(_nodeOutcomeStates!, 0, clearCount);
+                Array.Clear(_nodeOutcomes!, 0, clearCount);
                 _hasRecordedOutcomes = false;
             }
         }
@@ -335,7 +339,7 @@ public sealed class FlowContext
             throw new ArgumentOutOfRangeException(nameof(nodeIndex), nodeIndex, "NodeIndex must be non-negative.");
         }
 
-        if (_nodeNameToIndexView is not null && nodeIndex >= _nodeCount)
+        if (nodeIndex >= _nodeCount)
         {
             throw new InvalidOperationException($"Node index '{nodeIndex}' is out of range for the current execution plan.");
         }
@@ -381,8 +385,22 @@ public sealed class FlowContext
                 return index;
             }
 
-            // fixed layout: only allow nodes that are part of the compiled plan
-            throw new InvalidOperationException($"Node '{nodeName}' is not part of the current execution plan.");
+            lock (_nodeOutcomeGate)
+            {
+                _nodeNameToIndex ??= new Dictionary<string, int>();
+
+                if (_nodeNameToIndex.TryGetValue(nodeName, out index))
+                {
+                    return index;
+                }
+
+                index = _nextDynamicIndex;
+                _nextDynamicIndex++;
+                _nodeCount = _nextDynamicIndex;
+                _nodeNameToIndex.Add(nodeName, index);
+                EnsureOutcomeCapacity(_nodeCount);
+                return index;
+            }
         }
 
         lock (_nodeOutcomeGate)
@@ -408,7 +426,21 @@ public sealed class FlowContext
         var view = _nodeNameToIndexView;
         if (view is not null)
         {
-            return view.TryGetValue(nodeName, out index);
+            if (view.TryGetValue(nodeName, out index))
+            {
+                return true;
+            }
+
+            lock (_nodeOutcomeGate)
+            {
+                if (_nodeNameToIndex is null || !_nodeNameToIndex.TryGetValue(nodeName, out index))
+                {
+                    index = default;
+                    return false;
+                }
+
+                return true;
+            }
         }
 
         lock (_nodeOutcomeGate)

@@ -51,7 +51,8 @@ public sealed class FlowHostTests
         var registry = new FlowRegistry();
         registry.Register<int, int>("test_flow", CreateTestFlowBlueprint());
 
-        var configProvider = new StaticConfigProvider(configVersion: 456, patchJson: "patch");
+        var patchJson = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
+        var configProvider = new StaticConfigProvider(configVersion: 456, patchJson);
         var host = new FlowHost(registry, catalog, configProvider);
 
         var result = await host.ExecuteAsync<int, int>("test_flow", request: 1, context);
@@ -62,7 +63,7 @@ public sealed class FlowHostTests
 
         Assert.True(context.TryGetConfigSnapshot(out var snapshot));
         Assert.Equal((ulong)456, snapshot.ConfigVersion);
-        Assert.Equal("patch", snapshot.PatchJson);
+        Assert.Equal(patchJson, snapshot.PatchJson);
     }
 
     [Fact]

@@ -102,6 +102,58 @@ public sealed class ToolingJsonV1Tests
             result.Json);
     }
 
+    [Fact]
+    public void ExplainPatchJson_ShouldProduceStableJson()
+    {
+        var patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
+            "\"stages\":{\"s1\":{\"fanoutMax\":3,\"modules\":[" +
+            "{\"id\":\"m_disabled\",\"use\":\"test.module\",\"with\":{}}," +
+            "{\"id\":\"m_gate_false\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"l1\",\"in\":[\"B\"]}}}," +
+            "{\"id\":\"m_high\",\"use\":\"test.module\",\"with\":{},\"priority\":10}," +
+            "{\"id\":\"m_low\",\"use\":\"test.module\",\"with\":{},\"priority\":0}" +
+            "]}},\"experiments\":[{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[" +
+            "{\"id\":\"m_exp\",\"use\":\"test.module\",\"with\":{},\"priority\":5}" +
+            "]}}}}]," +
+            "\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m_disabled\",\"enabled\":false}]}}}}" +
+            "}}}";
+
+        var requestOptions = new FlowRequestOptions(
+            variants: new Dictionary<string, string>
+            {
+                { "l1", "A" },
+            });
+
+        var result = ToolingJsonV1.ExplainPatchJson(
+            flowName: "HomeFeed",
+            patchJson: patchJson,
+            requestOptions);
+
+        Assert.Equal(0, result.ExitCode);
+
+        Assert.Equal(
+            "{\"kind\":\"explain_patch\",\"flow_name\":\"HomeFeed\",\"overlays_applied\":[{\"layer\":\"base\",\"experiment_layer\":null,\"experiment_variant\":null},{\"layer\":\"experiment\",\"experiment_layer\":\"l1\",\"experiment_variant\":\"A\"},{\"layer\":\"emergency\",\"experiment_layer\":null,\"experiment_variant\":null}],\"stages\":[{\"stage_name\":\"s1\",\"fanout_max\":1,\"modules\":[{\"module_id\":\"m_disabled\",\"module_type\":\"test.module\",\"enabled\":false,\"disabled_by_emergency\":true,\"priority\":0,\"decision_kind\":\"skip\",\"decision_code\":\"DISABLED\"},{\"module_id\":\"m_gate_false\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"decision_kind\":\"skip\",\"decision_code\":\"GATE_FALSE\"},{\"module_id\":\"m_high\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":10,\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"},{\"module_id\":\"m_low\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"decision_kind\":\"skip\",\"decision_code\":\"FANOUT_TRIM\"},{\"module_id\":\"m_exp\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":5,\"decision_kind\":\"skip\",\"decision_code\":\"FANOUT_TRIM\"}]}]}",
+            result.Json);
+    }
+
+    [Fact]
+    public void ExplainPatchJson_ShouldIncludeMermaid_WhenRequested()
+    {
+        var patchJson = "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}}";
+
+        var result = ToolingJsonV1.ExplainPatchJson(
+            flowName: "HomeFeed",
+            patchJson: patchJson,
+            requestOptions: default,
+            includeMermaid: true);
+
+        Assert.Equal(0, result.ExitCode);
+
+        Assert.Equal(
+            "{\"kind\":\"explain_patch\",\"flow_name\":\"HomeFeed\",\"overlays_applied\":[{\"layer\":\"base\",\"experiment_layer\":null,\"experiment_variant\":null}],\"stages\":[{\"stage_name\":\"s1\",\"fanout_max\":1,\"modules\":[{\"module_id\":\"m1\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"}]}],\"mermaid\":\"flowchart TD\\n  s0[\\\"s1\\\\nfanout_max=1\\\"]\\n  s0 --> m0[\\\"m1\\\\nexecute\\\\nSELECTED\\\"]\\n\"}",
+            result.Json);
+    }
+
     private static FlowRegistry CreateRegistry()
     {
         var registry = new FlowRegistry();

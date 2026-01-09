@@ -1,8 +1,10 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
+using System.Text.Json;
 using System.Threading;
 using ROrchestrator.Core.Blueprint;
+using ROrchestrator.Core.Gates;
 using ROrchestrator.Core.Observability;
 
 namespace ROrchestrator.Core;
@@ -12,6 +14,10 @@ public sealed class ExecutionEngine
     public const string DeadlineExceededCode = "DEADLINE_EXCEEDED";
     public const string UnhandledExceptionCode = "UNHANDLED_EXCEPTION";
     public const string UpstreamCanceledCode = "UPSTREAM_CANCELED";
+
+    public const string DisabledCode = "DISABLED";
+    public const string GateFalseCode = "GATE_FALSE";
+    public const string FanoutTrimCode = "FANOUT_TRIM";
 
     private readonly ModuleCatalog _catalog;
 
@@ -192,6 +198,9 @@ public sealed class ExecutionEngine
         context.PrepareForExecution(template.NodeNameToIndex, nodeCount);
         execExplainCollector?.Start(flowName, template.PlanHash, nodes);
 
+        using var patchEvaluation = MaybeEvaluatePatch(flowName, context);
+        string? currentStageName = null;
+
         var activitySource = FlowActivitySource.Instance;
 
         if (activitySource.HasListeners())
@@ -224,6 +233,32 @@ public sealed class ExecutionEngine
                     }
 
                     var node = nodes[i];
+
+                    if (patchEvaluation is not null)
+                    {
+                        var stageName = node.StageName;
+
+                        if (string.IsNullOrEmpty(stageName))
+                        {
+                            currentStageName = null;
+                        }
+                        else if (!string.Equals(currentStageName, stageName, StringComparison.Ordinal))
+                        {
+                            currentStageName = stageName;
+                            await ExecuteStageFanoutIfAnyAsync(stageName, patchEvaluation, context, execExplainCollector).ConfigureAwait(false);
+
+                            if (IsDeadlineExceeded(context.Deadline))
+                            {
+                                return ReturnWithFlowMetrics(Outcome<TResp>.Timeout(DeadlineExceededCode));
+                            }
+
+                            if (context.CancellationToken.IsCancellationRequested)
+                            {
+                                return ReturnWithFlowMetrics(Outcome<TResp>.Canceled(UpstreamCanceledCode));
+                            }
+                        }
+                    }
+
                     var nodeStartTimestamp = 0L;
                     var recordNodeMetrics = false;
                     var recordSkipReasonMetric = false;
@@ -385,6 +420,31 @@ public sealed class ExecutionEngine
 
             var node = nodes[i];
 
+            if (patchEvaluation is not null)
+            {
+                var stageName = node.StageName;
+
+                if (string.IsNullOrEmpty(stageName))
+                {
+                    currentStageName = null;
+                }
+                else if (!string.Equals(currentStageName, stageName, StringComparison.Ordinal))
+                {
+                    currentStageName = stageName;
+                    await ExecuteStageFanoutIfAnyAsync(stageName, patchEvaluation, context, execExplainCollector).ConfigureAwait(false);
+
+                    if (IsDeadlineExceeded(context.Deadline))
+                    {
+                        return ReturnWithFlowMetrics(Outcome<TResp>.Timeout(DeadlineExceededCode));
+                    }
+
+                    if (context.CancellationToken.IsCancellationRequested)
+                    {
+                        return ReturnWithFlowMetrics(Outcome<TResp>.Canceled(UpstreamCanceledCode));
+                    }
+                }
+            }
+
             if (node.Kind == BlueprintNodeKind.Step)
             {
                 var nodeStartTimestamp = recordStepMetrics ? FlowMetricsV1.StartStepTimer() : 0;
@@ -533,6 +593,475 @@ public sealed class ExecutionEngine
 
         throw new InvalidOperationException(
             $"Flow '{template.Name}' final node '{lastNode.Name}' has unsupported kind '{lastNode.Kind}'.");
+    }
+
+    private static PatchEvaluatorV1.FlowPatchEvaluationV1? MaybeEvaluatePatch(string flowName, FlowContext context)
+    {
+        if (context is null)
+        {
+            throw new ArgumentNullException(nameof(context));
+        }
+
+        if (!context.TryGetConfigSnapshot(out var snapshot))
+        {
+            return null;
+        }
+
+        var patchJson = snapshot.PatchJson;
+        if (patchJson.Length == 0)
+        {
+            return null;
+        }
+
+        return PatchEvaluatorV1.Evaluate(
+            flowName,
+            patchJson,
+            new FlowRequestOptions(context.Variants, context.UserId, context.RequestAttributes));
+    }
+
+    private async ValueTask ExecuteStageFanoutIfAnyAsync(
+        string stageName,
+        PatchEvaluatorV1.FlowPatchEvaluationV1 patchEvaluation,
+        FlowContext context,
+        ExecExplainCollectorV1? execExplainCollector)
+    {
+        var stages = patchEvaluation.Stages;
+
+        for (var i = 0; i < stages.Count; i++)
+        {
+            var stage = stages[i];
+
+            if (string.Equals(stage.StageName, stageName, StringComparison.Ordinal))
+            {
+                await ExecuteStageFanoutAsync(stageName, stage, context, execExplainCollector).ConfigureAwait(false);
+                return;
+            }
+        }
+    }
+
+    private async ValueTask ExecuteStageFanoutAsync(
+        string stageName,
+        PatchEvaluatorV1.StagePatchV1 stagePatch,
+        FlowContext context,
+        ExecExplainCollectorV1? execExplainCollector)
+    {
+        var modules = stagePatch.Modules;
+        var moduleCount = modules.Count;
+
+        if (moduleCount == 0)
+        {
+            return;
+        }
+
+        var fanoutMax = stagePatch.HasFanoutMax ? stagePatch.FanoutMax : int.MaxValue;
+
+        if (fanoutMax < 0)
+        {
+            fanoutMax = 0;
+        }
+
+        var argsTypes = new Type[moduleCount];
+        var outTypes = new Type[moduleCount];
+
+        for (var i = 0; i < moduleCount; i++)
+        {
+            var moduleType = modules[i].ModuleType;
+
+            if (!_catalog.TryGetSignature(moduleType, out var argsType, out var outType))
+            {
+                throw new InvalidOperationException($"Module type '{moduleType}' is not registered.");
+            }
+
+            argsTypes[i] = argsType;
+            outTypes[i] = outType;
+        }
+
+        var results = new StageModuleOutcomeMetadata[moduleCount];
+        var candidates = new StageModuleCandidate[moduleCount];
+        var candidateCount = 0;
+
+        for (var i = 0; i < moduleCount; i++)
+        {
+            var module = modules[i];
+
+            if (!module.Enabled)
+            {
+                RecordStageModuleSkippedOutcome(outTypes[i], context, module.ModuleId, DisabledCode);
+                results[i] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, DisabledCode, isOverride: false);
+                continue;
+            }
+
+            if (module.HasGate && !EvaluateGateAllowed(module.Gate, context))
+            {
+                RecordStageModuleSkippedOutcome(outTypes[i], context, module.ModuleId, GateFalseCode);
+                results[i] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, GateFalseCode, isOverride: false);
+                continue;
+            }
+
+            candidates[candidateCount] = new StageModuleCandidate(moduleIndex: i, priority: module.Priority);
+            candidateCount++;
+        }
+
+        SortStageModuleCandidates(candidates, candidateCount);
+
+        var executeCount = candidateCount;
+
+        if (fanoutMax < executeCount)
+        {
+            executeCount = fanoutMax;
+        }
+
+        if (executeCount < 0)
+        {
+            executeCount = 0;
+        }
+
+        var executeTasks = executeCount == 0 ? Array.Empty<ValueTask<StageModuleOutcomeMetadata>>() : new ValueTask<StageModuleOutcomeMetadata>[executeCount];
+        var executeIndices = executeCount == 0 ? Array.Empty<int>() : new int[executeCount];
+        var taskIndex = 0;
+
+        for (var rank = 0; rank < candidateCount; rank++)
+        {
+            var moduleIndex = candidates[rank].ModuleIndex;
+            var module = modules[moduleIndex];
+
+            if (rank < executeCount)
+            {
+                var executor = StageModuleExecutorCache.Get(argsTypes[moduleIndex], outTypes[moduleIndex]);
+                executeTasks[taskIndex] = executor(this, module.ModuleId, module.ModuleType, module.Args, context);
+                executeIndices[taskIndex] = moduleIndex;
+                taskIndex++;
+                continue;
+            }
+
+            RecordStageModuleSkippedOutcome(outTypes[moduleIndex], context, module.ModuleId, FanoutTrimCode);
+            results[moduleIndex] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, FanoutTrimCode, isOverride: false);
+        }
+
+        for (var i = 0; i < taskIndex; i++)
+        {
+            results[executeIndices[i]] = await executeTasks[i].ConfigureAwait(false);
+        }
+
+        var invocationSink = context.FlowTestInvocationSink;
+
+        if (invocationSink is not null)
+        {
+            for (var i = 0; i < taskIndex; i++)
+            {
+                var moduleIndex = executeIndices[i];
+                var module = modules[moduleIndex];
+                var meta = results[moduleIndex];
+                invocationSink.Record(module.ModuleId, module.ModuleType, meta.IsOverride, meta.Kind, meta.Code);
+            }
+        }
+
+        if (execExplainCollector is not null)
+        {
+            for (var i = 0; i < moduleCount; i++)
+            {
+                var module = modules[i];
+                var meta = results[i];
+                execExplainCollector.RecordStageModule(stageName, module.ModuleId, module.ModuleType, module.Priority, meta.Kind, meta.Code, meta.IsOverride);
+            }
+        }
+    }
+
+    private static void RecordStageModuleSkippedOutcome(Type outType, FlowContext context, string moduleId, string code)
+    {
+        var recorder = StageModuleSkipOutcomeCache.Get(outType);
+        recorder(context, moduleId, code);
+    }
+
+    private static bool EvaluateGateAllowed(JsonElement gateElement, FlowContext context)
+    {
+        if (!GateJsonV1.TryParseOptional(gateElement, "$.gate", out var gate, out var finding))
+        {
+            throw new InvalidOperationException(finding.Message);
+        }
+
+        if (gate is null)
+        {
+            return true;
+        }
+
+        return GateEvaluator.Evaluate(gate, context).Allowed;
+    }
+
+    private readonly struct StageModuleOutcomeMetadata
+    {
+        public OutcomeKind Kind { get; }
+
+        public string Code { get; }
+
+        public bool IsOverride { get; }
+
+        public StageModuleOutcomeMetadata(OutcomeKind kind, string code, bool isOverride)
+        {
+            Kind = kind;
+            Code = code;
+            IsOverride = isOverride;
+        }
+    }
+
+    private readonly struct StageModuleCandidate
+    {
+        public int ModuleIndex { get; }
+
+        public int Priority { get; }
+
+        public StageModuleCandidate(int moduleIndex, int priority)
+        {
+            ModuleIndex = moduleIndex;
+            Priority = priority;
+        }
+    }
+
+    private static void SortStageModuleCandidates(StageModuleCandidate[] candidates, int count)
+    {
+        for (var i = 1; i < count; i++)
+        {
+            var candidate = candidates[i];
+            var j = i - 1;
+
+            while (j >= 0
+                   && (candidates[j].Priority < candidate.Priority
+                       || (candidates[j].Priority == candidate.Priority && candidates[j].ModuleIndex > candidate.ModuleIndex)))
+            {
+                candidates[j + 1] = candidates[j];
+                j--;
+            }
+
+            candidates[j + 1] = candidate;
+        }
+    }
+
+    private static async ValueTask<StageModuleOutcomeMetadata> ExecuteStageModuleAsyncCore<TArgs, TOut>(
+        ExecutionEngine engine,
+        string moduleId,
+        string moduleType,
+        JsonElement argsJson,
+        FlowContext flowContext)
+    {
+        var overrideProvider = flowContext.FlowTestOverrideProvider;
+        if (overrideProvider is not null && overrideProvider.TryGetOverride(moduleId, out var overrideEntry))
+        {
+            Outcome<TOut> overriddenOutcome;
+
+            if (overrideEntry is FlowTestOverrideOutcome<TOut> fixedOverride)
+            {
+                overriddenOutcome = fixedOverride.Outcome;
+            }
+            else if (overrideEntry is FlowTestOverrideCompute<TArgs, TOut> computeOverride)
+            {
+                var args = argsJson.Deserialize<TArgs>();
+
+                if (!typeof(TArgs).IsValueType && args is null)
+                {
+                    throw new InvalidOperationException($"Module '{moduleId}' args binding produced null.");
+                }
+
+                var moduleContext = new ModuleContext<TArgs>(moduleId, moduleType, args!, flowContext);
+
+                try
+                {
+                    overriddenOutcome = await computeOverride.Compute(moduleContext).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    overriddenOutcome = IsDeadlineExceeded(flowContext.Deadline)
+                        ? Outcome<TOut>.Timeout(DeadlineExceededCode)
+                        : Outcome<TOut>.Canceled(UpstreamCanceledCode);
+                }
+                catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
+                {
+                    overriddenOutcome = Outcome<TOut>.Error(UnhandledExceptionCode);
+                }
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"Override for moduleId '{moduleId}' has a different signature. Expected args '{typeof(TArgs)}' and output '{typeof(TOut)}'.");
+            }
+
+            flowContext.RecordNodeOutcome(moduleId, overriddenOutcome);
+            return new StageModuleOutcomeMetadata(overriddenOutcome.Kind, overriddenOutcome.Code, isOverride: true);
+        }
+
+        var argsValue = argsJson.Deserialize<TArgs>();
+
+        if (!typeof(TArgs).IsValueType && argsValue is null)
+        {
+            throw new InvalidOperationException($"Module '{moduleId}' args binding produced null.");
+        }
+
+        var module = engine._catalog.Create<TArgs, TOut>(moduleType, flowContext.Services);
+
+        Outcome<TOut> outcome;
+
+        try
+        {
+            outcome = await module.ExecuteAsync(new ModuleContext<TArgs>(moduleId, moduleType, argsValue!, flowContext))
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            outcome = IsDeadlineExceeded(flowContext.Deadline)
+                ? Outcome<TOut>.Timeout(DeadlineExceededCode)
+                : Outcome<TOut>.Canceled(UpstreamCanceledCode);
+        }
+        catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
+        {
+            outcome = Outcome<TOut>.Error(UnhandledExceptionCode);
+        }
+
+        flowContext.RecordNodeOutcome(moduleId, outcome);
+        return new StageModuleOutcomeMetadata(outcome.Kind, outcome.Code, isOverride: false);
+    }
+
+    private static void RecordStageModuleSkippedOutcomeCore<TOut>(FlowContext context, string moduleId, string code)
+    {
+        context.RecordNodeOutcome(moduleId, Outcome<TOut>.Skipped(code));
+    }
+
+    private static class StageModuleSkipOutcomeCache
+    {
+        private static readonly Lock _gate = new();
+        private static Dictionary<Type, Action<FlowContext, string, string>>? _cache;
+        private static readonly MethodInfo CoreMethod =
+            typeof(ExecutionEngine).GetMethod(nameof(RecordStageModuleSkippedOutcomeCore), BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        public static Action<FlowContext, string, string> Get(Type outType)
+        {
+            var cache = Volatile.Read(ref _cache);
+
+            if (cache is not null && cache.TryGetValue(outType, out var executor))
+            {
+                return executor;
+            }
+
+            lock (_gate)
+            {
+                cache = _cache;
+
+                if (cache is not null && cache.TryGetValue(outType, out executor))
+                {
+                    return executor;
+                }
+
+                var closedCore = CoreMethod.MakeGenericMethod(outType);
+                executor = (Action<FlowContext, string, string>)closedCore.CreateDelegate(typeof(Action<FlowContext, string, string>));
+
+                Dictionary<Type, Action<FlowContext, string, string>> newCache;
+
+                if (cache is null || cache.Count == 0)
+                {
+                    newCache = new Dictionary<Type, Action<FlowContext, string, string>>(1);
+                }
+                else
+                {
+                    newCache = new Dictionary<Type, Action<FlowContext, string, string>>(cache.Count + 1);
+
+                    foreach (var pair in cache)
+                    {
+                        newCache.Add(pair.Key, pair.Value);
+                    }
+                }
+
+                newCache.Add(outType, executor);
+                Volatile.Write(ref _cache, newCache);
+                return executor;
+            }
+        }
+    }
+
+    private static class StageModuleExecutorCache
+    {
+        private static readonly Lock _gate = new();
+        private static Dictionary<StageModuleExecutorCacheKey, Func<ExecutionEngine, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>>? _cache;
+        private static readonly MethodInfo CoreMethod =
+            typeof(ExecutionEngine).GetMethod(nameof(ExecuteStageModuleAsyncCore), BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        public static Func<ExecutionEngine, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>> Get(
+            Type argsType,
+            Type outType)
+        {
+            var key = new StageModuleExecutorCacheKey(argsType, outType);
+            var cache = Volatile.Read(ref _cache);
+
+            if (cache is not null && cache.TryGetValue(key, out var executor))
+            {
+                return executor;
+            }
+
+            lock (_gate)
+            {
+                cache = _cache;
+
+                if (cache is not null && cache.TryGetValue(key, out executor))
+                {
+                    return executor;
+                }
+
+                var closedCore = CoreMethod.MakeGenericMethod(argsType, outType);
+                executor =
+                    (Func<ExecutionEngine, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>)closedCore.CreateDelegate(
+                        typeof(Func<ExecutionEngine, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>));
+
+                Dictionary<StageModuleExecutorCacheKey, Func<ExecutionEngine, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>> newCache;
+
+                if (cache is null || cache.Count == 0)
+                {
+                    newCache =
+                        new Dictionary<StageModuleExecutorCacheKey, Func<ExecutionEngine, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>>(1);
+                }
+                else
+                {
+                    newCache = new Dictionary<StageModuleExecutorCacheKey, Func<ExecutionEngine, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>>(
+                        cache.Count + 1);
+
+                    foreach (var pair in cache)
+                    {
+                        newCache.Add(pair.Key, pair.Value);
+                    }
+                }
+
+                newCache.Add(key, executor);
+                Volatile.Write(ref _cache, newCache);
+                return executor;
+            }
+        }
+
+        private readonly struct StageModuleExecutorCacheKey : IEquatable<StageModuleExecutorCacheKey>
+        {
+            public Type ArgsType { get; }
+
+            public Type OutType { get; }
+
+            public StageModuleExecutorCacheKey(Type argsType, Type outType)
+            {
+                ArgsType = argsType;
+                OutType = outType;
+            }
+
+            public bool Equals(StageModuleExecutorCacheKey other)
+            {
+                return ArgsType == other.ArgsType && OutType == other.OutType;
+            }
+
+            public override bool Equals(object? obj)
+            {
+                return obj is StageModuleExecutorCacheKey other && Equals(other);
+            }
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    return (ArgsType.GetHashCode() * 397) ^ OutType.GetHashCode();
+                }
+            }
+        }
     }
 
     private static async ValueTask ExecuteStepAsyncCore<TArgs, TOut>(

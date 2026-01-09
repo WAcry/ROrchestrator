@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Text;
 using System.Text.Json;
 using ROrchestrator.Core;
+using ROrchestrator.Core.Gates;
 using ROrchestrator.Core.Selectors;
 
 namespace ROrchestrator.Tooling;
@@ -91,6 +92,44 @@ public static class ToolingJsonV1
         }
     }
 
+    public static ToolingCommandResult ExplainPatchJson(
+        string flowName,
+        string patchJson,
+        FlowRequestOptions requestOptions = default,
+        bool includeMermaid = false)
+    {
+        if (flowName is null)
+        {
+            throw new ArgumentNullException(nameof(flowName));
+        }
+
+        if (patchJson is null)
+        {
+            throw new ArgumentNullException(nameof(patchJson));
+        }
+
+        try
+        {
+            using var evaluation = PatchEvaluatorV1.Evaluate(flowName, patchJson, requestOptions);
+            var json = BuildExplainPatchJson(flowName, evaluation, requestOptions, includeMermaid);
+            return new ToolingCommandResult(exitCode: 0, json);
+        }
+        catch (Exception ex) when (IsExplainPatchInputException(ex))
+        {
+            var json = BuildExplainPatchErrorJson(
+                code: "EXPLAIN_PATCH_INPUT_INVALID",
+                message: ex.Message);
+            return new ToolingCommandResult(exitCode: 2, json);
+        }
+        catch (Exception ex) when (ToolingExceptionGuard.ShouldHandle(ex))
+        {
+            var json = BuildExplainPatchErrorJson(
+                code: "EXPLAIN_PATCH_INTERNAL_ERROR",
+                message: string.IsNullOrEmpty(ex.Message) ? "Internal error." : ex.Message);
+            return new ToolingCommandResult(exitCode: 1, json);
+        }
+    }
+
     public static ToolingCommandResult DiffPatchJson(string oldPatchJson, string newPatchJson)
     {
         if (oldPatchJson is null)
@@ -126,6 +165,404 @@ public static class ToolingJsonV1
                 code: "DIFF_INTERNAL_ERROR",
                 message: string.IsNullOrEmpty(ex.Message) ? "Internal error." : ex.Message);
             return new ToolingCommandResult(exitCode: 1, json);
+        }
+    }
+
+    private const string SelectedDecisionCode = "SELECTED";
+
+    private static string BuildExplainPatchJson(
+        string flowName,
+        PatchEvaluatorV1.FlowPatchEvaluationV1 evaluation,
+        FlowRequestOptions requestOptions,
+        bool includeMermaid)
+    {
+        var output = new ArrayBufferWriter<byte>(256);
+        using var writer = new Utf8JsonWriter(
+            output,
+            new JsonWriterOptions
+            {
+                Indented = false,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            });
+
+        writer.WriteStartObject();
+        writer.WriteString("kind", "explain_patch");
+        writer.WriteString("flow_name", flowName);
+
+        writer.WritePropertyName("overlays_applied");
+        writer.WriteStartArray();
+
+        var overlays = evaluation.OverlaysApplied;
+        for (var i = 0; i < overlays.Count; i++)
+        {
+            WriteExplainPatchOverlay(writer, overlays[i]);
+        }
+
+        writer.WriteEndArray();
+
+        writer.WritePropertyName("stages");
+        writer.WriteStartArray();
+
+        var stages = evaluation.Stages;
+
+        for (var i = 0; i < stages.Count; i++)
+        {
+            WriteExplainPatchStage(writer, stages[i], requestOptions);
+        }
+
+        writer.WriteEndArray();
+
+        if (includeMermaid)
+        {
+            writer.WriteString("mermaid", BuildExplainPatchMermaid(evaluation, requestOptions));
+        }
+
+        writer.WriteEndObject();
+        writer.Flush();
+
+        return Encoding.UTF8.GetString(output.WrittenSpan);
+    }
+
+    private static void WriteExplainPatchOverlay(Utf8JsonWriter writer, PatchEvaluatorV1.PatchOverlayAppliedV1 overlay)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("layer", overlay.Layer);
+
+        if (overlay.ExperimentLayer is null)
+        {
+            writer.WriteNull("experiment_layer");
+        }
+        else
+        {
+            writer.WriteString("experiment_layer", overlay.ExperimentLayer);
+        }
+
+        if (overlay.ExperimentVariant is null)
+        {
+            writer.WriteNull("experiment_variant");
+        }
+        else
+        {
+            writer.WriteString("experiment_variant", overlay.ExperimentVariant);
+        }
+
+        writer.WriteEndObject();
+    }
+
+    private static void WriteExplainPatchStage(Utf8JsonWriter writer, PatchEvaluatorV1.StagePatchV1 stage, FlowRequestOptions requestOptions)
+    {
+        var modules = stage.Modules;
+        var moduleCount = modules.Count;
+
+        var decisionKinds = moduleCount == 0 ? Array.Empty<byte>() : new byte[moduleCount];
+        var decisionCodes = moduleCount == 0 ? Array.Empty<string>() : new string[moduleCount];
+
+        var candidates = moduleCount == 0 ? Array.Empty<StageModuleCandidate>() : new StageModuleCandidate[moduleCount];
+        var candidateCount = 0;
+
+        var variants = requestOptions.Variants;
+        var requestAttributes = requestOptions.RequestAttributes;
+        var userId = requestOptions.UserId;
+
+        for (var i = 0; i < moduleCount; i++)
+        {
+            var module = modules[i];
+
+            if (!module.Enabled)
+            {
+                decisionKinds[i] = 0;
+                decisionCodes[i] = ExecutionEngine.DisabledCode;
+                continue;
+            }
+
+            if (module.HasGate && !EvaluateGateAllowed(module.Gate, variants, userId, requestAttributes))
+            {
+                decisionKinds[i] = 0;
+                decisionCodes[i] = ExecutionEngine.GateFalseCode;
+                continue;
+            }
+
+            candidates[candidateCount] = new StageModuleCandidate(i, module.Priority);
+            candidateCount++;
+        }
+
+        SortCandidates(candidates, candidateCount);
+
+        var fanoutMax = stage.HasFanoutMax ? stage.FanoutMax : int.MaxValue;
+
+        if (fanoutMax < 0)
+        {
+            fanoutMax = 0;
+        }
+
+        var executeCount = candidateCount;
+
+        if (fanoutMax < executeCount)
+        {
+            executeCount = fanoutMax;
+        }
+
+        if (executeCount < 0)
+        {
+            executeCount = 0;
+        }
+
+        for (var rank = 0; rank < candidateCount; rank++)
+        {
+            var moduleIndex = candidates[rank].ModuleIndex;
+
+            if (rank < executeCount)
+            {
+                decisionKinds[moduleIndex] = 1;
+                decisionCodes[moduleIndex] = SelectedDecisionCode;
+            }
+            else
+            {
+                decisionKinds[moduleIndex] = 0;
+                decisionCodes[moduleIndex] = ExecutionEngine.FanoutTrimCode;
+            }
+        }
+
+        writer.WriteStartObject();
+        writer.WriteString("stage_name", stage.StageName);
+
+        if (stage.HasFanoutMax)
+        {
+            writer.WriteNumber("fanout_max", stage.FanoutMax);
+        }
+        else
+        {
+            writer.WriteNull("fanout_max");
+        }
+
+        writer.WritePropertyName("modules");
+        writer.WriteStartArray();
+
+        for (var i = 0; i < moduleCount; i++)
+        {
+            var module = modules[i];
+            var kind = decisionKinds[i] == 1 ? "execute" : "skip";
+            var code = decisionCodes[i];
+
+            writer.WriteStartObject();
+            writer.WriteString("module_id", module.ModuleId);
+            writer.WriteString("module_type", module.ModuleType);
+            writer.WriteBoolean("enabled", module.Enabled);
+            writer.WriteBoolean("disabled_by_emergency", module.DisabledByEmergency);
+            writer.WriteNumber("priority", module.Priority);
+            writer.WriteString("decision_kind", kind);
+            writer.WriteString("decision_code", code);
+            writer.WriteEndObject();
+        }
+
+        writer.WriteEndArray();
+        writer.WriteEndObject();
+    }
+
+    private static bool EvaluateGateAllowed(
+        JsonElement gateElement,
+        IReadOnlyDictionary<string, string>? variants,
+        string? userId,
+        IReadOnlyDictionary<string, string>? requestAttributes)
+    {
+        if (!GateJsonV1.TryParseOptional(gateElement, "$.gate", out var gate, out var finding))
+        {
+            throw new FormatException(finding.Message);
+        }
+
+        if (gate is null)
+        {
+            return true;
+        }
+
+        var variantsDictionary = variants ?? EmptyVariantDictionary;
+        var evalContext = new GateEvaluationContext(
+            variants: new VariantSet(variantsDictionary),
+            userId: userId,
+            requestAttributes: requestAttributes,
+            selectorRegistry: null,
+            flowContext: null);
+
+        return GateEvaluator.Evaluate(gate, in evalContext).Allowed;
+    }
+
+    private static string BuildExplainPatchMermaid(PatchEvaluatorV1.FlowPatchEvaluationV1 evaluation, FlowRequestOptions requestOptions)
+    {
+        var stages = evaluation.Stages;
+        var builder = new StringBuilder(256);
+        builder.Append("flowchart TD\n");
+
+        var moduleIndex = 0;
+
+        for (var stageIndex = 0; stageIndex < stages.Count; stageIndex++)
+        {
+            var stage = stages[stageIndex];
+
+            builder.Append("  s");
+            builder.Append(stageIndex);
+            builder.Append("[\"");
+            builder.Append(stage.StageName);
+            builder.Append("\\nfanout_max=");
+            builder.Append(stage.HasFanoutMax ? stage.FanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture) : "null");
+            builder.Append("\"]\n");
+
+            var modules = stage.Modules;
+            var moduleCount = modules.Count;
+
+            if (moduleCount == 0)
+            {
+                continue;
+            }
+
+            var decisionKinds = new byte[moduleCount];
+            var decisionCodes = new string[moduleCount];
+            var candidates = new StageModuleCandidate[moduleCount];
+            var candidateCount = 0;
+
+            var variants = requestOptions.Variants;
+            var requestAttributes = requestOptions.RequestAttributes;
+            var userId = requestOptions.UserId;
+
+            for (var i = 0; i < moduleCount; i++)
+            {
+                var module = modules[i];
+
+                if (!module.Enabled)
+                {
+                    decisionKinds[i] = 0;
+                    decisionCodes[i] = ExecutionEngine.DisabledCode;
+                    continue;
+                }
+
+                if (module.HasGate && !EvaluateGateAllowed(module.Gate, variants, userId, requestAttributes))
+                {
+                    decisionKinds[i] = 0;
+                    decisionCodes[i] = ExecutionEngine.GateFalseCode;
+                    continue;
+                }
+
+                candidates[candidateCount] = new StageModuleCandidate(i, module.Priority);
+                candidateCount++;
+            }
+
+            SortCandidates(candidates, candidateCount);
+
+            var fanoutMax = stage.HasFanoutMax ? stage.FanoutMax : int.MaxValue;
+
+            if (fanoutMax < 0)
+            {
+                fanoutMax = 0;
+            }
+
+            var executeCount = candidateCount;
+
+            if (fanoutMax < executeCount)
+            {
+                executeCount = fanoutMax;
+            }
+
+            if (executeCount < 0)
+            {
+                executeCount = 0;
+            }
+
+            for (var rank = 0; rank < candidateCount; rank++)
+            {
+                var idx = candidates[rank].ModuleIndex;
+
+                if (rank < executeCount)
+                {
+                    decisionKinds[idx] = 1;
+                    decisionCodes[idx] = SelectedDecisionCode;
+                }
+                else
+                {
+                    decisionKinds[idx] = 0;
+                    decisionCodes[idx] = ExecutionEngine.FanoutTrimCode;
+                }
+            }
+
+            for (var i = 0; i < moduleCount; i++)
+            {
+                var module = modules[i];
+                var kind = decisionKinds[i] == 1 ? "execute" : "skip";
+                var code = decisionCodes[i];
+
+                builder.Append("  s");
+                builder.Append(stageIndex);
+                builder.Append(" --> m");
+                builder.Append(moduleIndex);
+                builder.Append("[\"");
+                builder.Append(module.ModuleId);
+                builder.Append("\\n");
+                builder.Append(kind);
+                builder.Append("\\n");
+                builder.Append(code);
+                builder.Append("\"]\n");
+
+                moduleIndex++;
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static string BuildExplainPatchErrorJson(string code, string message)
+    {
+        var output = new ArrayBufferWriter<byte>(256);
+        using var writer = new Utf8JsonWriter(
+            output,
+            new JsonWriterOptions
+            {
+                Indented = false,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            });
+
+        writer.WriteStartObject();
+        writer.WriteString("kind", "explain_patch");
+        writer.WritePropertyName("error");
+        writer.WriteStartObject();
+        writer.WriteString("code", code);
+        writer.WriteString("message", message);
+        writer.WriteEndObject();
+        writer.WriteEndObject();
+        writer.Flush();
+
+        return Encoding.UTF8.GetString(output.WrittenSpan);
+    }
+
+    private static readonly IReadOnlyDictionary<string, string> EmptyVariantDictionary =
+        new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(new Dictionary<string, string>(0));
+
+    private readonly struct StageModuleCandidate
+    {
+        public int ModuleIndex { get; }
+
+        public int Priority { get; }
+
+        public StageModuleCandidate(int moduleIndex, int priority)
+        {
+            ModuleIndex = moduleIndex;
+            Priority = priority;
+        }
+    }
+
+    private static void SortCandidates(StageModuleCandidate[] candidates, int count)
+    {
+        for (var i = 1; i < count; i++)
+        {
+            var candidate = candidates[i];
+            var j = i - 1;
+
+            while (j >= 0
+                   && (candidates[j].Priority < candidate.Priority
+                       || (candidates[j].Priority == candidate.Priority && candidates[j].ModuleIndex > candidate.ModuleIndex)))
+            {
+                candidates[j + 1] = candidates[j];
+                j--;
+            }
+
+            candidates[j + 1] = candidate;
         }
     }
 
@@ -608,6 +1045,14 @@ public static class ToolingJsonV1
         return ex is FormatException
             || ex is NotSupportedException
             || ex is InvalidOperationException;
+    }
+
+    private static bool IsExplainPatchInputException(Exception ex)
+    {
+        return ex is ArgumentException
+            || ex is FormatException
+            || ex is InvalidOperationException
+            || ex is NotSupportedException;
     }
 
     private sealed class ValidationFindingComparer : IComparer<ValidationFinding>
