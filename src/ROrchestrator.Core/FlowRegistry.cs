@@ -62,7 +62,12 @@ public sealed class FlowRegistry
         return false;
     }
 
-    internal bool TryGetStageNameSetAndPatchType(string flowName, out string[] stageNameSet, out Type? patchType, out ExperimentLayerOwnershipContract? experimentLayerOwnershipContract)
+    internal bool TryGetStageNameSetAndPatchType(
+        string flowName,
+        out string[] stageNameSet,
+        out string[] nodeNameSet,
+        out Type? patchType,
+        out ExperimentLayerOwnershipContract? experimentLayerOwnershipContract)
     {
         if (string.IsNullOrEmpty(flowName))
         {
@@ -72,12 +77,14 @@ public sealed class FlowRegistry
         if (_flows.TryGetValue(flowName, out var entry))
         {
             stageNameSet = entry.StageNameSet;
+            nodeNameSet = entry.NodeNameSet;
             patchType = entry.PatchType;
             experimentLayerOwnershipContract = entry.ExperimentLayerOwnershipContract;
             return true;
         }
 
         stageNameSet = Array.Empty<string>();
+        nodeNameSet = Array.Empty<string>();
         patchType = null;
         experimentLayerOwnershipContract = null;
         return false;
@@ -123,6 +130,7 @@ public sealed class FlowRegistry
         }
 
         var stageNameSet = BuildStageNameSet(blueprint);
+        var nodeNameSet = BuildNodeNameSet(blueprint);
 
         if (!_flows.TryAdd(
             flowName,
@@ -131,6 +139,7 @@ public sealed class FlowRegistry
                 responseType: typeof(TResp),
                 blueprint: blueprint,
                 stageNameSet: stageNameSet,
+                nodeNameSet: nodeNameSet,
                 experimentLayerOwnershipContract: experimentLayerOwnershipContract,
                 explainCompiler: CompilePlanExplain<TReq, TResp>)))
         {
@@ -161,6 +170,7 @@ public sealed class FlowRegistry
         }
 
         var stageNameSet = BuildStageNameSet(blueprint);
+        var nodeNameSet = BuildNodeNameSet(blueprint);
 
         if (!_flows.TryAdd(
             flowName,
@@ -172,6 +182,7 @@ public sealed class FlowRegistry
                 blueprint: blueprint,
                 defaultParams: defaultParams,
                 stageNameSet: stageNameSet,
+                nodeNameSet: nodeNameSet,
                 experimentLayerOwnershipContract: experimentLayerOwnershipContract,
                 explainCompiler: CompilePlanExplain<TReq, TResp>)))
         {
@@ -324,6 +335,8 @@ public sealed class FlowRegistry
 
         public string[] StageNameSet { get; }
 
+        public string[] NodeNameSet { get; }
+
         public ExperimentLayerOwnershipContract? ExperimentLayerOwnershipContract { get; }
 
         public Func<object, ModuleCatalog, PlanExplain> ExplainCompiler { get; }
@@ -333,6 +346,7 @@ public sealed class FlowRegistry
             Type responseType,
             object blueprint,
             string[] stageNameSet,
+            string[] nodeNameSet,
             ExperimentLayerOwnershipContract? experimentLayerOwnershipContract,
             Func<object, ModuleCatalog, PlanExplain> explainCompiler)
         {
@@ -343,6 +357,7 @@ public sealed class FlowRegistry
             Blueprint = blueprint;
             DefaultParams = null;
             StageNameSet = stageNameSet;
+            NodeNameSet = nodeNameSet;
             ExperimentLayerOwnershipContract = experimentLayerOwnershipContract;
             ExplainCompiler = explainCompiler;
         }
@@ -355,6 +370,7 @@ public sealed class FlowRegistry
             object blueprint,
             object defaultParams,
             string[] stageNameSet,
+            string[] nodeNameSet,
             ExperimentLayerOwnershipContract? experimentLayerOwnershipContract,
             Func<object, ModuleCatalog, PlanExplain> explainCompiler)
         {
@@ -365,6 +381,7 @@ public sealed class FlowRegistry
             Blueprint = blueprint;
             DefaultParams = defaultParams;
             StageNameSet = stageNameSet;
+            NodeNameSet = nodeNameSet;
             ExperimentLayerOwnershipContract = experimentLayerOwnershipContract;
             ExplainCompiler = explainCompiler;
         }
@@ -439,6 +456,65 @@ public sealed class FlowRegistry
 
         var trimmed = new string[stageNameCount];
         Array.Copy(items, 0, trimmed, 0, stageNameCount);
+        return trimmed;
+    }
+
+    private static string[] BuildNodeNameSet<TReq, TResp>(FlowBlueprint<TReq, TResp> blueprint)
+    {
+        var nodes = blueprint.Nodes;
+
+        if (nodes.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var buffer = new string[nodes.Count];
+        var count = 0;
+
+        for (var i = 0; i < nodes.Count; i++)
+        {
+            var name = nodes[i].Name;
+
+            if (name.Length == 0)
+            {
+                continue;
+            }
+
+            if (count != 0)
+            {
+                var found = false;
+
+                for (var j = 0; j < count; j++)
+                {
+                    if (string.Equals(buffer[j], name, StringComparison.Ordinal))
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (found)
+                {
+                    continue;
+                }
+            }
+
+            buffer[count] = name;
+            count++;
+        }
+
+        if (count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        if (count == buffer.Length)
+        {
+            return buffer;
+        }
+
+        var trimmed = new string[count];
+        Array.Copy(buffer, 0, trimmed, 0, count);
         return trimmed;
     }
 }

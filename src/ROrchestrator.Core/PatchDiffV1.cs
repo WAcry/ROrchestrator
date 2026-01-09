@@ -94,7 +94,15 @@ public static class PatchDiffV1
                         var isGateRemoved = oldHasGate && !newHasGate;
                         var isGateChanged = oldHasGate && newHasGate && !JsonElementDeepEquals(oldModule.Gate, newModule.Gate);
 
-                        if (isUseChanged || isWithChanged || isEnabledChanged || isPriorityChanged || isGateAdded || isGateRemoved || isGateChanged)
+                        var oldHasShadow = oldModule.HasShadow;
+                        var newHasShadow = newModule.HasShadow;
+
+                        var isShadowAdded = !oldHasShadow && newHasShadow;
+                        var isShadowRemoved = oldHasShadow && !newHasShadow;
+                        var isShadowSampleChanged = oldHasShadow && newHasShadow && oldModule.ShadowSampleBps != newModule.ShadowSampleBps;
+
+                        if (isUseChanged || isWithChanged || isEnabledChanged || isPriorityChanged || isGateAdded || isGateRemoved || isGateChanged
+                            || isShadowAdded || isShadowRemoved || isShadowSampleChanged)
                         {
                             var modulePath = BuildModulePath(key.FlowName, key.StageName, newModule.Index, newModule.ExperimentIndex);
 
@@ -164,6 +172,40 @@ public static class PatchDiffV1
                                         key.StageName,
                                         key.ModuleId,
                                         string.Concat(modulePath, ".gate"),
+                                        key.ExperimentLayer,
+                                        key.ExperimentVariant));
+                            }
+
+                            if (isShadowAdded)
+                            {
+                                buffer.Add(
+                                    PatchModuleDiff.CreateShadowAdded(
+                                        key.FlowName,
+                                        key.StageName,
+                                        key.ModuleId,
+                                        string.Concat(modulePath, ".shadow"),
+                                        key.ExperimentLayer,
+                                        key.ExperimentVariant));
+                            }
+                            else if (isShadowRemoved)
+                            {
+                                buffer.Add(
+                                    PatchModuleDiff.CreateShadowRemoved(
+                                        key.FlowName,
+                                        key.StageName,
+                                        key.ModuleId,
+                                        string.Concat(modulePath, ".shadow"),
+                                        key.ExperimentLayer,
+                                        key.ExperimentVariant));
+                            }
+                            else if (isShadowSampleChanged)
+                            {
+                                buffer.Add(
+                                    PatchModuleDiff.CreateShadowSampleChanged(
+                                        key.FlowName,
+                                        key.StageName,
+                                        key.ModuleId,
+                                        string.Concat(modulePath, ".shadow.sample"),
                                         key.ExperimentLayer,
                                         key.ExperimentVariant));
                             }
@@ -1465,11 +1507,20 @@ public static class PatchDiffV1
                     gateElement = rawGateElement;
                 }
 
+                var hasShadow = false;
+                ushort shadowSampleBps = 0;
+
+                if (moduleElement.TryGetProperty("shadow", out var shadowElement))
+                {
+                    hasShadow = true;
+                    shadowSampleBps = ParseShadowSampleBps(shadowElement, flowName, stageName, moduleId);
+                }
+
                 moduleMap ??= new Dictionary<ModuleKey, ModuleInfo>(4);
 
                 var key = new ModuleKey(flowName, stageName, moduleId, experimentLayer, experimentVariant);
 
-                if (!moduleMap.TryAdd(key, new ModuleInfo(moduleUse, withElement, gateElement, enabled, priority, index, experimentIndex)))
+                if (!moduleMap.TryAdd(key, new ModuleInfo(moduleUse!, withElement, gateElement, enabled, priority, hasShadow, shadowSampleBps, index, experimentIndex)))
                 {
                     throw new FormatException(
                         string.Concat("Duplicate module id within stage. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
@@ -1504,6 +1555,68 @@ public static class PatchDiffV1
             ".modules[",
             moduleIndex.ToString(CultureInfo.InvariantCulture),
             "]");
+    }
+
+    private static ushort ParseShadowSampleBps(JsonElement shadowElement, string flowName, string stageName, string moduleId)
+    {
+        if (shadowElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new FormatException(
+                string.Concat("modules[].shadow must be an object. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
+        }
+
+        var hasSample = false;
+        double sample = 0;
+
+        foreach (var property in shadowElement.EnumerateObject())
+        {
+            if (property.NameEquals("sample"))
+            {
+                hasSample = true;
+
+                if (property.Value.ValueKind != JsonValueKind.Number || !property.Value.TryGetDouble(out sample))
+                {
+                    throw new FormatException(
+                        string.Concat("modules[].shadow.sample must be a number. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
+                }
+
+                continue;
+            }
+
+            throw new FormatException(
+                string.Concat("Unknown field: ", property.Name, " in modules[].shadow. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
+        }
+
+        if (!hasSample)
+        {
+            throw new FormatException(
+                string.Concat("modules[].shadow.sample is required. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
+        }
+
+        if (sample < 0 || sample > 1)
+        {
+            throw new FormatException(
+                string.Concat("modules[].shadow.sample must be within range 0..1. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
+        }
+
+        if (sample == 0)
+        {
+            return 0;
+        }
+
+        if (sample == 1)
+        {
+            return 10000;
+        }
+
+        var bps = (int)Math.Round(sample * 10000.0, MidpointRounding.AwayFromZero);
+        if ((uint)bps > 10000)
+        {
+            throw new FormatException(
+                string.Concat("modules[].shadow.sample must be within range 0..1. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
+        }
+
+        return (ushort)bps;
     }
 
     private static bool JsonElementDeepEquals(JsonElement left, JsonElement right)
@@ -1740,16 +1853,29 @@ public static class PatchDiffV1
         public readonly JsonElement Gate;
         public readonly bool Enabled;
         public readonly int Priority;
+        public readonly bool HasShadow;
+        public readonly ushort ShadowSampleBps;
         public readonly int Index;
         public readonly int ExperimentIndex;
 
-        public ModuleInfo(string use, JsonElement with, JsonElement gate, bool enabled, int priority, int index, int experimentIndex)
+        public ModuleInfo(
+            string use,
+            JsonElement with,
+            JsonElement gate,
+            bool enabled,
+            int priority,
+            bool hasShadow,
+            ushort shadowSampleBps,
+            int index,
+            int experimentIndex)
         {
             Use = use;
             With = with;
             Gate = gate;
             Enabled = enabled;
             Priority = priority;
+            HasShadow = hasShadow;
+            ShadowSampleBps = shadowSampleBps;
             Index = index;
             ExperimentIndex = experimentIndex;
         }
@@ -2109,6 +2235,9 @@ public enum PatchModuleDiffKind
     GateChanged = 9,
     EnabledChanged = 10,
     PriorityChanged = 11,
+    ShadowAdded = 12,
+    ShadowRemoved = 13,
+    ShadowSampleChanged = 14,
 }
 
 public readonly struct PatchModuleDiff
@@ -2264,6 +2393,39 @@ public readonly struct PatchModuleDiff
         string? experimentVariant = null)
     {
         return new PatchModuleDiff(PatchModuleDiffKind.GateChanged, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
+    }
+
+    internal static PatchModuleDiff CreateShadowAdded(
+        string flowName,
+        string stageName,
+        string moduleId,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchModuleDiff(PatchModuleDiffKind.ShadowAdded, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
+    }
+
+    internal static PatchModuleDiff CreateShadowRemoved(
+        string flowName,
+        string stageName,
+        string moduleId,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchModuleDiff(PatchModuleDiffKind.ShadowRemoved, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
+    }
+
+    internal static PatchModuleDiff CreateShadowSampleChanged(
+        string flowName,
+        string stageName,
+        string moduleId,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchModuleDiff(PatchModuleDiffKind.ShadowSampleChanged, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
     }
 }
 

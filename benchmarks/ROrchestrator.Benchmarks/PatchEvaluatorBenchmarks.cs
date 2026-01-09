@@ -7,6 +7,8 @@ namespace ROrchestrator.Benchmarks;
 [SimpleJob(launchCount: 1, warmupCount: 1, iterationCount: 10)]
 public class PatchEvaluatorBenchmarks
 {
+    private const ulong ConfigVersion = 1;
+
     private const string PatchJson = """
     {
       "schemaVersion": "v1",
@@ -69,10 +71,23 @@ public class PatchEvaluatorBenchmarks
             { "region", "US" },
         });
 
-    [Benchmark]
-    public int Evaluate()
+    [GlobalSetup]
+    public void Setup()
     {
-        using var evaluation = PatchEvaluatorV1.Evaluate("Bench.Flow.PatchEvaluator", PatchJson, RequestOptions);
+        using var _ = PatchEvaluatorV1.Evaluate("Bench.Flow.PatchEvaluator", PatchJson, RequestOptions, configVersion: ConfigVersion);
+    }
+
+    [Benchmark(Baseline = true)]
+    public int Evaluate_NoCache()
+    {
+        using var evaluation = PatchEvaluatorV1.Evaluate("Bench.Flow.PatchEvaluator", PatchJson, RequestOptions, configVersion: 0);
+        return evaluation.Stages.Count;
+    }
+
+    [Benchmark]
+    public int Evaluate_Cached()
+    {
+        using var evaluation = PatchEvaluatorV1.Evaluate("Bench.Flow.PatchEvaluator", PatchJson, RequestOptions, configVersion: ConfigVersion);
         return evaluation.Stages.Count;
     }
 }

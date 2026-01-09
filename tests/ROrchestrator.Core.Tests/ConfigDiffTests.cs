@@ -221,6 +221,69 @@ public sealed class ConfigDiffTests
     }
 
     [Fact]
+    public void DiffModules_ShouldReportShadowAdded_WhenModuleShadowIsAdded()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"shadow\":{\"sample\":0.1}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.ShadowAdded, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].shadow", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportShadowRemoved_WhenModuleShadowIsRemoved()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"shadow\":{\"sample\":0.1}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.ShadowRemoved, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].shadow", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportShadowSampleChanged_WhenModuleShadowSampleChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"shadow\":{\"sample\":0.1}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"shadow\":{\"sample\":0.2}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.ShadowSampleChanged, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].shadow.sample", diff.Path);
+    }
+
+    [Fact]
     public void DiffModules_ShouldReportWithAddedRemovedAndChanged_WhenModuleWithFieldsChange()
     {
         var oldPatchJson =

@@ -90,6 +90,28 @@ public sealed class ToolingJsonV1Tests
     }
 
     [Fact]
+    public void DiffPatchJson_ShouldReportShadowDiffs_AndProduceStableJson()
+    {
+        var result = ToolingJsonV1.DiffPatchJson(
+            oldPatchJson: "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[" +
+                         "{\"id\":\"m_shadow_added\",\"use\":\"test.module\",\"with\":{}}," +
+                         "{\"id\":\"m_shadow_removed\",\"use\":\"test.module\",\"with\":{},\"shadow\":{\"sample\":0.5}}," +
+                         "{\"id\":\"m_shadow_sample\",\"use\":\"test.module\",\"with\":{},\"shadow\":{\"sample\":0.1}}" +
+                         "]}}}}}",
+            newPatchJson: "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[" +
+                         "{\"id\":\"m_shadow_added\",\"use\":\"test.module\",\"with\":{},\"shadow\":{\"sample\":0.3}}," +
+                         "{\"id\":\"m_shadow_removed\",\"use\":\"test.module\",\"with\":{}}," +
+                         "{\"id\":\"m_shadow_sample\",\"use\":\"test.module\",\"with\":{},\"shadow\":{\"sample\":0.2}}" +
+                         "]}}}}}");
+
+        Assert.Equal(0, result.ExitCode);
+
+        Assert.Equal(
+            "{\"kind\":\"diff\",\"module_diffs\":[{\"kind\":\"shadow_added\",\"flow_name\":\"HomeFeed\",\"stage_name\":\"s1\",\"module_id\":\"m_shadow_added\",\"path\":\"$.flows.HomeFeed.stages.s1.modules[0].shadow\",\"experiment_layer\":null,\"experiment_variant\":null},{\"kind\":\"shadow_removed\",\"flow_name\":\"HomeFeed\",\"stage_name\":\"s1\",\"module_id\":\"m_shadow_removed\",\"path\":\"$.flows.HomeFeed.stages.s1.modules[1].shadow\",\"experiment_layer\":null,\"experiment_variant\":null},{\"kind\":\"shadow_sample_changed\",\"flow_name\":\"HomeFeed\",\"stage_name\":\"s1\",\"module_id\":\"m_shadow_sample\",\"path\":\"$.flows.HomeFeed.stages.s1.modules[2].shadow.sample\",\"experiment_layer\":null,\"experiment_variant\":null}],\"param_diffs\":[],\"fanout_max_diffs\":[],\"emergency_diffs\":[]}",
+            result.Json);
+    }
+
+    [Fact]
     public void DiffPatchJson_ShouldProduceStableErrorJson_WhenOldPatchJsonIsInvalid()
     {
         var result = ToolingJsonV1.DiffPatchJson(

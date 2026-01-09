@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace ROrchestrator.Core.Tests;
 
 public sealed class PatchEvaluatorV1Tests
@@ -131,5 +133,59 @@ public sealed class PatchEvaluatorV1Tests
         Assert.Equal("m_shadow", stage.ShadowModules[0].ModuleId);
         Assert.True(stage.ShadowModules[0].IsShadow);
         Assert.Equal((ushort)5000, stage.ShadowModules[0].ShadowSampleBps);
+    }
+
+    [Fact]
+    public async Task Evaluate_ShouldReuseParsedPatchDocument_ByConfigVersion_Concurrently()
+    {
+        var patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
+            "\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[" +
+            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}," +
+            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}" +
+            "]}}" +
+            "}}}";
+
+        const ulong configVersion = 0x1234_5678_9ABC_DEF0;
+        const int taskCount = 32;
+
+        using var warmup = PatchEvaluatorV1.Evaluate("HomeFeed", patchJson, requestOptions: default, configVersion: configVersion);
+        var cachedDocument = GetEvaluationDocument(warmup);
+
+        using var startGate = new ManualResetEventSlim(initialState: false);
+
+        var tasks = new Task[taskCount];
+
+        for (var i = 0; i < taskCount; i++)
+        {
+            tasks[i] = Task.Run(
+                () =>
+                {
+                    startGate.Wait();
+
+                    using var evaluation = PatchEvaluatorV1.Evaluate(
+                        "HomeFeed",
+                        patchJson,
+                        requestOptions: default,
+                        configVersion: configVersion);
+
+                    Assert.Single(evaluation.Stages);
+                    Assert.Same(cachedDocument, GetEvaluationDocument(evaluation));
+                });
+        }
+
+        startGate.Set();
+        await Task.WhenAll(tasks);
+    }
+
+    private static JsonDocument GetEvaluationDocument(PatchEvaluatorV1.FlowPatchEvaluationV1 evaluation)
+    {
+        var documentField = typeof(PatchEvaluatorV1.FlowPatchEvaluationV1).GetField(
+            "_document",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+        var document = documentField?.GetValue(evaluation) as JsonDocument;
+        Assert.NotNull(document);
+        return document!;
     }
 }

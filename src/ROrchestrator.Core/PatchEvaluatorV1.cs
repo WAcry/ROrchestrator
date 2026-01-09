@@ -6,7 +6,12 @@ public static class PatchEvaluatorV1
 {
     private const string SupportedSchemaVersion = "v1";
 
-    public static FlowPatchEvaluationV1 Evaluate(string flowName, string patchJson, FlowRequestOptions requestOptions)
+    private const int ParsedPatchCacheSize = 32;
+
+    private static readonly Lock ParsedPatchCacheGate = new();
+    private static readonly CachedPatchDocument?[] ParsedPatchCache = new CachedPatchDocument?[ParsedPatchCacheSize];
+
+    public static FlowPatchEvaluationV1 Evaluate(string flowName, string patchJson, FlowRequestOptions requestOptions, ulong configVersion = 0)
     {
         if (string.IsNullOrEmpty(flowName))
         {
@@ -24,41 +29,33 @@ public static class PatchEvaluatorV1
         }
 
         JsonDocument document;
+        CachedPatchDocument? cachedDocument = null;
+        var ownsDocument = true;
 
-        try
+        if (configVersion == 0)
         {
-            document = JsonDocument.Parse(patchJson);
+            document = ParsePatchDocument(patchJson);
         }
-        catch (JsonException ex)
+        else
         {
-            throw new FormatException("patchJson is not a valid JSON document.", ex);
+            cachedDocument = AcquireCachedPatchDocument(patchJson, configVersion);
+            document = cachedDocument.Document;
+            ownsDocument = false;
         }
 
         try
         {
             var root = document.RootElement;
 
-            if (root.ValueKind != JsonValueKind.Object)
-            {
-                throw new FormatException("patchJson must be a JSON object.");
-            }
-
-            if (!root.TryGetProperty("schemaVersion", out var schemaVersion)
-                || schemaVersion.ValueKind != JsonValueKind.String
-                || !schemaVersion.ValueEquals(SupportedSchemaVersion))
-            {
-                throw new FormatException("patchJson schemaVersion is missing or unsupported.");
-            }
-
             if (!root.TryGetProperty("flows", out var flowsElement) || flowsElement.ValueKind != JsonValueKind.Object)
             {
-                document.Dispose();
+                ReleasePatchDocument(document, ownsDocument, cachedDocument);
                 return FlowPatchEvaluationV1.CreateEmpty(flowName);
             }
 
             if (!flowsElement.TryGetProperty(flowName, out var flowPatch) || flowPatch.ValueKind != JsonValueKind.Object)
             {
-                document.Dispose();
+                ReleasePatchDocument(document, ownsDocument, cachedDocument);
                 return FlowPatchEvaluationV1.CreateEmpty(flowName);
             }
 
@@ -97,12 +94,167 @@ public static class PatchEvaluatorV1
 
             var stageArray = stageMap.Build();
             var overlayArray = overlays.ToArray();
-            return new FlowPatchEvaluationV1(flowName, document, flowPatch, overlayArray, stageArray);
+            return new FlowPatchEvaluationV1(flowName, document, flowPatch, overlayArray, stageArray, ownsDocument, cachedDocument);
+        }
+        catch
+        {
+            ReleasePatchDocument(document, ownsDocument, cachedDocument);
+            throw;
+        }
+    }
+
+    private static JsonDocument ParsePatchDocument(string patchJson)
+    {
+        JsonDocument document;
+
+        try
+        {
+            document = JsonDocument.Parse(patchJson);
+        }
+        catch (JsonException ex)
+        {
+            throw new FormatException("patchJson is not a valid JSON document.", ex);
+        }
+
+        try
+        {
+            var root = document.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                throw new FormatException("patchJson must be a JSON object.");
+            }
+
+            if (!root.TryGetProperty("schemaVersion", out var schemaVersion)
+                || schemaVersion.ValueKind != JsonValueKind.String
+                || !schemaVersion.ValueEquals(SupportedSchemaVersion))
+            {
+                throw new FormatException("patchJson schemaVersion is missing or unsupported.");
+            }
+
+            return document;
         }
         catch
         {
             document.Dispose();
             throw;
+        }
+    }
+
+    private static CachedPatchDocument AcquireCachedPatchDocument(string patchJson, ulong configVersion)
+    {
+        var index = (int)(configVersion & (ParsedPatchCacheSize - 1));
+
+        var entry = Volatile.Read(ref ParsedPatchCache[index]);
+        if (entry is not null
+            && entry.ConfigVersion == configVersion
+            && ReferenceEquals(entry.PatchJson, patchJson)
+            && entry.TryAcquireLease())
+        {
+            return entry;
+        }
+
+        lock (ParsedPatchCacheGate)
+        {
+            entry = ParsedPatchCache[index];
+            if (entry is not null
+                && entry.ConfigVersion == configVersion
+                && ReferenceEquals(entry.PatchJson, patchJson)
+                && entry.TryAcquireLease())
+            {
+                return entry;
+            }
+
+            var document = ParsePatchDocument(patchJson);
+            var newEntry = new CachedPatchDocument(configVersion, patchJson, document);
+            var previous = ParsedPatchCache[index];
+            ParsedPatchCache[index] = newEntry;
+
+            previous?.MarkEvicted();
+
+            return newEntry;
+        }
+    }
+
+    private static void ReleasePatchDocument(JsonDocument document, bool ownsDocument, CachedPatchDocument? cachedDocument)
+    {
+        if (ownsDocument)
+        {
+            document.Dispose();
+            return;
+        }
+
+        cachedDocument?.ReleaseLease();
+    }
+
+    internal sealed class CachedPatchDocument
+    {
+        private readonly string _patchJson;
+        private readonly JsonDocument _document;
+        private int _leaseCount;
+        private int _evicted;
+        private int _disposed;
+
+        public ulong ConfigVersion { get; }
+
+        public string PatchJson => _patchJson;
+
+        public JsonDocument Document => _document;
+
+        public CachedPatchDocument(ulong configVersion, string patchJson, JsonDocument document)
+        {
+            ConfigVersion = configVersion;
+            _patchJson = patchJson ?? throw new ArgumentNullException(nameof(patchJson));
+            _document = document ?? throw new ArgumentNullException(nameof(document));
+            _leaseCount = 1;
+            _evicted = 0;
+            _disposed = 0;
+        }
+
+        public bool TryAcquireLease()
+        {
+            if (Volatile.Read(ref _evicted) != 0)
+            {
+                return false;
+            }
+
+            Interlocked.Increment(ref _leaseCount);
+
+            if (Volatile.Read(ref _evicted) != 0)
+            {
+                ReleaseLease();
+                return false;
+            }
+
+            return true;
+        }
+
+        public void ReleaseLease()
+        {
+            if (Interlocked.Decrement(ref _leaseCount) == 0 && Volatile.Read(ref _evicted) != 0)
+            {
+                DisposeOnce();
+            }
+        }
+
+        public void MarkEvicted()
+        {
+            Volatile.Write(ref _evicted, 1);
+
+            if (Volatile.Read(ref _leaseCount) == 0)
+            {
+                DisposeOnce();
+            }
+        }
+
+        private void DisposeOnce()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            {
+                return;
+            }
+
+            _document.Dispose();
         }
     }
 
@@ -316,6 +468,8 @@ public static class PatchEvaluatorV1
         private readonly JsonElement _flowPatch;
         private readonly PatchOverlayAppliedV1[] _overlaysApplied;
         private readonly StagePatchV1[] _stages;
+        private readonly bool _ownsDocument;
+        private CachedPatchDocument? _cachedDocument;
 
         public string FlowName { get; }
 
@@ -328,13 +482,17 @@ public static class PatchEvaluatorV1
             JsonDocument document,
             JsonElement flowPatch,
             PatchOverlayAppliedV1[] overlaysApplied,
-            StagePatchV1[] stages)
+            StagePatchV1[] stages,
+            bool ownsDocument,
+            CachedPatchDocument? cachedDocument)
         {
             FlowName = flowName;
             _document = document;
             _flowPatch = flowPatch;
             _overlaysApplied = overlaysApplied;
             _stages = stages;
+            _ownsDocument = ownsDocument;
+            _cachedDocument = cachedDocument;
         }
 
         private FlowPatchEvaluationV1(string flowName, PatchOverlayAppliedV1[] overlaysApplied, StagePatchV1[] stages)
@@ -344,6 +502,8 @@ public static class PatchEvaluatorV1
             _flowPatch = default;
             _overlaysApplied = overlaysApplied;
             _stages = stages;
+            _ownsDocument = false;
+            _cachedDocument = null;
         }
 
         internal static FlowPatchEvaluationV1 CreateEmpty(string flowName)
@@ -353,7 +513,14 @@ public static class PatchEvaluatorV1
 
         public void Dispose()
         {
-            _document?.Dispose();
+            if (_ownsDocument)
+            {
+                _document?.Dispose();
+                return;
+            }
+
+            var cachedDocument = Interlocked.Exchange(ref _cachedDocument, null);
+            cachedDocument?.ReleaseLease();
         }
 
         internal bool TryGetFlowPatch(out JsonElement flowPatch)

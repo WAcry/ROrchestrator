@@ -1317,6 +1317,9 @@ public static class ToolingJsonV1
             PatchModuleDiffKind.GateChanged => "gate_changed",
             PatchModuleDiffKind.EnabledChanged => "enabled_changed",
             PatchModuleDiffKind.PriorityChanged => "priority_changed",
+            PatchModuleDiffKind.ShadowAdded => "shadow_added",
+            PatchModuleDiffKind.ShadowRemoved => "shadow_removed",
+            PatchModuleDiffKind.ShadowSampleChanged => "shadow_sample_changed",
             _ => "unknown",
         };
     }

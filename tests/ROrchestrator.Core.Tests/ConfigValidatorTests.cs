@@ -1368,6 +1368,40 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
+    public void ValidatePatchJson_ShouldReportModuleIdConflict_WhenModuleIdMatchesBlueprintNodeName()
+    {
+        var registry = new FlowRegistry();
+        registry.Register(
+            "HomeFeed",
+            FlowBlueprint
+                .Define<int, int>("TestFlow")
+                .Stage(
+                    "s1",
+                    stage =>
+                    {
+                        stage
+                            .Step("m1", moduleType: "test.module")
+                            .Join<int>(
+                                name: "j1",
+                                join: _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0)));
+                    })
+                .Build());
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_MODULE_ID_CONFLICTS_WITH_BLUEPRINT_NODE_NAME");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].id", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
     public void ValidatePatchJson_ShouldReportModulesNotArray_WhenModulesIsNotArray()
     {
         var registry = new FlowRegistry();

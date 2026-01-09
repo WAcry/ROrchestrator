@@ -646,7 +646,8 @@ public sealed class ExecutionEngine
         return PatchEvaluatorV1.Evaluate(
             flowName,
             patchJson,
-            new FlowRequestOptions(context.Variants, context.UserId, context.RequestAttributes));
+            new FlowRequestOptions(context.Variants, context.UserId, context.RequestAttributes),
+            snapshot.ConfigVersion);
     }
 
     private async ValueTask ExecuteStageFanoutIfAnyAsync(

@@ -28,6 +28,7 @@ public sealed class ConfigValidator
     private const string CodeModuleIdMissing = "CFG_MODULE_ID_MISSING";
     private const string CodeModuleIdDuplicate = "CFG_MODULE_ID_DUPLICATE";
     private const string CodeModuleIdInvalidFormat = "CFG_MODULE_ID_INVALID_FORMAT";
+    private const string CodeModuleIdConflictsWithBlueprintNodeName = "CFG_MODULE_ID_CONFLICTS_WITH_BLUEPRINT_NODE_NAME";
     private const string CodeModuleTypeMissing = "CFG_MODULE_TYPE_MISSING";
     private const string CodeModuleTypeNotRegistered = "CFG_MODULE_TYPE_NOT_REGISTERED";
     private const string CodeModuleArgsMissing = "CFG_MODULE_ARGS_MISSING";
@@ -165,6 +166,7 @@ public sealed class ConfigValidator
                 {
                     var flowName = flowProperty.Name;
                     string[] blueprintStageNameSet = Array.Empty<string>();
+                    string[] blueprintNodeNameSet = Array.Empty<string>();
                     var flowRegistered = false;
                     Type? patchType = null;
                     ExperimentLayerOwnershipContract? experimentLayerOwnershipContract = null;
@@ -174,6 +176,7 @@ public sealed class ConfigValidator
                         flowRegistered = _flowRegistry.TryGetStageNameSetAndPatchType(
                             flowName,
                             out blueprintStageNameSet,
+                            out blueprintNodeNameSet,
                             out patchType,
                             out experimentLayerOwnershipContract);
                     }
@@ -228,7 +231,7 @@ public sealed class ConfigValidator
                     }
                     else if (flowRegistered && stagesPatch.ValueKind == JsonValueKind.Object)
                     {
-                        ValidateStagePatches(flowName, stagesPatch, blueprintStageNameSet, _moduleCatalog, _selectorRegistry, ref findings);
+                        ValidateStagePatches(flowName, stagesPatch, blueprintStageNameSet, blueprintNodeNameSet, _moduleCatalog, _selectorRegistry, ref findings);
                     }
 
                     ValidateEmergency(
@@ -238,6 +241,7 @@ public sealed class ConfigValidator
                         hasStagesPatch,
                         stagesPatch,
                         blueprintStageNameSet,
+                        blueprintNodeNameSet,
                         flowRegistered,
                         ref findings);
 
@@ -247,6 +251,7 @@ public sealed class ConfigValidator
                         experimentsPatch,
                         patchType,
                         blueprintStageNameSet,
+                        blueprintNodeNameSet,
                         _moduleCatalog,
                         _selectorRegistry,
                         experimentLayerOwnershipContract,
@@ -328,6 +333,7 @@ public sealed class ConfigValidator
         JsonElement experimentsPatch,
         Type? patchType,
         string[] blueprintStageNameSet,
+        string[] blueprintNodeNameSet,
         ModuleCatalog moduleCatalog,
         SelectorRegistry selectorRegistry,
         ExperimentLayerOwnershipContract? experimentLayerOwnershipContract,
@@ -579,7 +585,7 @@ public sealed class ConfigValidator
 
             if (flowRegistered)
             {
-                ValidateExperimentPatch(patchFlowName, patchType, blueprintStageNameSet, moduleCatalog, selectorRegistry, patch, ref findings);
+                ValidateExperimentPatch(patchFlowName, patchType, blueprintStageNameSet, blueprintNodeNameSet, moduleCatalog, selectorRegistry, patch, ref findings);
             }
 
             index++;
@@ -734,6 +740,7 @@ public sealed class ConfigValidator
         bool hasBaseStagesPatch,
         JsonElement baseStagesPatch,
         string[] blueprintStageNameSet,
+        string[] blueprintNodeNameSet,
         bool flowRegistered,
         ref FindingBuffer findings)
     {
@@ -864,6 +871,7 @@ public sealed class ConfigValidator
             hasBaseStagesPatch,
             baseStagesPatch,
             blueprintStageNameSet,
+            blueprintNodeNameSet,
             flowRegistered,
             ref findings);
     }
@@ -875,6 +883,7 @@ public sealed class ConfigValidator
         bool hasBaseStagesPatch,
         JsonElement baseStagesPatch,
         string[] blueprintStageNameSet,
+        string[] blueprintNodeNameSet,
         bool flowRegistered,
         ref FindingBuffer findings)
     {
@@ -1141,6 +1150,16 @@ public sealed class ConfigValidator
                             code: CodeModuleIdInvalidFormat,
                             path: string.Concat(modulePathPrefix, ".id"),
                             message: "emergency.patch.modules[].id must match [a-z0-9_]+ and length <= 64."));
+                }
+
+                if (NameSetContains(blueprintNodeNameSet, moduleId))
+                {
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Error,
+                            code: CodeModuleIdConflictsWithBlueprintNodeName,
+                            path: string.Concat(modulePathPrefix, ".id"),
+                            message: string.Concat("modules[].id conflicts with blueprint node name: ", moduleId)));
                 }
 
                 if (!hasEnabled || enabled)
@@ -1475,6 +1494,7 @@ public sealed class ConfigValidator
         string patchFlowName,
         Type? patchType,
         string[] blueprintStageNameSet,
+        string[] blueprintNodeNameSet,
         ModuleCatalog moduleCatalog,
         SelectorRegistry selectorRegistry,
         JsonElement patch,
@@ -1508,7 +1528,7 @@ public sealed class ConfigValidator
         }
         else if (stagesPatch.ValueKind == JsonValueKind.Object)
         {
-            ValidateStagePatches(patchFlowName, stagesPatch, blueprintStageNameSet, moduleCatalog, selectorRegistry, ref patchFindings);
+            ValidateStagePatches(patchFlowName, stagesPatch, blueprintStageNameSet, blueprintNodeNameSet, moduleCatalog, selectorRegistry, ref patchFindings);
         }
 
         ValidateExperiments(
@@ -1517,6 +1537,7 @@ public sealed class ConfigValidator
             experimentsPatch,
             patchType,
             blueprintStageNameSet,
+            blueprintNodeNameSet,
             moduleCatalog,
             selectorRegistry,
             experimentLayerOwnershipContract: null,
@@ -1648,6 +1669,7 @@ public sealed class ConfigValidator
         string flowName,
         JsonElement stagesPatch,
         string[] blueprintStageNameSet,
+        string[] blueprintNodeNameSet,
         ModuleCatalog moduleCatalog,
         SelectorRegistry selectorRegistry,
         ref FindingBuffer findings)
@@ -1685,7 +1707,7 @@ public sealed class ConfigValidator
                 continue;
             }
 
-            ValidateStagePatch(flowName, stageName, stageProperty.Value, moduleCatalog, selectorRegistry, ref findings, ref moduleIdFirstOccurrenceMap);
+            ValidateStagePatch(flowName, stageName, stageProperty.Value, moduleCatalog, selectorRegistry, blueprintNodeNameSet, ref findings, ref moduleIdFirstOccurrenceMap);
         }
     }
 
@@ -1695,6 +1717,7 @@ public sealed class ConfigValidator
         JsonElement stagePatch,
         ModuleCatalog moduleCatalog,
         SelectorRegistry selectorRegistry,
+        string[] blueprintNodeNameSet,
         ref FindingBuffer findings,
         ref Dictionary<string, ModuleIdFirstOccurrence>? moduleIdFirstOccurrenceMap)
     {
@@ -1765,6 +1788,7 @@ public sealed class ConfigValidator
             modulesPatch,
             moduleCatalog,
             selectorRegistry,
+            blueprintNodeNameSet,
             ref findings,
             ref enabledModuleCount,
             ref moduleIdFirstOccurrenceMap);
@@ -1873,6 +1897,7 @@ public sealed class ConfigValidator
         JsonElement modulesPatch,
         ModuleCatalog moduleCatalog,
         SelectorRegistry selectorRegistry,
+        string[] blueprintNodeNameSet,
         ref FindingBuffer findings,
         ref int enabledModuleCount,
         ref Dictionary<string, ModuleIdFirstOccurrence>? moduleIdFirstOccurrenceMap)
@@ -2037,6 +2062,16 @@ public sealed class ConfigValidator
                             code: CodeModuleIdInvalidFormat,
                             path: string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].id"),
                         message: "modules[].id must match [a-z0-9_]+ and length <= 64."));
+                }
+
+                if (NameSetContains(blueprintNodeNameSet, moduleId))
+                {
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Error,
+                            code: CodeModuleIdConflictsWithBlueprintNodeName,
+                            path: string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].id"),
+                            message: string.Concat("modules[].id conflicts with blueprint node name: ", moduleId)));
                 }
 
                 moduleIdFirstOccurrenceMap ??= new Dictionary<string, ModuleIdFirstOccurrence>();
