@@ -17,6 +17,8 @@ public sealed class ExecExplain
 
     public string FlowName { get; }
 
+    public ExplainLevel Level { get; }
+
     public ulong PlanHash { get; }
 
     public long StartTimestamp { get; }
@@ -35,6 +37,7 @@ public sealed class ExecExplain
 
     internal ExecExplain(
         string flowName,
+        ExplainLevel level,
         ulong planHash,
         bool hasConfigVersion,
         ulong configVersion,
@@ -75,6 +78,7 @@ public sealed class ExecExplain
         }
 
         FlowName = flowName;
+        Level = level;
         PlanHash = planHash;
         _hasConfigVersion = hasConfigVersion;
         _configVersion = configVersion;
@@ -111,9 +115,17 @@ public readonly struct ExecExplainStageModule
 
     public int Priority { get; }
 
+    public long StartTimestamp { get; }
+
+    public long EndTimestamp { get; }
+
+    public long DurationStopwatchTicks => EndTimestamp - StartTimestamp;
+
     public OutcomeKind OutcomeKind { get; }
 
     public string OutcomeCode { get; }
+
+    public string GateDecisionCode { get; }
 
     public bool IsOverride { get; }
 
@@ -122,17 +134,28 @@ public readonly struct ExecExplainStageModule
         string moduleId,
         string moduleType,
         int priority,
+        long startTimestamp,
+        long endTimestamp,
         OutcomeKind outcomeKind,
         string outcomeCode,
+        string gateDecisionCode,
         bool isOverride)
     {
         StageName = stageName;
         ModuleId = moduleId;
         ModuleType = moduleType;
         Priority = priority;
+        StartTimestamp = startTimestamp;
+        EndTimestamp = endTimestamp;
         OutcomeKind = outcomeKind;
         OutcomeCode = outcomeCode;
+        GateDecisionCode = gateDecisionCode;
         IsOverride = isOverride;
+    }
+
+    public TimeSpan GetDuration()
+    {
+        return Stopwatch.GetElapsedTime(StartTimestamp, EndTimestamp);
     }
 }
 

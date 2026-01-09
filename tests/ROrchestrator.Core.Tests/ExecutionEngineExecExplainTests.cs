@@ -96,7 +96,7 @@ public sealed class ExecutionEngineExecExplainTests
                     { "l1", "A" },
                 }));
 
-        flowContext.EnableExecExplain();
+        flowContext.EnableExecExplain(ExplainLevel.Standard);
 
         var configProvider = new StaticConfigProvider(configVersion: 123, patchJson);
         _ = await flowContext.GetConfigSnapshotAsync(configProvider);
@@ -120,6 +120,7 @@ public sealed class ExecutionEngineExecExplainTests
         Assert.True(result.IsOk);
 
         Assert.True(flowContext.TryGetExecExplain(out var explain));
+        Assert.Equal(ExplainLevel.Standard, explain.Level);
 
         Assert.Equal(3, explain.OverlaysApplied.Count);
         Assert.Equal("base", explain.OverlaysApplied[0].Layer);
@@ -133,6 +134,56 @@ public sealed class ExecutionEngineExecExplainTests
         _ = Assert.Single(explain.Variants);
         Assert.True(explain.Variants.TryGetValue("l1", out var variant));
         Assert.Equal("A", variant);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Template_WithExecExplainEnabledMinimal_ShouldNotRecordVariantsOrOverlaysApplied()
+    {
+        var patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"ExplainTestFlow.Overlays\":{" +
+            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{}}]}}," +
+            "\"experiments\":[{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{}}]," +
+            "\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{}}" +
+            "}}}";
+
+        var services = new DummyServiceProvider();
+        var flowContext = new FlowContext(
+            services,
+            CancellationToken.None,
+            FutureDeadline,
+            requestOptions: new FlowRequestOptions(
+                variants: new Dictionary<string, string>
+                {
+                    { "l1", "A" },
+                }));
+
+        flowContext.EnableExecExplain(ExplainLevel.Minimal);
+
+        var configProvider = new StaticConfigProvider(configVersion: 123, patchJson);
+        _ = await flowContext.GetConfigSnapshotAsync(configProvider);
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<JsonElement, int>("test.ok", _ => new OkJsonElementModule());
+
+        var blueprint = FlowBlueprint.Define<int, int>("ExplainTestFlow.Overlays")
+            .Stage(
+                "s1",
+                stage =>
+                    stage.Join<int>(
+                        "final",
+                        _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0))))
+            .Build();
+
+        var template = PlanCompiler.Compile(blueprint, catalog);
+        var engine = new ExecutionEngine(catalog);
+
+        var result = await engine.ExecuteAsync(template, request: 0, flowContext);
+        Assert.True(result.IsOk);
+
+        Assert.True(flowContext.TryGetExecExplain(out var explain));
+        Assert.Equal(ExplainLevel.Minimal, explain.Level);
+        Assert.Empty(explain.OverlaysApplied);
+        Assert.Empty(explain.Variants);
     }
 
     [Fact]

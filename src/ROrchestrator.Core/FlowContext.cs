@@ -16,6 +16,8 @@ public sealed class FlowContext
     private readonly IReadOnlyDictionary<string, string> _requestAttributes;
     private readonly IExplainSink _explainSink;
     private ExecExplainCollectorV1? _execExplainCollector;
+    private PatchEvaluatorV1.FlowPatchEvaluationV1? _activePatchEvaluation;
+    private ulong _activePatchEvaluationConfigVersion;
     private ConfigSnapshot _configSnapshot;
     private Task<ConfigSnapshot>? _configSnapshotTask;
     private int _configSnapshotState;
@@ -100,9 +102,22 @@ public sealed class FlowContext
         Deadline = deadline;
     }
 
-    public void EnableExecExplain()
+    public void EnableExecExplain(ExplainLevel level = ExplainLevel.Minimal)
     {
-        _execExplainCollector ??= new ExecExplainCollectorV1();
+        if ((uint)level > (uint)ExplainLevel.Full)
+        {
+            throw new ArgumentOutOfRangeException(nameof(level), level, "Unsupported explain level.");
+        }
+
+        var collector = _execExplainCollector;
+
+        if (collector is null)
+        {
+            _execExplainCollector = new ExecExplainCollectorV1(level);
+            return;
+        }
+
+        collector.SetLevel(level);
     }
 
     public bool TryGetExecExplain(out ExecExplain explain)
@@ -118,6 +133,35 @@ public sealed class FlowContext
     }
 
     internal ExecExplainCollectorV1? ExecExplainCollector => _execExplainCollector;
+
+    internal void SetActivePatchEvaluation(PatchEvaluatorV1.FlowPatchEvaluationV1 evaluation, ulong configVersion)
+    {
+        if (evaluation is null)
+        {
+            throw new ArgumentNullException(nameof(evaluation));
+        }
+
+        _activePatchEvaluationConfigVersion = configVersion;
+        Volatile.Write(ref _activePatchEvaluation, evaluation);
+    }
+
+    internal void ClearActivePatchEvaluation(PatchEvaluatorV1.FlowPatchEvaluationV1 evaluation)
+    {
+        if (evaluation is null)
+        {
+            throw new ArgumentNullException(nameof(evaluation));
+        }
+
+        var current = Volatile.Read(ref _activePatchEvaluation);
+
+        if (!ReferenceEquals(current, evaluation))
+        {
+            return;
+        }
+
+        Volatile.Write(ref _activePatchEvaluation, null);
+        _activePatchEvaluationConfigVersion = 0;
+    }
 
     internal IFlowTestOverrideProvider? FlowTestOverrideProvider => _flowTestOverrideProvider;
 
@@ -255,7 +299,7 @@ public sealed class FlowContext
                 return (TParams)_paramsCacheValue!;
             }
 
-            var computed = ComputeParams<TParams>(flowName, patchJson);
+            var computed = ComputeParams<TParams>(flowName, patchJson, configVersion);
 
             _paramsCacheFlowName = flowName;
             _paramsCacheType = typeof(TParams);
@@ -264,6 +308,26 @@ public sealed class FlowContext
             Volatile.Write(ref _paramsCacheState, 1);
             return computed;
         }
+    }
+
+    private TParams ComputeParams<TParams>(string flowName, string patchJson, ulong configVersion)
+        where TParams : notnull
+    {
+        var evaluation = Volatile.Read(ref _activePatchEvaluation);
+
+        if (evaluation is not null
+            && Volatile.Read(ref _activePatchEvaluationConfigVersion) == configVersion
+            && string.Equals(evaluation.FlowName, flowName, StringComparison.Ordinal))
+        {
+            if (!evaluation.TryGetFlowPatch(out var flowPatch))
+            {
+                return ComputeParams<TParams>(flowName, patchJson: string.Empty);
+            }
+
+            return ComputeParams<TParams>(flowName, flowPatch);
+        }
+
+        return ComputeParams<TParams>(flowName, patchJson);
     }
 
     private TParams ComputeParams<TParams>(string flowName, string patchJson)
@@ -317,6 +381,39 @@ public sealed class FlowContext
             return DeserializeDefaultParams<TParams>(defaultParamsJson, flowName);
         }
 
+        return ApplyParamsPatchesAndMerge<TParams>(flowName, defaultParamsJson, baseElement, flowPatch);
+    }
+
+    private TParams ComputeParams<TParams>(string flowName, JsonElement flowPatch)
+        where TParams : notnull
+    {
+        var defaultParams = (TParams)_flowDefaultParams!;
+
+        var defaultParamsJson = JsonSerializer.SerializeToUtf8Bytes(defaultParams);
+
+        using var defaultDocument = JsonDocument.Parse(defaultParamsJson);
+        var baseElement = defaultDocument.RootElement;
+
+        if (baseElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException($"Default params JSON must be an object. Flow: '{flowName}'.");
+        }
+
+        if (flowPatch.ValueKind != JsonValueKind.Object)
+        {
+            return DeserializeDefaultParams<TParams>(defaultParamsJson, flowName);
+        }
+
+        return ApplyParamsPatchesAndMerge<TParams>(flowName, defaultParamsJson, baseElement, flowPatch);
+    }
+
+    private TParams ApplyParamsPatchesAndMerge<TParams>(
+        string flowName,
+        byte[] defaultParamsJson,
+        JsonElement baseElement,
+        JsonElement flowPatch)
+        where TParams : notnull
+    {
         var buffer = new JsonElementBuffer(initialCapacity: 4);
 
         if (flowPatch.TryGetProperty("params", out var baseParamsPatch))

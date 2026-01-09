@@ -11,6 +11,7 @@ internal sealed class ExecExplainCollectorV1
     private List<ExecExplainStageModule>? _stageModules;
     private ExecExplain? _explain;
     private string? _flowName;
+    private ExplainLevel _level;
     private ulong _planHash;
     private PatchEvaluatorV1.PatchOverlayAppliedV1[]? _overlaysApplied;
     private IReadOnlyDictionary<string, string>? _variants;
@@ -19,6 +20,18 @@ internal sealed class ExecExplainCollectorV1
     private bool _active;
 
     public bool IsActive => _active;
+
+    public ExplainLevel Level => _level;
+
+    public ExecExplainCollectorV1(ExplainLevel level)
+    {
+        _level = level;
+    }
+
+    public void SetLevel(ExplainLevel level)
+    {
+        _level = level;
+    }
 
     public void Clear()
     {
@@ -91,6 +104,11 @@ internal sealed class ExecExplainCollectorV1
             return;
         }
 
+        if (_level == ExplainLevel.Minimal)
+        {
+            return;
+        }
+
         if (variants is null || variants.Count == 0)
         {
             _variants = EmptyVariants;
@@ -131,8 +149,11 @@ internal sealed class ExecExplainCollectorV1
         string moduleId,
         string moduleType,
         int priority,
+        long startTimestamp,
+        long endTimestamp,
         OutcomeKind outcomeKind,
         string outcomeCode,
+        string gateDecisionCode,
         bool isOverride)
     {
         if (!_active)
@@ -141,7 +162,18 @@ internal sealed class ExecExplainCollectorV1
         }
 
         _stageModules ??= new List<ExecExplainStageModule>(capacity: 8);
-        _stageModules.Add(new ExecExplainStageModule(stageName, moduleId, moduleType, priority, outcomeKind, outcomeCode, isOverride));
+        _stageModules.Add(
+            new ExecExplainStageModule(
+                stageName,
+                moduleId,
+                moduleType,
+                priority,
+                startTimestamp,
+                endTimestamp,
+                outcomeKind,
+                outcomeCode,
+                gateDecisionCode,
+                isOverride));
     }
 
     public void RecordNode(PlanNodeTemplate node, long startTimestamp, long endTimestamp, OutcomeKind outcomeKind, string outcomeCode)
@@ -189,6 +221,7 @@ internal sealed class ExecExplainCollectorV1
 
         _explain = new ExecExplain(
             _flowName!,
+            _level,
             _planHash,
             hasConfigVersion,
             configVersion,

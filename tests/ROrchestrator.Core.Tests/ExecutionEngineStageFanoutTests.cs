@@ -29,7 +29,7 @@ public sealed class ExecutionEngineStageFanoutTests
                     { "l1", "A" },
                 }));
 
-        flowContext.EnableExecExplain();
+        flowContext.EnableExecExplain(ExplainLevel.Standard);
 
         var invocationCollector = new FlowTestInvocationCollector();
         flowContext.ConfigureForTesting(overrideProvider: null, invocationCollector);
@@ -66,6 +66,7 @@ public sealed class ExecutionEngineStageFanoutTests
         AssertStageModuleSkip(snapshot, "m_low", ExecutionEngine.FanoutTrimCode);
 
         Assert.True(flowContext.TryGetExecExplain(out var explain));
+        Assert.Equal(ExplainLevel.Standard, explain.Level);
 
         Assert.Equal(4, explain.StageModules.Count);
 
@@ -73,6 +74,11 @@ public sealed class ExecutionEngineStageFanoutTests
         AssertStageModuleOutcome(explain, "m_gate_false", OutcomeKind.Skipped, "GATE_FALSE");
         AssertStageModuleOutcome(explain, "m_high", OutcomeKind.Ok, "OK");
         AssertStageModuleOutcome(explain, "m_low", OutcomeKind.Skipped, "FANOUT_TRIM");
+
+        AssertStageModuleTimingAndGate(explain, "m_disabled", expectedGateDecisionCode: string.Empty, expectExecuted: false);
+        AssertStageModuleTimingAndGate(explain, "m_gate_false", expectedGateDecisionCode: ExecutionEngine.GateFalseCode, expectExecuted: false);
+        AssertStageModuleTimingAndGate(explain, "m_high", expectedGateDecisionCode: string.Empty, expectExecuted: true);
+        AssertStageModuleTimingAndGate(explain, "m_low", expectedGateDecisionCode: string.Empty, expectExecuted: false);
 
         Assert.Single(invocationCollector.ToArray());
         Assert.Equal("m_high", invocationCollector.ToArray()[0].ModuleId);
@@ -183,6 +189,41 @@ public sealed class ExecutionEngineStageFanoutTests
 
             Assert.Equal(kind, modules[i].OutcomeKind);
             Assert.Equal(code, modules[i].OutcomeCode);
+            return;
+        }
+
+        Assert.Fail($"Stage module '{moduleId}' was not recorded.");
+    }
+
+    private static void AssertStageModuleTimingAndGate(
+        ExecExplain explain,
+        string moduleId,
+        string expectedGateDecisionCode,
+        bool expectExecuted)
+    {
+        var modules = explain.StageModules;
+
+        for (var i = 0; i < modules.Count; i++)
+        {
+            if (!string.Equals(modules[i].ModuleId, moduleId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            Assert.Equal(expectedGateDecisionCode, modules[i].GateDecisionCode);
+
+            if (expectExecuted)
+            {
+                Assert.True(modules[i].StartTimestamp > 0);
+                Assert.True(modules[i].EndTimestamp >= modules[i].StartTimestamp);
+            }
+            else
+            {
+                Assert.Equal(0, modules[i].StartTimestamp);
+                Assert.Equal(0, modules[i].EndTimestamp);
+            }
+
+            Assert.Equal(modules[i].EndTimestamp - modules[i].StartTimestamp, modules[i].DurationStopwatchTicks);
             return;
         }
 

@@ -97,7 +97,7 @@ public static class PatchEvaluatorV1
 
             var stageArray = stageMap.Build();
             var overlayArray = overlays.ToArray();
-            return new FlowPatchEvaluationV1(flowName, document, overlayArray, stageArray);
+            return new FlowPatchEvaluationV1(flowName, document, flowPatch, overlayArray, stageArray);
         }
         catch
         {
@@ -296,6 +296,7 @@ public static class PatchEvaluatorV1
         private static readonly StagePatchV1[] EmptyStageArray = Array.Empty<StagePatchV1>();
 
         private readonly JsonDocument? _document;
+        private readonly JsonElement _flowPatch;
         private readonly PatchOverlayAppliedV1[] _overlaysApplied;
         private readonly StagePatchV1[] _stages;
 
@@ -305,10 +306,16 @@ public static class PatchEvaluatorV1
 
         public IReadOnlyList<StagePatchV1> Stages => _stages;
 
-        internal FlowPatchEvaluationV1(string flowName, JsonDocument document, PatchOverlayAppliedV1[] overlaysApplied, StagePatchV1[] stages)
+        internal FlowPatchEvaluationV1(
+            string flowName,
+            JsonDocument document,
+            JsonElement flowPatch,
+            PatchOverlayAppliedV1[] overlaysApplied,
+            StagePatchV1[] stages)
         {
             FlowName = flowName;
             _document = document;
+            _flowPatch = flowPatch;
             _overlaysApplied = overlaysApplied;
             _stages = stages;
         }
@@ -317,6 +324,7 @@ public static class PatchEvaluatorV1
         {
             FlowName = flowName;
             _document = null;
+            _flowPatch = default;
             _overlaysApplied = overlaysApplied;
             _stages = stages;
         }
@@ -329,6 +337,18 @@ public static class PatchEvaluatorV1
         public void Dispose()
         {
             _document?.Dispose();
+        }
+
+        internal bool TryGetFlowPatch(out JsonElement flowPatch)
+        {
+            if (_document is null || _flowPatch.ValueKind != JsonValueKind.Object)
+            {
+                flowPatch = default;
+                return false;
+            }
+
+            flowPatch = _flowPatch;
+            return true;
         }
     }
 

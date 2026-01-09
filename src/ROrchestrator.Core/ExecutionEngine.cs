@@ -198,31 +198,203 @@ public sealed class ExecutionEngine
         context.PrepareForExecution(template.NodeNameToIndex, nodeCount);
         execExplainCollector?.Start(flowName, template.PlanHash, nodes);
 
-        using var patchEvaluation = MaybeEvaluatePatch(flowName, context);
-        execExplainCollector?.RecordRouting(context.Variants, patchEvaluation?.OverlaysApplied);
-        string? currentStageName = null;
+        PatchEvaluatorV1.FlowPatchEvaluationV1? patchEvaluation = null;
 
-        var activitySource = FlowActivitySource.Instance;
-
-        if (activitySource.HasListeners())
+        try
         {
-            using var flowActivity = activitySource.StartActivity(FlowActivitySource.FlowActivityName, ActivityKind.Internal);
+            patchEvaluation = MaybeEvaluatePatch(flowName, context);
 
-            if (flowActivity is not null)
+            if (patchEvaluation is not null)
             {
-                var planHashTagValue = template.PlanHash.ToString(FlowActivitySource.PlanHashFormat);
-                flowActivity.SetTag(FlowActivitySource.TagFlowName, flowName);
-                flowActivity.SetTag(FlowActivitySource.TagPlanHash, planHashTagValue);
+                var patchConfigVersion = context.TryGetConfigVersion(out var foundConfigVersion) ? foundConfigVersion : 0;
+                context.SetActivePatchEvaluation(patchEvaluation, patchConfigVersion);
+            }
 
-                string? configVersionTagValue = null;
-                if (context.TryGetConfigVersion(out var configVersion))
-                {
-                    configVersionTagValue = configVersion.ToString(CultureInfo.InvariantCulture);
-                    flowActivity.SetTag(FlowActivitySource.TagConfigVersion, configVersionTagValue);
-                }
+            execExplainCollector?.RecordRouting(context.Variants, patchEvaluation?.OverlaysApplied);
+            string? currentStageName = null;
 
-                for (var i = 0; i < nodeCount; i++)
+            var activitySource = FlowActivitySource.Instance;
+
+            if (activitySource.HasListeners())
+            {
+                using var flowActivity = activitySource.StartActivity(FlowActivitySource.FlowActivityName, ActivityKind.Internal);
+
+                if (flowActivity is not null)
                 {
+                    var planHashTagValue = template.PlanHash.ToString(FlowActivitySource.PlanHashFormat);
+                    flowActivity.SetTag(FlowActivitySource.TagFlowName, flowName);
+                    flowActivity.SetTag(FlowActivitySource.TagPlanHash, planHashTagValue);
+
+                    string? configVersionTagValue = null;
+                    if (context.TryGetConfigVersion(out var configVersion))
+                    {
+                        configVersionTagValue = configVersion.ToString(CultureInfo.InvariantCulture);
+                        flowActivity.SetTag(FlowActivitySource.TagConfigVersion, configVersionTagValue);
+                    }
+
+                    for (var i = 0; i < nodeCount; i++)
+                    {
+                        if (IsDeadlineExceeded(context.Deadline))
+                        {
+                            return ReturnWithFlowMetrics(Outcome<TResp>.Timeout(DeadlineExceededCode));
+                        }
+
+                        if (context.CancellationToken.IsCancellationRequested)
+                        {
+                            return ReturnWithFlowMetrics(Outcome<TResp>.Canceled(UpstreamCanceledCode));
+                        }
+
+                        var node = nodes[i];
+
+                        if (patchEvaluation is not null)
+                        {
+                            var stageName = node.StageName;
+
+                            if (string.IsNullOrEmpty(stageName))
+                            {
+                                currentStageName = null;
+                            }
+                            else if (!string.Equals(currentStageName, stageName, StringComparison.Ordinal))
+                            {
+                                currentStageName = stageName;
+                                await ExecuteStageFanoutIfAnyAsync(stageName, patchEvaluation, context, execExplainCollector).ConfigureAwait(false);
+
+                                if (IsDeadlineExceeded(context.Deadline))
+                                {
+                                    return ReturnWithFlowMetrics(Outcome<TResp>.Timeout(DeadlineExceededCode));
+                                }
+
+                                if (context.CancellationToken.IsCancellationRequested)
+                                {
+                                    return ReturnWithFlowMetrics(Outcome<TResp>.Canceled(UpstreamCanceledCode));
+                                }
+                            }
+                        }
+
+                        var nodeStartTimestamp = 0L;
+                        var recordNodeMetrics = false;
+                        var recordSkipReasonMetric = false;
+                        var execExplainNodeStartTimestamp = 0L;
+
+                        Activity? nodeActivity;
+
+                        if (node.Kind == BlueprintNodeKind.Step)
+                        {
+                            recordNodeMetrics = recordStepMetrics;
+                            recordSkipReasonMetric = recordStepSkipReasonMetrics;
+                            nodeActivity = activitySource.StartActivity(FlowActivitySource.StepActivityName, ActivityKind.Internal);
+                        }
+                        else if (node.Kind == BlueprintNodeKind.Join)
+                        {
+                            recordNodeMetrics = recordJoinMetrics;
+                            nodeActivity = activitySource.StartActivity(FlowActivitySource.JoinActivityName, ActivityKind.Internal);
+                        }
+                        else
+                        {
+                            throw new InvalidOperationException($"Unsupported node kind: '{node.Kind}'.");
+                        }
+
+                        if (nodeActivity is not null)
+                        {
+                            nodeActivity.SetTag(FlowActivitySource.TagFlowName, flowName);
+                            nodeActivity.SetTag(FlowActivitySource.TagPlanHash, planHashTagValue);
+                            if (configVersionTagValue is not null)
+                            {
+                                nodeActivity.SetTag(FlowActivitySource.TagConfigVersion, configVersionTagValue);
+                            }
+                            nodeActivity.SetTag(FlowActivitySource.TagNodeName, node.Name);
+                            nodeActivity.SetTag(FlowActivitySource.TagNodeKind, FlowActivitySource.GetNodeKindTagValue(node.Kind));
+
+                            if (!string.IsNullOrEmpty(node.StageName))
+                            {
+                                nodeActivity.SetTag(FlowActivitySource.TagStageName, node.StageName);
+                            }
+
+                            if (node.Kind == BlueprintNodeKind.Step && !string.IsNullOrEmpty(node.ModuleType))
+                            {
+                                nodeActivity.SetTag(FlowActivitySource.TagModuleType, node.ModuleType);
+                            }
+                        }
+
+                        try
+                        {
+                            if (execExplainCollector is not null)
+                            {
+                                execExplainNodeStartTimestamp = Stopwatch.GetTimestamp();
+                            }
+
+                            if (recordNodeMetrics)
+                            {
+                                nodeStartTimestamp = node.Kind == BlueprintNodeKind.Step
+                                    ? FlowMetricsV1.StartStepTimer()
+                                    : FlowMetricsV1.StartJoinTimer();
+                            }
+
+                            if (node.Kind == BlueprintNodeKind.Step)
+                            {
+                                var outType = node.OutputType;
+                                var executor = StepTemplateExecutorCache<TReq>.Get(outType);
+                                await executor(this, node, request, context).ConfigureAwait(false);
+                                continue;
+                            }
+
+                            var joinOutType = node.OutputType;
+                            var joinExecutor = JoinTemplateExecutorCache.Get(joinOutType);
+                            await joinExecutor(node, context).ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            var needsOutcomeMetadata = nodeActivity is not null
+                                || recordNodeMetrics
+                                || recordSkipReasonMetric
+                                || execExplainCollector is not null;
+
+                            if (needsOutcomeMetadata && context.TryGetNodeOutcomeMetadata(node.Index, out var kind, out var code))
+                            {
+                                if (execExplainCollector is not null)
+                                {
+                                    var execExplainNodeEndTimestamp = Stopwatch.GetTimestamp();
+                                    execExplainCollector.RecordNode(node, execExplainNodeStartTimestamp, execExplainNodeEndTimestamp, kind, code);
+                                }
+
+                                if (nodeActivity is not null)
+                                {
+                                    nodeActivity.SetTag(FlowActivitySource.TagOutcomeKind, FlowActivitySource.GetOutcomeKindTagValue(kind));
+                                    nodeActivity.SetTag(FlowActivitySource.TagOutcomeCode, code);
+                                }
+
+                                if (recordNodeMetrics)
+                                {
+                                    if (node.Kind == BlueprintNodeKind.Step)
+                                    {
+                                        FlowMetricsV1.RecordStep(nodeStartTimestamp, flowName, node.ModuleType!, kind);
+                                    }
+                                    else if (node.Kind == BlueprintNodeKind.Join)
+                                    {
+                                        FlowMetricsV1.RecordJoin(nodeStartTimestamp, flowName, kind);
+                                    }
+                                }
+
+                                if (recordSkipReasonMetric && kind == OutcomeKind.Skipped)
+                                {
+                                    FlowMetricsV1.RecordStepSkipReason(flowName, code);
+                                }
+                            }
+                            else if (execExplainCollector is not null)
+                            {
+                                var execExplainNodeEndTimestamp = Stopwatch.GetTimestamp();
+                                execExplainCollector.RecordNode(
+                                    node,
+                                    execExplainNodeStartTimestamp,
+                                    execExplainNodeEndTimestamp,
+                                    OutcomeKind.Unspecified,
+                                    string.Empty);
+                            }
+
+                            nodeActivity?.Dispose();
+                        }
+                    }
+
                     if (IsDeadlineExceeded(context.Deadline))
                     {
                         return ReturnWithFlowMetrics(Outcome<TResp>.Timeout(DeadlineExceededCode));
@@ -233,157 +405,21 @@ public sealed class ExecutionEngine
                         return ReturnWithFlowMetrics(Outcome<TResp>.Canceled(UpstreamCanceledCode));
                     }
 
-                    var node = nodes[i];
+                    var lastNode = nodes[nodeCount - 1];
 
-                    if (patchEvaluation is not null)
+                    EnsureFinalOutputType<TReq, TResp>(template, lastNode);
+
+                    if (!context.TryGetNodeOutcome<TResp>(lastNode.Name, out var finalOutcome))
                     {
-                        var stageName = node.StageName;
-
-                        if (string.IsNullOrEmpty(stageName))
-                        {
-                            currentStageName = null;
-                        }
-                        else if (!string.Equals(currentStageName, stageName, StringComparison.Ordinal))
-                        {
-                            currentStageName = stageName;
-                            await ExecuteStageFanoutIfAnyAsync(stageName, patchEvaluation, context, execExplainCollector).ConfigureAwait(false);
-
-                            if (IsDeadlineExceeded(context.Deadline))
-                            {
-                                return ReturnWithFlowMetrics(Outcome<TResp>.Timeout(DeadlineExceededCode));
-                            }
-
-                            if (context.CancellationToken.IsCancellationRequested)
-                            {
-                                return ReturnWithFlowMetrics(Outcome<TResp>.Canceled(UpstreamCanceledCode));
-                            }
-                        }
+                        throw new InvalidOperationException($"Outcome for node '{lastNode.Name}' has not been recorded.");
                     }
 
-                    var nodeStartTimestamp = 0L;
-                    var recordNodeMetrics = false;
-                    var recordSkipReasonMetric = false;
-                    var execExplainNodeStartTimestamp = 0L;
-
-                    Activity? nodeActivity;
-
-                    if (node.Kind == BlueprintNodeKind.Step)
-                    {
-                        recordNodeMetrics = recordStepMetrics;
-                        recordSkipReasonMetric = recordStepSkipReasonMetrics;
-                        nodeActivity = activitySource.StartActivity(FlowActivitySource.StepActivityName, ActivityKind.Internal);
-                    }
-                    else if (node.Kind == BlueprintNodeKind.Join)
-                    {
-                        recordNodeMetrics = recordJoinMetrics;
-                        nodeActivity = activitySource.StartActivity(FlowActivitySource.JoinActivityName, ActivityKind.Internal);
-                    }
-                    else
-                    {
-                        throw new InvalidOperationException($"Unsupported node kind: '{node.Kind}'.");
-                    }
-
-                    if (nodeActivity is not null)
-                    {
-                        nodeActivity.SetTag(FlowActivitySource.TagFlowName, flowName);
-                        nodeActivity.SetTag(FlowActivitySource.TagPlanHash, planHashTagValue);
-                        if (configVersionTagValue is not null)
-                        {
-                            nodeActivity.SetTag(FlowActivitySource.TagConfigVersion, configVersionTagValue);
-                        }
-                        nodeActivity.SetTag(FlowActivitySource.TagNodeName, node.Name);
-                        nodeActivity.SetTag(FlowActivitySource.TagNodeKind, FlowActivitySource.GetNodeKindTagValue(node.Kind));
-
-                        if (!string.IsNullOrEmpty(node.StageName))
-                        {
-                            nodeActivity.SetTag(FlowActivitySource.TagStageName, node.StageName);
-                        }
-
-                        if (node.Kind == BlueprintNodeKind.Step && !string.IsNullOrEmpty(node.ModuleType))
-                        {
-                            nodeActivity.SetTag(FlowActivitySource.TagModuleType, node.ModuleType);
-                        }
-                    }
-
-                    try
-                    {
-                        if (execExplainCollector is not null)
-                        {
-                            execExplainNodeStartTimestamp = Stopwatch.GetTimestamp();
-                        }
-
-                        if (recordNodeMetrics)
-                        {
-                            nodeStartTimestamp = node.Kind == BlueprintNodeKind.Step
-                                ? FlowMetricsV1.StartStepTimer()
-                                : FlowMetricsV1.StartJoinTimer();
-                        }
-
-                        if (node.Kind == BlueprintNodeKind.Step)
-                        {
-                            var outType = node.OutputType;
-                            var executor = StepTemplateExecutorCache<TReq>.Get(outType);
-                            await executor(this, node, request, context).ConfigureAwait(false);
-                            continue;
-                        }
-
-                        var joinOutType = node.OutputType;
-                        var joinExecutor = JoinTemplateExecutorCache.Get(joinOutType);
-                        await joinExecutor(node, context).ConfigureAwait(false);
-                    }
-                    finally
-                    {
-                        var needsOutcomeMetadata = nodeActivity is not null
-                            || recordNodeMetrics
-                            || recordSkipReasonMetric
-                            || execExplainCollector is not null;
-
-                        if (needsOutcomeMetadata && context.TryGetNodeOutcomeMetadata(node.Index, out var kind, out var code))
-                        {
-                            if (execExplainCollector is not null)
-                            {
-                                var execExplainNodeEndTimestamp = Stopwatch.GetTimestamp();
-                                execExplainCollector.RecordNode(node, execExplainNodeStartTimestamp, execExplainNodeEndTimestamp, kind, code);
-                            }
-
-                            if (nodeActivity is not null)
-                            {
-                                nodeActivity.SetTag(FlowActivitySource.TagOutcomeKind, FlowActivitySource.GetOutcomeKindTagValue(kind));
-                                nodeActivity.SetTag(FlowActivitySource.TagOutcomeCode, code);
-                            }
-
-                            if (recordNodeMetrics)
-                            {
-                                if (node.Kind == BlueprintNodeKind.Step)
-                                {
-                                    FlowMetricsV1.RecordStep(nodeStartTimestamp, flowName, node.ModuleType!, kind);
-                                }
-                                else if (node.Kind == BlueprintNodeKind.Join)
-                                {
-                                    FlowMetricsV1.RecordJoin(nodeStartTimestamp, flowName, kind);
-                                }
-                            }
-
-                            if (recordSkipReasonMetric && kind == OutcomeKind.Skipped)
-                            {
-                                FlowMetricsV1.RecordStepSkipReason(flowName, code);
-                            }
-                        }
-                        else if (execExplainCollector is not null)
-                        {
-                            var execExplainNodeEndTimestamp = Stopwatch.GetTimestamp();
-                            execExplainCollector.RecordNode(
-                                node,
-                                execExplainNodeStartTimestamp,
-                                execExplainNodeEndTimestamp,
-                                OutcomeKind.Unspecified,
-                                string.Empty);
-                        }
-
-                        nodeActivity?.Dispose();
-                    }
+                    return ReturnWithFlowMetrics(finalOutcome);
                 }
+            }
 
+            for (var i = 0; i < nodeCount; i++)
+            {
                 if (IsDeadlineExceeded(context.Deadline))
                 {
                     return ReturnWithFlowMetrics(Outcome<TResp>.Timeout(DeadlineExceededCode));
@@ -394,21 +430,115 @@ public sealed class ExecutionEngine
                     return ReturnWithFlowMetrics(Outcome<TResp>.Canceled(UpstreamCanceledCode));
                 }
 
-                var lastNode = nodes[nodeCount - 1];
+                var node = nodes[i];
 
-                EnsureFinalOutputType<TReq, TResp>(template, lastNode);
-
-                if (!context.TryGetNodeOutcome<TResp>(lastNode.Name, out var finalOutcome))
+                if (patchEvaluation is not null)
                 {
-                    throw new InvalidOperationException($"Outcome for node '{lastNode.Name}' has not been recorded.");
+                    var stageName = node.StageName;
+
+                    if (string.IsNullOrEmpty(stageName))
+                    {
+                        currentStageName = null;
+                    }
+                    else if (!string.Equals(currentStageName, stageName, StringComparison.Ordinal))
+                    {
+                        currentStageName = stageName;
+                        await ExecuteStageFanoutIfAnyAsync(stageName, patchEvaluation, context, execExplainCollector).ConfigureAwait(false);
+
+                        if (IsDeadlineExceeded(context.Deadline))
+                        {
+                            return ReturnWithFlowMetrics(Outcome<TResp>.Timeout(DeadlineExceededCode));
+                        }
+
+                        if (context.CancellationToken.IsCancellationRequested)
+                        {
+                            return ReturnWithFlowMetrics(Outcome<TResp>.Canceled(UpstreamCanceledCode));
+                        }
+                    }
                 }
 
-                return ReturnWithFlowMetrics(finalOutcome);
-            }
-        }
+                if (node.Kind == BlueprintNodeKind.Step)
+                {
+                    var nodeStartTimestamp = recordStepMetrics ? FlowMetricsV1.StartStepTimer() : 0;
+                    var execExplainNodeStartTimestamp = execExplainCollector is not null ? Stopwatch.GetTimestamp() : 0;
+                    var outType = node.OutputType;
+                    var executor = StepTemplateExecutorCache<TReq>.Get(outType);
+                    await executor(this, node, request, context).ConfigureAwait(false);
+                    var execExplainNodeEndTimestamp = execExplainCollector is not null ? Stopwatch.GetTimestamp() : 0;
 
-        for (var i = 0; i < nodeCount; i++)
-        {
+                    var needsOutcomeMetadata = recordStepMetrics
+                        || recordStepSkipReasonMetrics
+                        || execExplainCollector is not null;
+
+                    if (needsOutcomeMetadata && context.TryGetNodeOutcomeMetadata(node.Index, out var kind, out var code))
+                    {
+                        if (recordStepMetrics)
+                        {
+                            FlowMetricsV1.RecordStep(nodeStartTimestamp, flowName, node.ModuleType!, kind);
+                        }
+
+                        if (recordStepSkipReasonMetrics && kind == OutcomeKind.Skipped)
+                        {
+                            FlowMetricsV1.RecordStepSkipReason(flowName, code);
+                        }
+
+                        if (execExplainCollector is not null)
+                        {
+                            execExplainCollector.RecordNode(node, execExplainNodeStartTimestamp, execExplainNodeEndTimestamp, kind, code);
+                        }
+                    }
+                    else if (execExplainCollector is not null)
+                    {
+                        execExplainCollector.RecordNode(
+                            node,
+                            execExplainNodeStartTimestamp,
+                            execExplainNodeEndTimestamp,
+                            OutcomeKind.Unspecified,
+                            string.Empty);
+                    }
+
+                    continue;
+                }
+
+                if (node.Kind == BlueprintNodeKind.Join)
+                {
+                    var nodeStartTimestamp = recordJoinMetrics ? FlowMetricsV1.StartJoinTimer() : 0;
+                    var execExplainNodeStartTimestamp = execExplainCollector is not null ? Stopwatch.GetTimestamp() : 0;
+                    var joinOutType = node.OutputType;
+                    var executor = JoinTemplateExecutorCache.Get(joinOutType);
+                    await executor(node, context).ConfigureAwait(false);
+                    var execExplainNodeEndTimestamp = execExplainCollector is not null ? Stopwatch.GetTimestamp() : 0;
+
+                    var needsOutcomeMetadata = recordJoinMetrics || execExplainCollector is not null;
+
+                    if (needsOutcomeMetadata && context.TryGetNodeOutcomeMetadata(node.Index, out var kind, out var code))
+                    {
+                        if (recordJoinMetrics)
+                        {
+                            FlowMetricsV1.RecordJoin(nodeStartTimestamp, flowName, kind);
+                        }
+
+                        if (execExplainCollector is not null)
+                        {
+                            execExplainCollector.RecordNode(node, execExplainNodeStartTimestamp, execExplainNodeEndTimestamp, kind, code);
+                        }
+                    }
+                    else if (execExplainCollector is not null)
+                    {
+                        execExplainCollector.RecordNode(
+                            node,
+                            execExplainNodeStartTimestamp,
+                            execExplainNodeEndTimestamp,
+                            OutcomeKind.Unspecified,
+                            string.Empty);
+                    }
+
+                    continue;
+                }
+
+                throw new InvalidOperationException($"Unsupported node kind: '{node.Kind}'.");
+            }
+
             if (IsDeadlineExceeded(context.Deadline))
             {
                 return ReturnWithFlowMetrics(Outcome<TResp>.Timeout(DeadlineExceededCode));
@@ -419,135 +549,25 @@ public sealed class ExecutionEngine
                 return ReturnWithFlowMetrics(Outcome<TResp>.Canceled(UpstreamCanceledCode));
             }
 
-            var node = nodes[i];
+            var finalNode = nodes[nodeCount - 1];
 
+            EnsureFinalOutputType<TReq, TResp>(template, finalNode);
+
+            if (!context.TryGetNodeOutcome<TResp>(finalNode.Name, out var finalOutcomeResult))
+            {
+                throw new InvalidOperationException($"Outcome for node '{finalNode.Name}' has not been recorded.");
+            }
+
+            return ReturnWithFlowMetrics(finalOutcomeResult);
+        }
+        finally
+        {
             if (patchEvaluation is not null)
             {
-                var stageName = node.StageName;
-
-                if (string.IsNullOrEmpty(stageName))
-                {
-                    currentStageName = null;
-                }
-                else if (!string.Equals(currentStageName, stageName, StringComparison.Ordinal))
-                {
-                    currentStageName = stageName;
-                    await ExecuteStageFanoutIfAnyAsync(stageName, patchEvaluation, context, execExplainCollector).ConfigureAwait(false);
-
-                    if (IsDeadlineExceeded(context.Deadline))
-                    {
-                        return ReturnWithFlowMetrics(Outcome<TResp>.Timeout(DeadlineExceededCode));
-                    }
-
-                    if (context.CancellationToken.IsCancellationRequested)
-                    {
-                        return ReturnWithFlowMetrics(Outcome<TResp>.Canceled(UpstreamCanceledCode));
-                    }
-                }
+                context.ClearActivePatchEvaluation(patchEvaluation);
+                patchEvaluation.Dispose();
             }
-
-            if (node.Kind == BlueprintNodeKind.Step)
-            {
-                var nodeStartTimestamp = recordStepMetrics ? FlowMetricsV1.StartStepTimer() : 0;
-                var execExplainNodeStartTimestamp = execExplainCollector is not null ? Stopwatch.GetTimestamp() : 0;
-                var outType = node.OutputType;
-                var executor = StepTemplateExecutorCache<TReq>.Get(outType);
-                await executor(this, node, request, context).ConfigureAwait(false);
-                var execExplainNodeEndTimestamp = execExplainCollector is not null ? Stopwatch.GetTimestamp() : 0;
-
-                var needsOutcomeMetadata = recordStepMetrics
-                    || recordStepSkipReasonMetrics
-                    || execExplainCollector is not null;
-
-                if (needsOutcomeMetadata && context.TryGetNodeOutcomeMetadata(node.Index, out var kind, out var code))
-                {
-                    if (recordStepMetrics)
-                    {
-                        FlowMetricsV1.RecordStep(nodeStartTimestamp, flowName, node.ModuleType!, kind);
-                    }
-
-                    if (recordStepSkipReasonMetrics && kind == OutcomeKind.Skipped)
-                    {
-                        FlowMetricsV1.RecordStepSkipReason(flowName, code);
-                    }
-
-                    if (execExplainCollector is not null)
-                    {
-                        execExplainCollector.RecordNode(node, execExplainNodeStartTimestamp, execExplainNodeEndTimestamp, kind, code);
-                    }
-                }
-                else if (execExplainCollector is not null)
-                {
-                    execExplainCollector.RecordNode(
-                        node,
-                        execExplainNodeStartTimestamp,
-                        execExplainNodeEndTimestamp,
-                        OutcomeKind.Unspecified,
-                        string.Empty);
-                }
-
-                continue;
-            }
-
-            if (node.Kind == BlueprintNodeKind.Join)
-            {
-                var nodeStartTimestamp = recordJoinMetrics ? FlowMetricsV1.StartJoinTimer() : 0;
-                var execExplainNodeStartTimestamp = execExplainCollector is not null ? Stopwatch.GetTimestamp() : 0;
-                var joinOutType = node.OutputType;
-                var executor = JoinTemplateExecutorCache.Get(joinOutType);
-                await executor(node, context).ConfigureAwait(false);
-                var execExplainNodeEndTimestamp = execExplainCollector is not null ? Stopwatch.GetTimestamp() : 0;
-
-                var needsOutcomeMetadata = recordJoinMetrics || execExplainCollector is not null;
-
-                if (needsOutcomeMetadata && context.TryGetNodeOutcomeMetadata(node.Index, out var kind, out var code))
-                {
-                    if (recordJoinMetrics)
-                    {
-                        FlowMetricsV1.RecordJoin(nodeStartTimestamp, flowName, kind);
-                    }
-
-                    if (execExplainCollector is not null)
-                    {
-                        execExplainCollector.RecordNode(node, execExplainNodeStartTimestamp, execExplainNodeEndTimestamp, kind, code);
-                    }
-                }
-                else if (execExplainCollector is not null)
-                {
-                    execExplainCollector.RecordNode(
-                        node,
-                        execExplainNodeStartTimestamp,
-                        execExplainNodeEndTimestamp,
-                        OutcomeKind.Unspecified,
-                        string.Empty);
-                }
-
-                continue;
-            }
-
-            throw new InvalidOperationException($"Unsupported node kind: '{node.Kind}'.");
         }
-
-        if (IsDeadlineExceeded(context.Deadline))
-        {
-            return ReturnWithFlowMetrics(Outcome<TResp>.Timeout(DeadlineExceededCode));
-        }
-
-        if (context.CancellationToken.IsCancellationRequested)
-        {
-            return ReturnWithFlowMetrics(Outcome<TResp>.Canceled(UpstreamCanceledCode));
-        }
-
-        var finalNode = nodes[nodeCount - 1];
-
-        EnsureFinalOutputType<TReq, TResp>(template, finalNode);
-
-        if (!context.TryGetNodeOutcome<TResp>(finalNode.Name, out var finalOutcomeResult))
-        {
-            throw new InvalidOperationException($"Outcome for node '{finalNode.Name}' has not been recorded.");
-        }
-
-        return ReturnWithFlowMetrics(finalOutcomeResult);
     }
 
     private static void EnsureFinalOutputType<TReq, TResp>(FlowBlueprint<TReq, TResp> blueprint, BlueprintNode lastNode)
@@ -679,6 +699,8 @@ public sealed class ExecutionEngine
         }
 
         var results = new StageModuleOutcomeMetadata[moduleCount];
+        var recordStageModuleExplain = execExplainCollector is not null && execExplainCollector.IsActive;
+        var gateDecisionCodes = recordStageModuleExplain ? new string[moduleCount] : null;
         var candidates = new StageModuleCandidate[moduleCount];
         var candidateCount = 0;
 
@@ -689,15 +711,25 @@ public sealed class ExecutionEngine
             if (!module.Enabled)
             {
                 RecordStageModuleSkippedOutcome(outTypes[i], context, module.ModuleId, DisabledCode);
-                results[i] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, DisabledCode, isOverride: false);
+                results[i] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, DisabledCode, isOverride: false, startTimestamp: 0, endTimestamp: 0);
                 continue;
             }
 
-            if (module.HasGate && !EvaluateGateAllowed(module.Gate, context))
+            if (module.HasGate)
             {
-                RecordStageModuleSkippedOutcome(outTypes[i], context, module.ModuleId, GateFalseCode);
-                results[i] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, GateFalseCode, isOverride: false);
-                continue;
+                var gateDecision = EvaluateGateDecision(module.Gate, context);
+
+                if (gateDecisionCodes is not null)
+                {
+                    gateDecisionCodes[i] = gateDecision.Code;
+                }
+
+                if (!gateDecision.Allowed)
+                {
+                    RecordStageModuleSkippedOutcome(outTypes[i], context, module.ModuleId, GateFalseCode);
+                    results[i] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, GateFalseCode, isOverride: false, startTimestamp: 0, endTimestamp: 0);
+                    continue;
+                }
             }
 
             candidates[candidateCount] = new StageModuleCandidate(moduleIndex: i, priority: module.Priority);
@@ -737,7 +769,7 @@ public sealed class ExecutionEngine
             }
 
             RecordStageModuleSkippedOutcome(outTypes[moduleIndex], context, module.ModuleId, FanoutTrimCode);
-            results[moduleIndex] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, FanoutTrimCode, isOverride: false);
+            results[moduleIndex] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, FanoutTrimCode, isOverride: false, startTimestamp: 0, endTimestamp: 0);
         }
 
         for (var i = 0; i < taskIndex; i++)
@@ -764,7 +796,18 @@ public sealed class ExecutionEngine
             {
                 var module = modules[i];
                 var meta = results[i];
-                execExplainCollector.RecordStageModule(stageName, module.ModuleId, module.ModuleType, module.Priority, meta.Kind, meta.Code, meta.IsOverride);
+                var gateDecisionCode = gateDecisionCodes is null ? string.Empty : gateDecisionCodes[i] ?? string.Empty;
+                execExplainCollector.RecordStageModule(
+                    stageName,
+                    module.ModuleId,
+                    module.ModuleType,
+                    module.Priority,
+                    meta.StartTimestamp,
+                    meta.EndTimestamp,
+                    meta.Kind,
+                    meta.Code,
+                    gateDecisionCode,
+                    meta.IsOverride);
             }
         }
 
@@ -842,7 +885,7 @@ public sealed class ExecutionEngine
         context.RecordStageFanoutSnapshot(stageName, enabledModuleIds, skipped);
     }
 
-    private static bool EvaluateGateAllowed(JsonElement gateElement, FlowContext context)
+    private static GateDecision EvaluateGateDecision(JsonElement gateElement, FlowContext context)
     {
         if (!GateJsonV1.TryParseOptional(gateElement, "$.gate", out var gate, out var finding))
         {
@@ -851,10 +894,10 @@ public sealed class ExecutionEngine
 
         if (gate is null)
         {
-            return true;
+            return GateDecision.AllowedDecision;
         }
 
-        return GateEvaluator.Evaluate(gate, context).Allowed;
+        return GateEvaluator.Evaluate(gate, context);
     }
 
     private readonly struct StageModuleOutcomeMetadata
@@ -865,11 +908,17 @@ public sealed class ExecutionEngine
 
         public bool IsOverride { get; }
 
-        public StageModuleOutcomeMetadata(OutcomeKind kind, string code, bool isOverride)
+        public long StartTimestamp { get; }
+
+        public long EndTimestamp { get; }
+
+        public StageModuleOutcomeMetadata(OutcomeKind kind, string code, bool isOverride, long startTimestamp, long endTimestamp)
         {
             Kind = kind;
             Code = code;
             IsOverride = isOverride;
+            StartTimestamp = startTimestamp;
+            EndTimestamp = endTimestamp;
         }
     }
 
@@ -965,6 +1014,9 @@ public sealed class ExecutionEngine
             }
         }
 
+        var captureExecExplainTiming = flowContext.ExecExplainCollector is not null && flowContext.ExecExplainCollector.IsActive;
+        var execExplainStartTimestamp = captureExecExplainTiming ? Stopwatch.GetTimestamp() : 0;
+
         var moduleStartTimestamp = FlowMetricsV1.StartStageFanoutModuleTimer();
 
         var overrideProvider = flowContext.FlowTestOverrideProvider;
@@ -1013,7 +1065,8 @@ public sealed class ExecutionEngine
 
                 flowContext.RecordNodeOutcome(moduleId, outcome);
                 recordedOutcome = true;
-                return new StageModuleOutcomeMetadata(outcome.Kind, outcome.Code, isOverride: true);
+                var execExplainEndTimestampOverride = captureExecExplainTiming ? Stopwatch.GetTimestamp() : 0;
+                return new StageModuleOutcomeMetadata(outcome.Kind, outcome.Code, isOverride: true, execExplainStartTimestamp, execExplainEndTimestampOverride);
             }
 
             var argsValue = argsJson.Deserialize<TArgs>();
@@ -1043,7 +1096,8 @@ public sealed class ExecutionEngine
 
             flowContext.RecordNodeOutcome(moduleId, outcome);
             recordedOutcome = true;
-            return new StageModuleOutcomeMetadata(outcome.Kind, outcome.Code, isOverride: false);
+            var execExplainEndTimestamp = captureExecExplainTiming ? Stopwatch.GetTimestamp() : 0;
+            return new StageModuleOutcomeMetadata(outcome.Kind, outcome.Code, isOverride: false, execExplainStartTimestamp, execExplainEndTimestamp);
         }
         finally
         {
