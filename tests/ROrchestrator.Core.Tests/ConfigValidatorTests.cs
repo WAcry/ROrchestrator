@@ -459,6 +459,78 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
+    public void ValidatePatchJson_ShouldReportExperimentOverrideForbidden_WhenExperimentPatchContainsNestedExperiments()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprint<int, int>("TestFlow", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"experiments\":[{\"layer\":\"l2\",\"variant\":\"v2\",\"patch\":{}}]}}]}}}");
+
+        var finding = GetSingleFinding(report, "CFG_EXPERIMENT_OVERRIDE_FORBIDDEN");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.experiments", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportExperimentOverrideForbidden_WhenExperimentPatchContainsEmergency()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprint<int, int>("TestFlow", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"emergency\":{}}}]}}}");
+
+        var finding = GetSingleFinding(report, "CFG_EXPERIMENT_OVERRIDE_FORBIDDEN");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.emergency", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportEmergencyAuditMissing_WhenEmergencyMissingRequiredAuditFields()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprint<int, int>("TestFlow", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"emergency\":{\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{}}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_EMERGENCY_AUDIT_MISSING");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.emergency", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportEmergencyOverrideForbidden_WhenEmergencyPatchOverridesExperiments()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprint<int, int>("TestFlow", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"experiments\":[]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_EMERGENCY_OVERRIDE_FORBIDDEN");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.emergency.patch.experiments", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
     public void ValidatePatchJson_ShouldReportParamsUnknownField_WhenExperimentPatchContainsUnknownParamsField()
     {
         var registry = new FlowRegistry();
@@ -474,6 +546,79 @@ public sealed class ConfigValidatorTests
         var finding = GetSingleFinding(report, "CFG_PARAMS_UNKNOWN_FIELD");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
         Assert.Equal("$.flows.HomeFeed.experiments[0].patch.params.MaxCandidate", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportLayerParamLeak_WhenExperimentLayerModifiesUnownedParamsPath()
+    {
+        var contract = new ExperimentLayerOwnershipContractBuilder()
+            .AddLayer("l1", ownedParamPathPrefixes: new[] { "Other" }, ownedModuleIds: Array.Empty<string>())
+            .Build();
+
+        var registry = new FlowRegistry();
+        var blueprint = CreateBlueprint<int, int>("TestFlow", okValue: 0);
+        registry.Register<int, int, TestParams, ParamsPatchWithMaxCandidate>("HomeFeed", blueprint, new TestParams(), contract);
+
+        var catalog = new ModuleCatalog();
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"params\":{\"MaxCandidate\":1}}}]}}}");
+
+        var finding = GetSingleFinding(report, "CFG_LAYER_PARAM_LEAK");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.params.MaxCandidate", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportLayerParamLeak_WhenExperimentLayerModifiesUnownedModuleId()
+    {
+        var contract = new ExperimentLayerOwnershipContractBuilder()
+            .AddLayer("l1", ownedParamPathPrefixes: Array.Empty<string>(), ownedModuleIds: new[] { "m1" })
+            .Build();
+
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0), contract);
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}]}}}}]}}}");
+
+        var finding = GetSingleFinding(report, "CFG_LAYER_PARAM_LEAK");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].id", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ExperimentLayerOwnershipContractBuilder_ShouldNotMutatePreviousContract_WhenBuilderIsReused()
+    {
+        var builder = new ExperimentLayerOwnershipContractBuilder()
+            .AddLayer("l1", ownedParamPathPrefixes: new[] { "MaxCandidate" }, ownedModuleIds: Array.Empty<string>());
+
+        var contract = builder.Build();
+
+        var registry = new FlowRegistry();
+        var blueprint = CreateBlueprint<int, int>("TestFlow", okValue: 0);
+        registry.Register<int, int, TestParams, ParamsPatchWithMaxCandidate>("HomeFeed", blueprint, new TestParams(), contract);
+
+        builder.AddLayer("l2", ownedParamPathPrefixes: new[] { "MaxCandidate" }, ownedModuleIds: Array.Empty<string>());
+        _ = builder.Build();
+
+        var validator = new ConfigValidator(registry, new ModuleCatalog());
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l2\",\"variant\":\"v1\",\"patch\":{\"params\":{\"MaxCandidate\":1}}}]}}}");
+
+        var finding = GetSingleFinding(report, "CFG_LAYER_PARAM_LEAK");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch", finding.Path);
         Assert.False(string.IsNullOrEmpty(finding.Message));
     }
 

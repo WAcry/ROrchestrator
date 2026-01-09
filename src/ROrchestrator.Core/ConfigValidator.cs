@@ -37,7 +37,11 @@ public sealed class ConfigValidator
     private const string CodeExperimentMappingInvalid = "CFG_EXPERIMENT_MAPPING_INVALID";
     private const string CodeExperimentMappingDuplicate = "CFG_EXPERIMENT_MAPPING_DUPLICATE";
     private const string CodeExperimentPatchInvalid = "CFG_EXPERIMENT_PATCH_INVALID";
+    private const string CodeExperimentOverrideForbidden = "CFG_EXPERIMENT_OVERRIDE_FORBIDDEN";
+    private const string CodeEmergencyAuditMissing = "CFG_EMERGENCY_AUDIT_MISSING";
+    private const string CodeEmergencyOverrideForbidden = "CFG_EMERGENCY_OVERRIDE_FORBIDDEN";
     private const string CodeLayerConflict = "CFG_LAYER_CONFLICT";
+    private const string CodeLayerParamLeak = "CFG_LAYER_PARAM_LEAK";
     private const string CodeGateRedundant = "CFG_GATE_REDUNDANT";
     private const string GateCodePrefix = "CFG_GATE_";
 
@@ -160,10 +164,15 @@ public sealed class ConfigValidator
                     string[] blueprintStageNameSet = Array.Empty<string>();
                     var flowRegistered = false;
                     Type? patchType = null;
+                    ExperimentLayerOwnershipContract? experimentLayerOwnershipContract = null;
 
                     if (flowName.Length != 0)
                     {
-                        flowRegistered = _flowRegistry.TryGetStageNameSetAndPatchType(flowName, out blueprintStageNameSet, out patchType);
+                        flowRegistered = _flowRegistry.TryGetStageNameSetAndPatchType(
+                            flowName,
+                            out blueprintStageNameSet,
+                            out patchType,
+                            out experimentLayerOwnershipContract);
                     }
 
                     if (!flowRegistered)
@@ -196,7 +205,9 @@ public sealed class ConfigValidator
                         out var paramsPatch,
                         out var hasParamsPatch,
                         out var hasExperimentsPatch,
-                        out var experimentsPatch);
+                        out var experimentsPatch,
+                        out var hasEmergencyPatch,
+                        out var emergencyPatch);
 
                     if (flowRegistered)
                     {
@@ -217,6 +228,14 @@ public sealed class ConfigValidator
                         ValidateStagePatches(flowName, stagesPatch, blueprintStageNameSet, _moduleCatalog, _selectorRegistry, ref findings);
                     }
 
+                    ValidateEmergency(
+                        flowName,
+                        hasEmergencyPatch,
+                        emergencyPatch,
+                        blueprintStageNameSet,
+                        flowRegistered,
+                        ref findings);
+
                     ValidateExperiments(
                         flowName,
                         hasExperimentsPatch,
@@ -225,6 +244,7 @@ public sealed class ConfigValidator
                         blueprintStageNameSet,
                         _moduleCatalog,
                         _selectorRegistry,
+                        experimentLayerOwnershipContract,
                         flowRegistered,
                         ref findings);
                 }
@@ -243,7 +263,9 @@ public sealed class ConfigValidator
         out JsonElement paramsPatch,
         out bool hasParamsPatch,
         out bool hasExperimentsPatch,
-        out JsonElement experimentsPatch)
+        out JsonElement experimentsPatch,
+        out bool hasEmergencyPatch,
+        out JsonElement emergencyPatch)
     {
         hasStagesPatch = false;
         stagesPatch = default;
@@ -251,6 +273,8 @@ public sealed class ConfigValidator
         hasParamsPatch = false;
         hasExperimentsPatch = false;
         experimentsPatch = default;
+        hasEmergencyPatch = false;
+        emergencyPatch = default;
 
         foreach (var flowField in flowPatch.EnumerateObject())
         {
@@ -270,6 +294,8 @@ public sealed class ConfigValidator
 
             if (flowField.NameEquals("emergency"))
             {
+                hasEmergencyPatch = true;
+                emergencyPatch = flowField.Value;
                 continue;
             }
 
@@ -299,6 +325,7 @@ public sealed class ConfigValidator
         string[] blueprintStageNameSet,
         ModuleCatalog moduleCatalog,
         SelectorRegistry selectorRegistry,
+        ExperimentLayerOwnershipContract? experimentLayerOwnershipContract,
         bool flowRegistered,
         ref FindingBuffer findings)
     {
@@ -495,9 +522,46 @@ public sealed class ConfigValidator
                 continue;
             }
 
+            if (patch.TryGetProperty("experiments", out _))
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeExperimentOverrideForbidden,
+                        path: string.Concat(patchPath, ".experiments"),
+                        message: "experiments[].patch must not override structural field: experiments."));
+                index++;
+                continue;
+            }
+
+            if (patch.TryGetProperty("emergency", out _))
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeExperimentOverrideForbidden,
+                        path: string.Concat(patchPath, ".emergency"),
+                        message: "experiments[].patch must not override structural field: emergency."));
+                index++;
+                continue;
+            }
+
+            var patchFlowName = string.Concat(flowName, ".experiments[", indexString, "].patch");
+
+            if (hasLayer
+                && !string.IsNullOrEmpty(layer)
+                && experimentLayerOwnershipContract is not null)
+            {
+                ValidateExperimentLayerOwnershipContract(
+                    layer: layer!,
+                    patchFlowName,
+                    patch,
+                    experimentLayerOwnershipContract,
+                    ref findings);
+            }
+
             if (hasLayer && !string.IsNullOrEmpty(layer))
             {
-                var patchFlowName = string.Concat(flowName, ".experiments[", indexString, "].patch");
                 RecordExperimentPatchLayerConflicts(
                     layer: layer!,
                     patchFlowName,
@@ -510,12 +574,616 @@ public sealed class ConfigValidator
 
             if (flowRegistered)
             {
-                var patchFlowName = string.Concat(flowName, ".experiments[", indexString, "].patch");
                 ValidateExperimentPatch(patchFlowName, patchType, blueprintStageNameSet, moduleCatalog, selectorRegistry, patch, ref findings);
             }
 
             index++;
         }
+    }
+
+    private static void ValidateExperimentLayerOwnershipContract(
+        string layer,
+        string patchFlowName,
+        JsonElement patch,
+        ExperimentLayerOwnershipContract experimentLayerOwnershipContract,
+        ref FindingBuffer findings)
+    {
+        if (string.IsNullOrEmpty(layer))
+        {
+            throw new ArgumentException("Layer must be non-empty.", nameof(layer));
+        }
+
+        if (string.IsNullOrEmpty(patchFlowName))
+        {
+            throw new ArgumentException("PatchFlowName must be non-empty.", nameof(patchFlowName));
+        }
+
+        if (experimentLayerOwnershipContract is null)
+        {
+            throw new ArgumentNullException(nameof(experimentLayerOwnershipContract));
+        }
+
+        if (!experimentLayerOwnershipContract.TryGetLayerOwnership(layer, out var ownership))
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeLayerParamLeak,
+                    path: string.Concat("$.flows.", patchFlowName),
+                    message: string.Concat("Experiment layer is not declared in ownership contract: ", layer)));
+            return;
+        }
+
+        if (patch.TryGetProperty("params", out var paramsPatch) && paramsPatch.ValueKind == JsonValueKind.Object)
+        {
+            ValidateExperimentLayerParamOwnershipRecursive(
+                patchFlowName,
+                paramsPatch,
+                parentPath: null,
+                ownership,
+                ref findings);
+        }
+
+        if (!patch.TryGetProperty("stages", out var stagesPatch) || stagesPatch.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        foreach (var stageProperty in stagesPatch.EnumerateObject())
+        {
+            var stageName = stageProperty.Name;
+
+            if (stageProperty.Value.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var stagePatch = stageProperty.Value;
+
+            if (!stagePatch.TryGetProperty("modules", out var modulesPatch) || modulesPatch.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            var moduleIndex = 0;
+
+            foreach (var moduleElement in modulesPatch.EnumerateArray())
+            {
+                if (moduleElement.ValueKind != JsonValueKind.Object)
+                {
+                    moduleIndex++;
+                    continue;
+                }
+
+                if (!moduleElement.TryGetProperty("id", out var moduleIdElement) || moduleIdElement.ValueKind != JsonValueKind.String)
+                {
+                    moduleIndex++;
+                    continue;
+                }
+
+                var moduleId = moduleIdElement.GetString();
+                if (string.IsNullOrEmpty(moduleId))
+                {
+                    moduleIndex++;
+                    continue;
+                }
+
+                if (!ownership.OwnsModuleId(moduleId))
+                {
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Error,
+                            code: CodeLayerParamLeak,
+                            path: string.Concat(
+                                "$.flows.",
+                                patchFlowName,
+                                ".stages.",
+                                stageName,
+                                ".modules[",
+                                moduleIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                "].id"),
+                            message: string.Concat("Experiment layer must not modify unowned module id: ", moduleId)));
+                }
+
+                moduleIndex++;
+            }
+        }
+    }
+
+    private static void ValidateExperimentLayerParamOwnershipRecursive(
+        string patchFlowName,
+        JsonElement paramsPatch,
+        string? parentPath,
+        ExperimentLayerOwnershipContract.LayerOwnership ownership,
+        ref FindingBuffer findings)
+    {
+        foreach (var property in paramsPatch.EnumerateObject())
+        {
+            var name = property.Name;
+            var currentPath = string.IsNullOrEmpty(parentPath) ? name : string.Concat(parentPath, ".", name);
+
+            if (property.Value.ValueKind == JsonValueKind.Object)
+            {
+                ValidateExperimentLayerParamOwnershipRecursive(patchFlowName, property.Value, currentPath, ownership, ref findings);
+                continue;
+            }
+
+            if (ownership.OwnsParamPath(currentPath))
+            {
+                continue;
+            }
+
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeLayerParamLeak,
+                    path: string.Concat("$.flows.", patchFlowName, ".params.", currentPath),
+                    message: string.Concat("Experiment layer must not modify unowned params path: ", currentPath)));
+        }
+    }
+
+    private static void ValidateEmergency(
+        string flowName,
+        bool hasEmergencyPatch,
+        JsonElement emergencyPatch,
+        string[] blueprintStageNameSet,
+        bool flowRegistered,
+        ref FindingBuffer findings)
+    {
+        if (!hasEmergencyPatch)
+        {
+            return;
+        }
+
+        var emergencyPathPrefix = string.Concat("$.flows.", flowName, ".emergency");
+
+        if (emergencyPatch.ValueKind != JsonValueKind.Object)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeEmergencyOverrideForbidden,
+                    path: emergencyPathPrefix,
+                    message: "emergency must be an object."));
+            return;
+        }
+
+        string? reason = null;
+        string? operatorName = null;
+        var ttlMinutes = 0;
+        var hasPatch = false;
+        JsonElement patch = default;
+
+        var hasReason = false;
+        var hasOperator = false;
+        var hasTtlMinutes = false;
+
+        foreach (var field in emergencyPatch.EnumerateObject())
+        {
+            if (field.NameEquals("reason"))
+            {
+                hasReason = true;
+
+                if (field.Value.ValueKind == JsonValueKind.String)
+                {
+                    reason = field.Value.GetString();
+                }
+                else
+                {
+                    reason = null;
+                }
+
+                continue;
+            }
+
+            if (field.NameEquals("operator"))
+            {
+                hasOperator = true;
+
+                if (field.Value.ValueKind == JsonValueKind.String)
+                {
+                    operatorName = field.Value.GetString();
+                }
+                else
+                {
+                    operatorName = null;
+                }
+
+                continue;
+            }
+
+            if (field.NameEquals("ttl_minutes"))
+            {
+                hasTtlMinutes = true;
+
+                if (field.Value.ValueKind == JsonValueKind.Number && field.Value.TryGetInt32(out var ttl32))
+                {
+                    ttlMinutes = ttl32;
+                }
+                else
+                {
+                    ttlMinutes = 0;
+                }
+
+                continue;
+            }
+
+            if (field.NameEquals("patch"))
+            {
+                hasPatch = true;
+                patch = field.Value;
+                continue;
+            }
+
+            var fieldName = field.Name;
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeUnknownField,
+                    path: string.Concat(emergencyPathPrefix, ".", fieldName),
+                    message: string.Concat("Unknown field: ", fieldName)));
+        }
+
+        if (!hasReason
+            || string.IsNullOrEmpty(reason)
+            || !hasOperator
+            || string.IsNullOrEmpty(operatorName)
+            || !hasTtlMinutes
+            || ttlMinutes <= 0)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeEmergencyAuditMissing,
+                    path: emergencyPathPrefix,
+                    message: "emergency requires reason/operator/ttl_minutes."));
+        }
+
+        if (!hasPatch || patch.ValueKind != JsonValueKind.Object)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeEmergencyOverrideForbidden,
+                    path: string.Concat(emergencyPathPrefix, ".patch"),
+                    message: "emergency.patch is required and must be a non-null object."));
+            return;
+        }
+
+        ValidateEmergencyPatch(
+            flowName,
+            emergencyPathPrefix: string.Concat(emergencyPathPrefix, ".patch"),
+            patch,
+            blueprintStageNameSet,
+            flowRegistered,
+            ref findings);
+    }
+
+    private static void ValidateEmergencyPatch(
+        string flowName,
+        string emergencyPathPrefix,
+        JsonElement patch,
+        string[] blueprintStageNameSet,
+        bool flowRegistered,
+        ref FindingBuffer findings)
+    {
+        var hasStagesPatch = false;
+        JsonElement stagesPatch = default;
+
+        foreach (var field in patch.EnumerateObject())
+        {
+            if (field.NameEquals("stages"))
+            {
+                hasStagesPatch = true;
+                stagesPatch = field.Value;
+                continue;
+            }
+
+            var fieldName = field.Name;
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeEmergencyOverrideForbidden,
+                    path: string.Concat(emergencyPathPrefix, ".", fieldName),
+                    message: string.Concat("emergency.patch must not override forbidden field: ", fieldName)));
+        }
+
+        if (!hasStagesPatch)
+        {
+            return;
+        }
+
+        if (stagesPatch.ValueKind != JsonValueKind.Object)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeEmergencyOverrideForbidden,
+                    path: string.Concat(emergencyPathPrefix, ".stages"),
+                    message: "emergency.patch.stages must be an object."));
+            return;
+        }
+
+        foreach (var stageProperty in stagesPatch.EnumerateObject())
+        {
+            var stageName = stageProperty.Name;
+            var stagePathPrefix = string.Concat(emergencyPathPrefix, ".stages.", stageName);
+
+            var stageNameInBlueprint = flowRegistered && StageNameSetContains(blueprintStageNameSet, stageName);
+
+            if (flowRegistered && !stageNameInBlueprint)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeStageNotInBlueprint,
+                        path: stagePathPrefix,
+                        message: string.Concat("Stage is not in blueprint: ", stageName)));
+            }
+
+            if (stageProperty.Value.ValueKind != JsonValueKind.Object)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeStagePatchNotObject,
+                        path: stagePathPrefix,
+                        message: "Stage patch must be an object."));
+                continue;
+            }
+
+            if (flowRegistered && !stageNameInBlueprint)
+            {
+                continue;
+            }
+
+            var stagePatch = stageProperty.Value;
+
+            var hasFanoutMax = false;
+            JsonElement fanoutMax = default;
+            var hasModules = false;
+            JsonElement modulesPatch = default;
+
+            foreach (var stageField in stagePatch.EnumerateObject())
+            {
+                if (stageField.NameEquals("fanoutMax"))
+                {
+                    hasFanoutMax = true;
+                    fanoutMax = stageField.Value;
+                    continue;
+                }
+
+                if (stageField.NameEquals("modules"))
+                {
+                    hasModules = true;
+                    modulesPatch = stageField.Value;
+                    continue;
+                }
+
+                var fieldName = stageField.Name;
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeEmergencyOverrideForbidden,
+                        path: string.Concat(stagePathPrefix, ".", fieldName),
+                        message: string.Concat("emergency.patch must not override forbidden field: stages.*.", fieldName)));
+            }
+
+            if (hasFanoutMax)
+            {
+                ValidateEmergencyFanoutMax(stagePathPrefix, fanoutMax, ref findings);
+            }
+
+            if (!hasModules)
+            {
+                continue;
+            }
+
+            var modulesPathPrefix = string.Concat(stagePathPrefix, ".modules");
+
+            if (modulesPatch.ValueKind != JsonValueKind.Array)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeEmergencyOverrideForbidden,
+                        path: modulesPathPrefix,
+                        message: "emergency.patch.stages.*.modules must be an array."));
+                continue;
+            }
+
+            var moduleIndex = 0;
+
+            foreach (var moduleElement in modulesPatch.EnumerateArray())
+            {
+                var modulePathPrefix = string.Concat(
+                    modulesPathPrefix,
+                    "[",
+                    moduleIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    "]");
+
+                if (moduleElement.ValueKind != JsonValueKind.Object)
+                {
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Error,
+                            code: CodeEmergencyOverrideForbidden,
+                            path: modulePathPrefix,
+                            message: "emergency.patch.stages.*.modules[] must be an object."));
+                    moduleIndex++;
+                    continue;
+                }
+
+                string? moduleId = null;
+                var hasModuleId = false;
+                var hasEnabled = false;
+                var enabled = true;
+
+                foreach (var moduleField in moduleElement.EnumerateObject())
+                {
+                    if (moduleField.NameEquals("id"))
+                    {
+                        hasModuleId = true;
+
+                        if (moduleField.Value.ValueKind == JsonValueKind.String)
+                        {
+                            moduleId = moduleField.Value.GetString();
+                        }
+                        else
+                        {
+                            moduleId = null;
+                        }
+
+                        continue;
+                    }
+
+                    if (moduleField.NameEquals("enabled"))
+                    {
+                        hasEnabled = true;
+
+                        if (moduleField.Value.ValueKind == JsonValueKind.True || moduleField.Value.ValueKind == JsonValueKind.False)
+                        {
+                            enabled = moduleField.Value.GetBoolean();
+                        }
+                        else
+                        {
+                            enabled = true;
+                        }
+
+                        continue;
+                    }
+
+                    var fieldName = moduleField.Name;
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Error,
+                            code: CodeEmergencyOverrideForbidden,
+                            path: string.Concat(modulePathPrefix, ".", fieldName),
+                            message: string.Concat("emergency.patch.modules[] must not override forbidden field: ", fieldName)));
+                }
+
+                if (!hasModuleId || string.IsNullOrEmpty(moduleId))
+                {
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Error,
+                            code: CodeEmergencyOverrideForbidden,
+                            path: string.Concat(modulePathPrefix, ".id"),
+                            message: "emergency.patch.modules[].id is required and must be a non-empty string."));
+                    moduleIndex++;
+                    continue;
+                }
+
+                if (!IsValidModuleIdFormat(moduleId))
+                {
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Warn,
+                            code: CodeModuleIdInvalidFormat,
+                            path: string.Concat(modulePathPrefix, ".id"),
+                            message: "emergency.patch.modules[].id must match [a-z0-9_]+ and length <= 64."));
+                }
+
+                if (!hasEnabled || enabled)
+                {
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Error,
+                            code: CodeEmergencyOverrideForbidden,
+                            path: string.Concat(modulePathPrefix, ".enabled"),
+                            message: "emergency.patch.modules[].enabled is required and must be false."));
+                }
+
+                moduleIndex++;
+            }
+        }
+    }
+
+    private static void ValidateEmergencyFanoutMax(string stagePathPrefix, JsonElement fanoutMax, ref FindingBuffer findings)
+    {
+        var path = string.Concat(stagePathPrefix, ".fanoutMax");
+
+        if (fanoutMax.ValueKind != JsonValueKind.Number)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeFanoutMaxInvalid,
+                    path: path,
+                    message: "fanoutMax must be a non-negative integer."));
+            return;
+        }
+
+        if (fanoutMax.TryGetInt32(out var value32))
+        {
+            if (value32 < 0)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeFanoutMaxInvalid,
+                        path: path,
+                        message: "fanoutMax must be a non-negative integer."));
+                return;
+            }
+
+            if (value32 > MaxAllowedFanoutMax)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeFanoutMaxExceeded,
+                        path: path,
+                        message: string.Concat(
+                            "fanoutMax=",
+                            value32.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            " exceeds maxAllowed=",
+                            MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            ".")));
+                return;
+            }
+
+            return;
+        }
+
+        if (fanoutMax.TryGetInt64(out var value64))
+        {
+            if (value64 < 0)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeFanoutMaxInvalid,
+                        path: path,
+                        message: "fanoutMax must be a non-negative integer."));
+                return;
+            }
+
+            if (value64 > MaxAllowedFanoutMax)
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeFanoutMaxExceeded,
+                        path: path,
+                        message: string.Concat(
+                            "fanoutMax=",
+                            value64.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            " exceeds maxAllowed=",
+                            MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            ".")));
+                return;
+            }
+
+            return;
+        }
+
+        findings.Add(
+            new ValidationFinding(
+                ValidationSeverity.Error,
+                code: CodeFanoutMaxInvalid,
+                path: path,
+                message: "fanoutMax must be a non-negative integer."));
     }
 
     private static void RecordExperimentPatchLayerConflicts(
@@ -764,7 +1432,9 @@ public sealed class ConfigValidator
             out var paramsPatch,
             out var hasParamsPatch,
             out var hasExperimentsPatch,
-            out var experimentsPatch);
+            out var experimentsPatch,
+            out _,
+            out _);
 
         ValidateFlowParamsPatch(patchFlowName, hasParamsPatch, paramsPatch, patchType, ref patchFindings);
 
@@ -790,6 +1460,7 @@ public sealed class ConfigValidator
             blueprintStageNameSet,
             moduleCatalog,
             selectorRegistry,
+            experimentLayerOwnershipContract: null,
             flowRegistered: true,
             ref patchFindings);
 

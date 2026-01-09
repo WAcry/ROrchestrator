@@ -677,4 +677,55 @@ public sealed class ConfigDiffTests
 
         Assert.Empty(report.Diffs);
     }
+
+    [Fact]
+    public void DiffEmergency_ShouldReportAdded_WhenEmergencyIsAdded()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{}}}}}}";
+
+        var report = PatchDiffV1.DiffEmergency(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchEmergencyDiffKind.Added, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("$.flows.HomeFeed.emergency", diff.Path);
+    }
+
+    [Fact]
+    public void DiffEmergency_ShouldReportChanged_WhenEmergencyReasonChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"emergency\":{\"reason\":\"r1\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{}}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"emergency\":{\"reason\":\"r2\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{}}}}}}";
+
+        var report = PatchDiffV1.DiffEmergency(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchEmergencyDiffKind.Changed, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("$.flows.HomeFeed.emergency.reason", diff.Path);
+    }
+
+    [Fact]
+    public void DiffEmergency_ShouldReportChanged_WhenEmergencyPatchFanoutMaxChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1}}}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":2}}}}}}}";
+
+        var report = PatchDiffV1.DiffEmergency(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchEmergencyDiffKind.Changed, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("$.flows.HomeFeed.emergency.patch.stages.s1.fanoutMax", diff.Path);
+    }
 }

@@ -454,6 +454,110 @@ public static class PatchDiffV1
         }
     }
 
+    public static PatchEmergencyDiffReport DiffEmergency(string oldPatchJson, string newPatchJson)
+    {
+        if (oldPatchJson is null)
+        {
+            throw new ArgumentNullException(nameof(oldPatchJson));
+        }
+
+        if (newPatchJson is null)
+        {
+            throw new ArgumentNullException(nameof(newPatchJson));
+        }
+
+        JsonDocument oldDocument;
+
+        try
+        {
+            oldDocument = JsonDocument.Parse(oldPatchJson);
+        }
+        catch (JsonException ex)
+        {
+            throw new FormatException("oldPatchJson is not a valid JSON document.", ex);
+        }
+
+        using (oldDocument)
+        {
+            EnsureSupportedSchemaVersion(oldDocument.RootElement);
+
+            JsonDocument newDocument;
+
+            try
+            {
+                newDocument = JsonDocument.Parse(newPatchJson);
+            }
+            catch (JsonException ex)
+            {
+                throw new FormatException("newPatchJson is not a valid JSON document.", ex);
+            }
+
+            using (newDocument)
+            {
+                EnsureSupportedSchemaVersion(newDocument.RootElement);
+
+                Dictionary<string, JsonElement>? oldEmergencyMap = null;
+                Dictionary<string, JsonElement>? newEmergencyMap = null;
+
+                CollectEmergency(oldDocument.RootElement, ref oldEmergencyMap);
+                CollectEmergency(newDocument.RootElement, ref newEmergencyMap);
+
+                if (oldEmergencyMap is null && newEmergencyMap is null)
+                {
+                    return PatchEmergencyDiffReport.Empty;
+                }
+
+                var buffer = new EmergencyDiffBuffer();
+
+                if (oldEmergencyMap is not null)
+                {
+                    foreach (var pair in oldEmergencyMap)
+                    {
+                        var flowName = pair.Key;
+                        var oldEmergency = pair.Value;
+
+                        if (newEmergencyMap is null || !newEmergencyMap.TryGetValue(flowName, out var newEmergency))
+                        {
+                            buffer.Add(PatchEmergencyDiff.CreateRemoved(flowName, BuildEmergencyPath(flowName)));
+                            continue;
+                        }
+
+                        DiffEmergencyObjects(flowName, BuildEmergencyPath(flowName), oldEmergency, newEmergency, ref buffer);
+                    }
+                }
+
+                if (newEmergencyMap is not null)
+                {
+                    foreach (var pair in newEmergencyMap)
+                    {
+                        var flowName = pair.Key;
+
+                        if (oldEmergencyMap is not null && oldEmergencyMap.ContainsKey(flowName))
+                        {
+                            continue;
+                        }
+
+                        buffer.Add(PatchEmergencyDiff.CreateAdded(flowName, BuildEmergencyPath(flowName)));
+                    }
+                }
+
+                var diffs = buffer.ToArray();
+
+                if (diffs.Length == 0)
+                {
+                    return PatchEmergencyDiffReport.Empty;
+                }
+
+                if (diffs.Length > 1)
+                {
+                    Array.Sort(diffs, PatchEmergencyDiffComparer.Instance);
+                }
+
+                return new PatchEmergencyDiffReport(diffs);
+            }
+        }
+    }
+
     private static void EnsureSupportedSchemaVersion(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object)
@@ -467,6 +571,91 @@ public static class PatchDiffV1
         {
             throw new NotSupportedException("schemaVersion is missing or unsupported. Supported: v1.");
         }
+    }
+
+    private static void CollectEmergency(JsonElement root, ref Dictionary<string, JsonElement>? emergencyMap)
+    {
+        if (!root.TryGetProperty("flows", out var flowsElement))
+        {
+            return;
+        }
+
+        if (flowsElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new FormatException("flows must be an object.");
+        }
+
+        foreach (var flowProperty in flowsElement.EnumerateObject())
+        {
+            var flowName = flowProperty.Name;
+            var flowPatch = flowProperty.Value;
+
+            if (flowPatch.ValueKind != JsonValueKind.Object)
+            {
+                throw new FormatException(string.Concat("Flow patch must be an object. Flow: ", flowName));
+            }
+
+            if (!flowPatch.TryGetProperty("emergency", out var emergencyElement) || emergencyElement.ValueKind == JsonValueKind.Null)
+            {
+                continue;
+            }
+
+            if (emergencyElement.ValueKind != JsonValueKind.Object)
+            {
+                throw new FormatException(string.Concat("emergency must be an object. Flow: ", flowName));
+            }
+
+            emergencyMap ??= new Dictionary<string, JsonElement>(4);
+            emergencyMap.Add(flowName, emergencyElement);
+        }
+    }
+
+    private static void DiffEmergencyObjects(
+        string flowName,
+        string pathPrefix,
+        JsonElement oldEmergency,
+        JsonElement newEmergency,
+        ref EmergencyDiffBuffer buffer)
+    {
+        if (oldEmergency.ValueKind != JsonValueKind.Object || newEmergency.ValueKind != JsonValueKind.Object)
+        {
+            throw new FormatException(string.Concat("emergency must be an object. Flow: ", flowName));
+        }
+
+        foreach (var oldProperty in oldEmergency.EnumerateObject())
+        {
+            if (!newEmergency.TryGetProperty(oldProperty.Name, out var newValue))
+            {
+                buffer.Add(PatchEmergencyDiff.CreateRemoved(flowName, string.Concat(pathPrefix, ".", oldProperty.Name)));
+                continue;
+            }
+
+            var oldValue = oldProperty.Value;
+
+            if (oldValue.ValueKind == JsonValueKind.Object && newValue.ValueKind == JsonValueKind.Object)
+            {
+                DiffEmergencyObjects(flowName, string.Concat(pathPrefix, ".", oldProperty.Name), oldValue, newValue, ref buffer);
+                continue;
+            }
+
+            if (!JsonElementDeepEquals(oldValue, newValue))
+            {
+                buffer.Add(PatchEmergencyDiff.CreateChanged(flowName, string.Concat(pathPrefix, ".", oldProperty.Name)));
+            }
+        }
+
+        foreach (var newProperty in newEmergency.EnumerateObject())
+        {
+            if (!oldEmergency.TryGetProperty(newProperty.Name, out _))
+            {
+                buffer.Add(PatchEmergencyDiff.CreateAdded(flowName, string.Concat(pathPrefix, ".", newProperty.Name)));
+            }
+        }
+    }
+
+    private static string BuildEmergencyPath(string flowName)
+    {
+        return string.Concat("$.flows.", flowName, ".emergency");
     }
 
     private static void CollectParams(JsonElement root, ref Dictionary<ParamsKey, ParamsInfo>? paramsMap)
@@ -1823,6 +2012,74 @@ public static class PatchDiffV1
             return ((int)x.Kind).CompareTo((int)y.Kind);
         }
     }
+
+    private sealed class PatchEmergencyDiffComparer : IComparer<PatchEmergencyDiff>
+    {
+        public static PatchEmergencyDiffComparer Instance { get; } = new();
+
+        public int Compare(PatchEmergencyDiff x, PatchEmergencyDiff y)
+        {
+            var c = string.CompareOrdinal(x.FlowName, y.FlowName);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            c = string.CompareOrdinal(x.Path, y.Path);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            return ((int)x.Kind).CompareTo((int)y.Kind);
+        }
+    }
+
+    private struct EmergencyDiffBuffer
+    {
+        private PatchEmergencyDiff[]? _items;
+        private int _count;
+
+        public void Add(PatchEmergencyDiff item)
+        {
+            var items = _items;
+
+            if (items is null)
+            {
+                items = new PatchEmergencyDiff[4];
+                _items = items;
+            }
+            else if ((uint)_count >= (uint)items.Length)
+            {
+                var newItems = new PatchEmergencyDiff[items.Length * 2];
+                Array.Copy(items, 0, newItems, 0, items.Length);
+                items = newItems;
+                _items = items;
+            }
+
+            items[_count] = item;
+            _count++;
+        }
+
+        public PatchEmergencyDiff[] ToArray()
+        {
+            if (_count == 0)
+            {
+                return Array.Empty<PatchEmergencyDiff>();
+            }
+
+            var items = _items!;
+
+            if (_count == items.Length)
+            {
+                return items;
+            }
+
+            var trimmed = new PatchEmergencyDiff[_count];
+            Array.Copy(items, 0, trimmed, 0, _count);
+            return trimmed;
+        }
+    }
 }
 
 public sealed class PatchModuleDiffReport
@@ -2164,5 +2421,57 @@ public readonly struct PatchParamDiff
         string? experimentVariant = null)
     {
         return new PatchParamDiff(PatchParamDiffKind.Changed, flowName, path, experimentLayer, experimentVariant);
+    }
+}
+
+public sealed class PatchEmergencyDiffReport
+{
+    public static PatchEmergencyDiffReport Empty { get; } = new(Array.Empty<PatchEmergencyDiff>());
+
+    private readonly PatchEmergencyDiff[] _diffs;
+
+    public IReadOnlyList<PatchEmergencyDiff> Diffs => _diffs;
+
+    internal PatchEmergencyDiffReport(PatchEmergencyDiff[] diffs)
+    {
+        _diffs = diffs ?? throw new ArgumentNullException(nameof(diffs));
+    }
+}
+
+public enum PatchEmergencyDiffKind
+{
+    Added = 1,
+    Removed = 2,
+    Changed = 3,
+}
+
+public readonly struct PatchEmergencyDiff
+{
+    public PatchEmergencyDiffKind Kind { get; }
+
+    public string FlowName { get; }
+
+    public string Path { get; }
+
+    private PatchEmergencyDiff(PatchEmergencyDiffKind kind, string flowName, string path)
+    {
+        Kind = kind;
+        FlowName = flowName;
+        Path = path;
+    }
+
+    internal static PatchEmergencyDiff CreateAdded(string flowName, string path)
+    {
+        return new PatchEmergencyDiff(PatchEmergencyDiffKind.Added, flowName, path);
+    }
+
+    internal static PatchEmergencyDiff CreateRemoved(string flowName, string path)
+    {
+        return new PatchEmergencyDiff(PatchEmergencyDiffKind.Removed, flowName, path);
+    }
+
+    internal static PatchEmergencyDiff CreateChanged(string flowName, string path)
+    {
+        return new PatchEmergencyDiff(PatchEmergencyDiffKind.Changed, flowName, path);
     }
 }

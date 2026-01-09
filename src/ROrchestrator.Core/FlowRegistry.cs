@@ -62,7 +62,7 @@ public sealed class FlowRegistry
         return false;
     }
 
-    internal bool TryGetStageNameSetAndPatchType(string flowName, out string[] stageNameSet, out Type? patchType)
+    internal bool TryGetStageNameSetAndPatchType(string flowName, out string[] stageNameSet, out Type? patchType, out ExperimentLayerOwnershipContract? experimentLayerOwnershipContract)
     {
         if (string.IsNullOrEmpty(flowName))
         {
@@ -73,15 +73,20 @@ public sealed class FlowRegistry
         {
             stageNameSet = entry.StageNameSet;
             patchType = entry.PatchType;
+            experimentLayerOwnershipContract = entry.ExperimentLayerOwnershipContract;
             return true;
         }
 
         stageNameSet = Array.Empty<string>();
         patchType = null;
+        experimentLayerOwnershipContract = null;
         return false;
     }
 
-    public void Register<TReq, TResp>(string flowName, FlowBlueprint<TReq, TResp> blueprint)
+    public void Register<TReq, TResp>(
+        string flowName,
+        FlowBlueprint<TReq, TResp> blueprint,
+        ExperimentLayerOwnershipContract? experimentLayerOwnershipContract = null)
     {
         if (string.IsNullOrEmpty(flowName))
         {
@@ -95,7 +100,7 @@ public sealed class FlowRegistry
 
         var stageNameSet = BuildStageNameSet(blueprint);
 
-        if (!_flows.TryAdd(flowName, new Entry(typeof(TReq), typeof(TResp), blueprint, stageNameSet)))
+        if (!_flows.TryAdd(flowName, new Entry(typeof(TReq), typeof(TResp), blueprint, stageNameSet, experimentLayerOwnershipContract)))
         {
             throw new ArgumentException($"FlowName '{flowName}' is already registered.", nameof(flowName));
         }
@@ -104,7 +109,8 @@ public sealed class FlowRegistry
     public void Register<TReq, TResp, TParams, TPatch>(
         string flowName,
         FlowBlueprint<TReq, TResp> blueprint,
-        TParams defaultParams)
+        TParams defaultParams,
+        ExperimentLayerOwnershipContract? experimentLayerOwnershipContract = null)
         where TParams : notnull
     {
         if (string.IsNullOrEmpty(flowName))
@@ -133,7 +139,8 @@ public sealed class FlowRegistry
                 patchType: typeof(TPatch),
                 blueprint: blueprint,
                 defaultParams: defaultParams,
-                stageNameSet: stageNameSet)))
+                stageNameSet: stageNameSet,
+                experimentLayerOwnershipContract: experimentLayerOwnershipContract)))
         {
             throw new ArgumentException($"FlowName '{flowName}' is already registered.", nameof(flowName));
         }
@@ -257,7 +264,14 @@ public sealed class FlowRegistry
 
         public string[] StageNameSet { get; }
 
-        public Entry(Type requestType, Type responseType, object blueprint, string[] stageNameSet)
+        public ExperimentLayerOwnershipContract? ExperimentLayerOwnershipContract { get; }
+
+        public Entry(
+            Type requestType,
+            Type responseType,
+            object blueprint,
+            string[] stageNameSet,
+            ExperimentLayerOwnershipContract? experimentLayerOwnershipContract)
         {
             RequestType = requestType;
             ResponseType = responseType;
@@ -266,6 +280,7 @@ public sealed class FlowRegistry
             Blueprint = blueprint;
             DefaultParams = null;
             StageNameSet = stageNameSet;
+            ExperimentLayerOwnershipContract = experimentLayerOwnershipContract;
         }
 
         public Entry(
@@ -275,7 +290,8 @@ public sealed class FlowRegistry
             Type patchType,
             object blueprint,
             object defaultParams,
-            string[] stageNameSet)
+            string[] stageNameSet,
+            ExperimentLayerOwnershipContract? experimentLayerOwnershipContract)
         {
             RequestType = requestType;
             ResponseType = responseType;
@@ -284,6 +300,7 @@ public sealed class FlowRegistry
             Blueprint = blueprint;
             DefaultParams = defaultParams;
             StageNameSet = stageNameSet;
+            ExperimentLayerOwnershipContract = experimentLayerOwnershipContract;
         }
     }
 
