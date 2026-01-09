@@ -199,6 +199,7 @@ public sealed class ExecutionEngine
         execExplainCollector?.Start(flowName, template.PlanHash, nodes);
 
         using var patchEvaluation = MaybeEvaluatePatch(flowName, context);
+        execExplainCollector?.RecordRouting(context.Variants, patchEvaluation?.OverlaysApplied);
         string? currentStageName = null;
 
         var activitySource = FlowActivitySource.Instance;
@@ -633,13 +634,14 @@ public sealed class ExecutionEngine
 
             if (string.Equals(stage.StageName, stageName, StringComparison.Ordinal))
             {
-                await ExecuteStageFanoutAsync(stageName, stage, context, execExplainCollector).ConfigureAwait(false);
+                await ExecuteStageFanoutAsync(patchEvaluation.FlowName, stageName, stage, context, execExplainCollector).ConfigureAwait(false);
                 return;
             }
         }
     }
 
     private async ValueTask ExecuteStageFanoutAsync(
+        string flowName,
         string stageName,
         PatchEvaluatorV1.StagePatchV1 stagePatch,
         FlowContext context,
@@ -728,7 +730,7 @@ public sealed class ExecutionEngine
             if (rank < executeCount)
             {
                 var executor = StageModuleExecutorCache.Get(argsTypes[moduleIndex], outTypes[moduleIndex]);
-                executeTasks[taskIndex] = executor(this, module.ModuleId, module.ModuleType, module.Args, context);
+                executeTasks[taskIndex] = executor(this, flowName, stageName, module.ModuleId, module.ModuleType, module.Args, context);
                 executeIndices[taskIndex] = moduleIndex;
                 taskIndex++;
                 continue;
@@ -765,12 +767,79 @@ public sealed class ExecutionEngine
                 execExplainCollector.RecordStageModule(stageName, module.ModuleId, module.ModuleType, module.Priority, meta.Kind, meta.Code, meta.IsOverride);
             }
         }
+
+        RecordStageFanoutSnapshot(stageName, modules, executeIndices, taskIndex, results, context);
     }
 
     private static void RecordStageModuleSkippedOutcome(Type outType, FlowContext context, string moduleId, string code)
     {
         var recorder = StageModuleSkipOutcomeCache.Get(outType);
         recorder(context, moduleId, code);
+    }
+
+    private static void RecordStageFanoutSnapshot(
+        string stageName,
+        IReadOnlyList<PatchEvaluatorV1.StageModulePatchV1> modules,
+        int[] executeIndices,
+        int executeCount,
+        StageModuleOutcomeMetadata[] results,
+        FlowContext context)
+    {
+        if (executeCount < 0)
+        {
+            executeCount = 0;
+        }
+
+        var moduleCount = modules.Count;
+
+        var enabledModuleIds = executeCount == 0 ? Array.Empty<string>() : new string[executeCount];
+
+        for (var i = 0; i < executeCount; i++)
+        {
+            enabledModuleIds[i] = modules[executeIndices[i]].ModuleId;
+        }
+
+        StageFanoutSkippedModule[] skipped;
+
+        if (moduleCount == executeCount)
+        {
+            skipped = Array.Empty<StageFanoutSkippedModule>();
+        }
+        else
+        {
+            var executedFlags = executeCount == 0 ? null : new bool[moduleCount];
+
+            if (executedFlags is not null)
+            {
+                for (var i = 0; i < executeCount; i++)
+                {
+                    executedFlags[executeIndices[i]] = true;
+                }
+            }
+
+            skipped = new StageFanoutSkippedModule[moduleCount - executeCount];
+            var skippedCount = 0;
+
+            for (var i = 0; i < moduleCount; i++)
+            {
+                if (executedFlags is not null && executedFlags[i])
+                {
+                    continue;
+                }
+
+                skipped[skippedCount] = new StageFanoutSkippedModule(modules[i].ModuleId, results[i].Code);
+                skippedCount++;
+            }
+
+            if (skippedCount != skipped.Length)
+            {
+                var trimmed = new StageFanoutSkippedModule[skippedCount];
+                Array.Copy(skipped, 0, trimmed, 0, skippedCount);
+                skipped = trimmed;
+            }
+        }
+
+        context.RecordStageFanoutSnapshot(stageName, enabledModuleIds, skipped);
     }
 
     private static bool EvaluateGateAllowed(JsonElement gateElement, FlowContext context)
@@ -838,85 +907,159 @@ public sealed class ExecutionEngine
 
     private static async ValueTask<StageModuleOutcomeMetadata> ExecuteStageModuleAsyncCore<TArgs, TOut>(
         ExecutionEngine engine,
+        string flowName,
+        string stageName,
         string moduleId,
         string moduleType,
         JsonElement argsJson,
         FlowContext flowContext)
     {
+        if (string.IsNullOrEmpty(flowName))
+        {
+            throw new ArgumentException("FlowName must be non-empty.", nameof(flowName));
+        }
+
+        if (string.IsNullOrEmpty(stageName))
+        {
+            throw new ArgumentException("StageName must be non-empty.", nameof(stageName));
+        }
+
+        if (string.IsNullOrEmpty(moduleId))
+        {
+            throw new ArgumentException("ModuleId must be non-empty.", nameof(moduleId));
+        }
+
+        if (string.IsNullOrEmpty(moduleType))
+        {
+            throw new ArgumentException("ModuleType must be non-empty.", nameof(moduleType));
+        }
+
+        if (engine is null)
+        {
+            throw new ArgumentNullException(nameof(engine));
+        }
+
+        if (flowContext is null)
+        {
+            throw new ArgumentNullException(nameof(flowContext));
+        }
+
+        Activity? moduleActivity = null;
+        var activitySource = FlowActivitySource.Instance;
+
+        if (activitySource.HasListeners())
+        {
+            moduleActivity = activitySource.StartActivity(FlowActivitySource.StageFanoutModuleActivityName, ActivityKind.Internal);
+
+            if (moduleActivity is not null)
+            {
+                moduleActivity.SetTag(FlowActivitySource.TagFlowName, flowName);
+                moduleActivity.SetTag(FlowActivitySource.TagStageName, stageName);
+                moduleActivity.SetTag(FlowActivitySource.TagModuleId, moduleId);
+                moduleActivity.SetTag(FlowActivitySource.TagModuleType, moduleType);
+
+                if (flowContext.TryGetConfigVersion(out var configVersion))
+                {
+                    moduleActivity.SetTag(FlowActivitySource.TagConfigVersion, configVersion.ToString(CultureInfo.InvariantCulture));
+                }
+            }
+        }
+
+        var moduleStartTimestamp = FlowMetricsV1.StartStageFanoutModuleTimer();
+
         var overrideProvider = flowContext.FlowTestOverrideProvider;
-        if (overrideProvider is not null && overrideProvider.TryGetOverride(moduleId, out var overrideEntry))
-        {
-            Outcome<TOut> overriddenOutcome;
-
-            if (overrideEntry is FlowTestOverrideOutcome<TOut> fixedOverride)
-            {
-                overriddenOutcome = fixedOverride.Outcome;
-            }
-            else if (overrideEntry is FlowTestOverrideCompute<TArgs, TOut> computeOverride)
-            {
-                var args = argsJson.Deserialize<TArgs>();
-
-                if (!typeof(TArgs).IsValueType && args is null)
-                {
-                    throw new InvalidOperationException($"Module '{moduleId}' args binding produced null.");
-                }
-
-                var moduleContext = new ModuleContext<TArgs>(moduleId, moduleType, args!, flowContext);
-
-                try
-                {
-                    overriddenOutcome = await computeOverride.Compute(moduleContext).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    overriddenOutcome = IsDeadlineExceeded(flowContext.Deadline)
-                        ? Outcome<TOut>.Timeout(DeadlineExceededCode)
-                        : Outcome<TOut>.Canceled(UpstreamCanceledCode);
-                }
-                catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
-                {
-                    overriddenOutcome = Outcome<TOut>.Error(UnhandledExceptionCode);
-                }
-            }
-            else
-            {
-                throw new InvalidOperationException(
-                    $"Override for moduleId '{moduleId}' has a different signature. Expected args '{typeof(TArgs)}' and output '{typeof(TOut)}'.");
-            }
-
-            flowContext.RecordNodeOutcome(moduleId, overriddenOutcome);
-            return new StageModuleOutcomeMetadata(overriddenOutcome.Kind, overriddenOutcome.Code, isOverride: true);
-        }
-
-        var argsValue = argsJson.Deserialize<TArgs>();
-
-        if (!typeof(TArgs).IsValueType && argsValue is null)
-        {
-            throw new InvalidOperationException($"Module '{moduleId}' args binding produced null.");
-        }
-
-        var module = engine._catalog.Create<TArgs, TOut>(moduleType, flowContext.Services);
-
-        Outcome<TOut> outcome;
+        Outcome<TOut> outcome = default;
+        var recordedOutcome = false;
 
         try
         {
-            outcome = await module.ExecuteAsync(new ModuleContext<TArgs>(moduleId, moduleType, argsValue!, flowContext))
-                .ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            outcome = IsDeadlineExceeded(flowContext.Deadline)
-                ? Outcome<TOut>.Timeout(DeadlineExceededCode)
-                : Outcome<TOut>.Canceled(UpstreamCanceledCode);
-        }
-        catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
-        {
-            outcome = Outcome<TOut>.Error(UnhandledExceptionCode);
-        }
+            if (overrideProvider is not null && overrideProvider.TryGetOverride(moduleId, out var overrideEntry))
+            {
+                if (overrideEntry is FlowTestOverrideOutcome<TOut> fixedOverride)
+                {
+                    outcome = fixedOverride.Outcome;
+                }
+                else if (overrideEntry is FlowTestOverrideCompute<TArgs, TOut> computeOverride)
+                {
+                    var args = argsJson.Deserialize<TArgs>();
 
-        flowContext.RecordNodeOutcome(moduleId, outcome);
-        return new StageModuleOutcomeMetadata(outcome.Kind, outcome.Code, isOverride: false);
+                    if (!typeof(TArgs).IsValueType && args is null)
+                    {
+                        throw new InvalidOperationException($"Module '{moduleId}' args binding produced null.");
+                    }
+
+                    var moduleContext = new ModuleContext<TArgs>(moduleId, moduleType, args!, flowContext);
+
+                    try
+                    {
+                        outcome = await computeOverride.Compute(moduleContext).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        outcome = IsDeadlineExceeded(flowContext.Deadline)
+                            ? Outcome<TOut>.Timeout(DeadlineExceededCode)
+                            : Outcome<TOut>.Canceled(UpstreamCanceledCode);
+                    }
+                    catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
+                    {
+                        outcome = Outcome<TOut>.Error(UnhandledExceptionCode);
+                    }
+                }
+                else
+                {
+                    throw new InvalidOperationException(
+                        $"Override for moduleId '{moduleId}' has a different signature. Expected args '{typeof(TArgs)}' and output '{typeof(TOut)}'.");
+                }
+
+                flowContext.RecordNodeOutcome(moduleId, outcome);
+                recordedOutcome = true;
+                return new StageModuleOutcomeMetadata(outcome.Kind, outcome.Code, isOverride: true);
+            }
+
+            var argsValue = argsJson.Deserialize<TArgs>();
+
+            if (!typeof(TArgs).IsValueType && argsValue is null)
+            {
+                throw new InvalidOperationException($"Module '{moduleId}' args binding produced null.");
+            }
+
+            var module = engine._catalog.Create<TArgs, TOut>(moduleType, flowContext.Services);
+
+            try
+            {
+                outcome = await module.ExecuteAsync(new ModuleContext<TArgs>(moduleId, moduleType, argsValue!, flowContext))
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                outcome = IsDeadlineExceeded(flowContext.Deadline)
+                    ? Outcome<TOut>.Timeout(DeadlineExceededCode)
+                    : Outcome<TOut>.Canceled(UpstreamCanceledCode);
+            }
+            catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
+            {
+                outcome = Outcome<TOut>.Error(UnhandledExceptionCode);
+            }
+
+            flowContext.RecordNodeOutcome(moduleId, outcome);
+            recordedOutcome = true;
+            return new StageModuleOutcomeMetadata(outcome.Kind, outcome.Code, isOverride: false);
+        }
+        finally
+        {
+            if (recordedOutcome)
+            {
+                FlowMetricsV1.RecordStageFanoutModule(moduleStartTimestamp, flowName, stageName, moduleType, outcome.Kind);
+
+                if (moduleActivity is not null)
+                {
+                    moduleActivity.SetTag(FlowActivitySource.TagOutcomeKind, FlowActivitySource.GetOutcomeKindTagValue(outcome.Kind));
+                    moduleActivity.SetTag(FlowActivitySource.TagOutcomeCode, outcome.Code);
+                }
+            }
+
+            moduleActivity?.Dispose();
+        }
     }
 
     private static void RecordStageModuleSkippedOutcomeCore<TOut>(FlowContext context, string moduleId, string code)
@@ -978,11 +1121,11 @@ public sealed class ExecutionEngine
     private static class StageModuleExecutorCache
     {
         private static readonly Lock _gate = new();
-        private static Dictionary<StageModuleExecutorCacheKey, Func<ExecutionEngine, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>>? _cache;
+        private static Dictionary<StageModuleExecutorCacheKey, Func<ExecutionEngine, string, string, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>>? _cache;
         private static readonly MethodInfo CoreMethod =
             typeof(ExecutionEngine).GetMethod(nameof(ExecuteStageModuleAsyncCore), BindingFlags.NonPublic | BindingFlags.Static)!;
 
-        public static Func<ExecutionEngine, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>> Get(
+        public static Func<ExecutionEngine, string, string, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>> Get(
             Type argsType,
             Type outType)
         {
@@ -1005,19 +1148,19 @@ public sealed class ExecutionEngine
 
                 var closedCore = CoreMethod.MakeGenericMethod(argsType, outType);
                 executor =
-                    (Func<ExecutionEngine, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>)closedCore.CreateDelegate(
-                        typeof(Func<ExecutionEngine, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>));
+                    (Func<ExecutionEngine, string, string, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>)closedCore.CreateDelegate(
+                        typeof(Func<ExecutionEngine, string, string, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>));
 
-                Dictionary<StageModuleExecutorCacheKey, Func<ExecutionEngine, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>> newCache;
+                Dictionary<StageModuleExecutorCacheKey, Func<ExecutionEngine, string, string, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>> newCache;
 
                 if (cache is null || cache.Count == 0)
                 {
                     newCache =
-                        new Dictionary<StageModuleExecutorCacheKey, Func<ExecutionEngine, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>>(1);
+                        new Dictionary<StageModuleExecutorCacheKey, Func<ExecutionEngine, string, string, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>>(1);
                 }
                 else
                 {
-                    newCache = new Dictionary<StageModuleExecutorCacheKey, Func<ExecutionEngine, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>>(
+                    newCache = new Dictionary<StageModuleExecutorCacheKey, Func<ExecutionEngine, string, string, string, string, JsonElement, FlowContext, ValueTask<StageModuleOutcomeMetadata>>>(
                         cache.Count + 1);
 
                     foreach (var pair in cache)

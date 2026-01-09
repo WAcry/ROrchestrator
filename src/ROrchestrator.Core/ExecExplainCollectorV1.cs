@@ -4,11 +4,16 @@ namespace ROrchestrator.Core;
 
 internal sealed class ExecExplainCollectorV1
 {
+    private static readonly IReadOnlyDictionary<string, string> EmptyVariants =
+        new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(new Dictionary<string, string>(0));
+
     private ExecExplainNode[]? _nodes;
     private List<ExecExplainStageModule>? _stageModules;
     private ExecExplain? _explain;
     private string? _flowName;
     private ulong _planHash;
+    private PatchEvaluatorV1.PatchOverlayAppliedV1[]? _overlaysApplied;
+    private IReadOnlyDictionary<string, string>? _variants;
     private long _flowStartTimestamp;
     private long _flowEndTimestamp;
     private bool _active;
@@ -22,6 +27,8 @@ internal sealed class ExecExplainCollectorV1
         _explain = null;
         _flowName = null;
         _planHash = 0;
+        _overlaysApplied = null;
+        _variants = null;
         _flowStartTimestamp = 0;
         _flowEndTimestamp = 0;
         _active = false;
@@ -51,6 +58,8 @@ internal sealed class ExecExplainCollectorV1
         _flowEndTimestamp = 0;
         _active = true;
         _explain = null;
+        _overlaysApplied = Array.Empty<PatchEvaluatorV1.PatchOverlayAppliedV1>();
+        _variants = EmptyVariants;
 
         if (_stageModules is not null)
         {
@@ -73,6 +82,48 @@ internal sealed class ExecExplainCollectorV1
         }
 
         _nodes = explainNodes;
+    }
+
+    public void RecordRouting(IReadOnlyDictionary<string, string> variants, IReadOnlyList<PatchEvaluatorV1.PatchOverlayAppliedV1>? overlaysApplied)
+    {
+        if (!_active)
+        {
+            return;
+        }
+
+        if (variants is null || variants.Count == 0)
+        {
+            _variants = EmptyVariants;
+        }
+        else
+        {
+            var copy = new Dictionary<string, string>(capacity: variants.Count);
+            foreach (var pair in variants)
+            {
+                copy.Add(pair.Key, pair.Value);
+            }
+
+            _variants = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(copy);
+        }
+
+        if (overlaysApplied is null || overlaysApplied.Count == 0)
+        {
+            _overlaysApplied = Array.Empty<PatchEvaluatorV1.PatchOverlayAppliedV1>();
+        }
+        else if (overlaysApplied is PatchEvaluatorV1.PatchOverlayAppliedV1[] overlayArray)
+        {
+            _overlaysApplied = overlayArray;
+        }
+        else
+        {
+            var array = new PatchEvaluatorV1.PatchOverlayAppliedV1[overlaysApplied.Count];
+            for (var i = 0; i < overlaysApplied.Count; i++)
+            {
+                array[i] = overlaysApplied[i];
+            }
+
+            _overlaysApplied = array;
+        }
     }
 
     public void RecordStageModule(
@@ -141,6 +192,8 @@ internal sealed class ExecExplainCollectorV1
             _planHash,
             hasConfigVersion,
             configVersion,
+            _overlaysApplied,
+            _variants,
             _flowStartTimestamp,
             _flowEndTimestamp,
             nodes,

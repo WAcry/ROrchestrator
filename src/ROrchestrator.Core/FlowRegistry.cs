@@ -83,6 +83,30 @@ public sealed class FlowRegistry
         return false;
     }
 
+    internal bool TryGetParamsBinding(string flowName, out Type paramsType, out Type patchType, out object defaultParams)
+    {
+        if (string.IsNullOrEmpty(flowName))
+        {
+            throw new ArgumentException("FlowName must be non-empty.", nameof(flowName));
+        }
+
+        if (_flows.TryGetValue(flowName, out var entry)
+            && entry.ParamsType is not null
+            && entry.PatchType is not null
+            && entry.DefaultParams is not null)
+        {
+            paramsType = entry.ParamsType;
+            patchType = entry.PatchType;
+            defaultParams = entry.DefaultParams;
+            return true;
+        }
+
+        paramsType = null!;
+        patchType = null!;
+        defaultParams = null!;
+        return false;
+    }
+
     public void Register<TReq, TResp>(
         string flowName,
         FlowBlueprint<TReq, TResp> blueprint,

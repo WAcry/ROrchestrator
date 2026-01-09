@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace ROrchestrator.Core;
 
 public sealed class FlowContext
@@ -7,6 +9,8 @@ public sealed class FlowContext
 
     private readonly Lock _configSnapshotGate;
     private readonly Lock _nodeOutcomeGate;
+    private readonly Lock _paramsGate;
+    private readonly Lock _stageFanoutGate;
     private readonly IReadOnlyDictionary<string, string> _variants;
     private readonly string? _userId;
     private readonly IReadOnlyDictionary<string, string> _requestAttributes;
@@ -24,6 +28,16 @@ public sealed class FlowContext
     private bool _hasRecordedOutcomes;
     private IFlowTestOverrideProvider? _flowTestOverrideProvider;
     private IFlowTestInvocationSink? _flowTestInvocationSink;
+    private string? _currentFlowName;
+    private Type? _flowParamsType;
+    private Type? _flowParamsPatchType;
+    private object? _flowDefaultParams;
+    private string? _paramsCacheFlowName;
+    private Type? _paramsCacheType;
+    private ulong _paramsCacheConfigVersion;
+    private object? _paramsCacheValue;
+    private int _paramsCacheState;
+    private Dictionary<string, StageFanoutSnapshot>? _stageFanoutSnapshots;
 
     public IServiceProvider Services { get; }
 
@@ -50,6 +64,8 @@ public sealed class FlowContext
 
         _configSnapshotGate = new();
         _nodeOutcomeGate = new();
+        _paramsGate = new();
+        _stageFanoutGate = new();
         _variants = EmptyStringDictionary;
         _userId = null;
         _requestAttributes = EmptyStringDictionary;
@@ -74,6 +90,8 @@ public sealed class FlowContext
 
         _configSnapshotGate = new();
         _nodeOutcomeGate = new();
+        _paramsGate = new();
+        _stageFanoutGate = new();
         _variants = requestOptions.Variants ?? EmptyStringDictionary;
         _userId = requestOptions.UserId;
         _requestAttributes = requestOptions.RequestAttributes ?? EmptyStringDictionary;
@@ -109,6 +127,338 @@ public sealed class FlowContext
     {
         _flowTestOverrideProvider = overrideProvider;
         _flowTestInvocationSink = invocationSink;
+    }
+
+    internal void ConfigureFlowBinding(string flowName, Type? paramsType, Type? patchType, object? defaultParams)
+    {
+        if (string.IsNullOrEmpty(flowName))
+        {
+            throw new ArgumentException("FlowName must be non-empty.", nameof(flowName));
+        }
+
+        if (paramsType is null)
+        {
+            throw new ArgumentNullException(nameof(paramsType));
+        }
+
+        if (patchType is null)
+        {
+            throw new ArgumentNullException(nameof(patchType));
+        }
+
+        if (defaultParams is null)
+        {
+            throw new ArgumentNullException(nameof(defaultParams));
+        }
+
+        _currentFlowName = flowName;
+        _flowParamsType = paramsType;
+        _flowParamsPatchType = patchType;
+        _flowDefaultParams = defaultParams;
+        Volatile.Write(ref _paramsCacheState, 0);
+    }
+
+    public bool TryGetStageFanoutSnapshot(string stageName, out StageFanoutSnapshot snapshot)
+    {
+        if (string.IsNullOrEmpty(stageName))
+        {
+            throw new ArgumentException("StageName must be non-empty.", nameof(stageName));
+        }
+
+        lock (_stageFanoutGate)
+        {
+            var snapshots = _stageFanoutSnapshots;
+            if (snapshots is not null
+                && snapshots.TryGetValue(stageName, out var found)
+                && found is not null)
+            {
+                snapshot = found;
+                return true;
+            }
+        }
+
+        snapshot = null!;
+        return false;
+    }
+
+    internal void RecordStageFanoutSnapshot(string stageName, string[] enabledModuleIds, StageFanoutSkippedModule[] skippedModules)
+    {
+        if (string.IsNullOrEmpty(stageName))
+        {
+            throw new ArgumentException("StageName must be non-empty.", nameof(stageName));
+        }
+
+        if (enabledModuleIds is null)
+        {
+            throw new ArgumentNullException(nameof(enabledModuleIds));
+        }
+
+        if (skippedModules is null)
+        {
+            throw new ArgumentNullException(nameof(skippedModules));
+        }
+
+        var snapshot = new StageFanoutSnapshot(stageName, enabledModuleIds, skippedModules);
+
+        lock (_stageFanoutGate)
+        {
+            _stageFanoutSnapshots ??= new Dictionary<string, StageFanoutSnapshot>(capacity: 4);
+            _stageFanoutSnapshots[stageName] = snapshot;
+        }
+    }
+
+    public TParams Params<TParams>()
+        where TParams : notnull
+    {
+        var flowName = _currentFlowName;
+        if (string.IsNullOrEmpty(flowName))
+        {
+            throw new InvalidOperationException("FlowContext is not configured with a flow binding.");
+        }
+
+        var boundType = _flowParamsType;
+        if (boundType is null)
+        {
+            throw new InvalidOperationException("FlowContext is not configured with a params type.");
+        }
+
+        if (boundType != typeof(TParams))
+        {
+            throw new InvalidOperationException(
+                $"FlowContext params type is '{boundType}', not '{typeof(TParams)}'.");
+        }
+
+        var configVersion = 0UL;
+        var patchJson = string.Empty;
+
+        if (TryGetConfigSnapshot(out var snapshot))
+        {
+            configVersion = snapshot.ConfigVersion;
+            patchJson = snapshot.PatchJson;
+        }
+
+        if (Volatile.Read(ref _paramsCacheState) == 1
+            && _paramsCacheConfigVersion == configVersion
+            && string.Equals(_paramsCacheFlowName, flowName, StringComparison.Ordinal)
+            && _paramsCacheType == typeof(TParams))
+        {
+            return (TParams)_paramsCacheValue!;
+        }
+
+        lock (_paramsGate)
+        {
+            if (_paramsCacheState == 1
+                && _paramsCacheConfigVersion == configVersion
+                && string.Equals(_paramsCacheFlowName, flowName, StringComparison.Ordinal)
+                && _paramsCacheType == typeof(TParams))
+            {
+                return (TParams)_paramsCacheValue!;
+            }
+
+            var computed = ComputeParams<TParams>(flowName, patchJson);
+
+            _paramsCacheFlowName = flowName;
+            _paramsCacheType = typeof(TParams);
+            _paramsCacheConfigVersion = configVersion;
+            _paramsCacheValue = computed;
+            Volatile.Write(ref _paramsCacheState, 1);
+            return computed;
+        }
+    }
+
+    private TParams ComputeParams<TParams>(string flowName, string patchJson)
+        where TParams : notnull
+    {
+        var defaultParams = (TParams)_flowDefaultParams!;
+
+        var defaultParamsJson = JsonSerializer.SerializeToUtf8Bytes(defaultParams);
+
+        using var defaultDocument = JsonDocument.Parse(defaultParamsJson);
+        var baseElement = defaultDocument.RootElement;
+
+        if (baseElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException($"Default params JSON must be an object. Flow: '{flowName}'.");
+        }
+
+        if (string.IsNullOrEmpty(patchJson))
+        {
+            var cloned = JsonSerializer.Deserialize<TParams>(defaultParamsJson);
+            if (!typeof(TParams).IsValueType && cloned is null)
+            {
+                throw new InvalidOperationException($"Default params binding produced null. Flow: '{flowName}'.");
+            }
+
+            return cloned!;
+        }
+
+        using var patchDocument = JsonDocument.Parse(patchJson);
+        var root = patchDocument.RootElement;
+
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            return DeserializeDefaultParams<TParams>(defaultParamsJson, flowName);
+        }
+
+        if (!root.TryGetProperty("schemaVersion", out var schemaVersion)
+            || schemaVersion.ValueKind != JsonValueKind.String
+            || !schemaVersion.ValueEquals("v1"))
+        {
+            return DeserializeDefaultParams<TParams>(defaultParamsJson, flowName);
+        }
+
+        if (!root.TryGetProperty("flows", out var flowsElement) || flowsElement.ValueKind != JsonValueKind.Object)
+        {
+            return DeserializeDefaultParams<TParams>(defaultParamsJson, flowName);
+        }
+
+        if (!flowsElement.TryGetProperty(flowName, out var flowPatch) || flowPatch.ValueKind != JsonValueKind.Object)
+        {
+            return DeserializeDefaultParams<TParams>(defaultParamsJson, flowName);
+        }
+
+        var buffer = new JsonElementBuffer(initialCapacity: 4);
+
+        if (flowPatch.TryGetProperty("params", out var baseParamsPatch))
+        {
+            if (baseParamsPatch.ValueKind == JsonValueKind.Object)
+            {
+                buffer.Add(baseParamsPatch);
+            }
+            else if (baseParamsPatch.ValueKind != JsonValueKind.Undefined)
+            {
+                throw new InvalidOperationException($"params must be an object. Flow: '{flowName}'.");
+            }
+        }
+
+        var variants = _variants;
+        if (variants.Count != 0
+            && flowPatch.TryGetProperty("experiments", out var experimentsPatch)
+            && experimentsPatch.ValueKind == JsonValueKind.Array)
+        {
+            CollectExperimentParamsPatches(flowName, experimentsPatch, variants, ref buffer);
+        }
+
+        if (flowPatch.TryGetProperty("emergency", out var emergencyPatch)
+            && emergencyPatch.ValueKind == JsonValueKind.Object
+            && emergencyPatch.TryGetProperty("patch", out var emergencyPatchBody)
+            && emergencyPatchBody.ValueKind == JsonValueKind.Object
+            && emergencyPatchBody.TryGetProperty("params", out var emergencyParamsPatch))
+        {
+            if (emergencyParamsPatch.ValueKind == JsonValueKind.Object)
+            {
+                buffer.Add(emergencyParamsPatch);
+            }
+            else if (emergencyParamsPatch.ValueKind != JsonValueKind.Undefined)
+            {
+                throw new InvalidOperationException($"emergency.patch.params must be an object. Flow: '{flowName}'.");
+            }
+        }
+
+        if (buffer.Count == 0)
+        {
+            return DeserializeDefaultParams<TParams>(defaultParamsJson, flowName);
+        }
+
+        var patchType = _flowParamsPatchType!;
+
+        for (var i = 0; i < buffer.Count; i++)
+        {
+            var bound = buffer.Items[i].Deserialize(patchType);
+            if (!patchType.IsValueType && bound is null)
+            {
+                throw new InvalidOperationException($"Params patch binding produced null. Flow: '{flowName}'.");
+            }
+        }
+
+        var mergedJson = JsonMergeV1.Merge(baseElement, buffer.Items, buffer.Count);
+
+        var merged = JsonSerializer.Deserialize<TParams>(mergedJson);
+        if (!typeof(TParams).IsValueType && merged is null)
+        {
+            throw new InvalidOperationException($"Params binding produced null. Flow: '{flowName}'.");
+        }
+
+        return merged!;
+    }
+
+    private static TParams DeserializeDefaultParams<TParams>(byte[] defaultParamsJson, string flowName)
+        where TParams : notnull
+    {
+        var cloned = JsonSerializer.Deserialize<TParams>(defaultParamsJson);
+        if (!typeof(TParams).IsValueType && cloned is null)
+        {
+            throw new InvalidOperationException($"Default params binding produced null. Flow: '{flowName}'.");
+        }
+
+        return cloned!;
+    }
+
+    private static void CollectExperimentParamsPatches(
+        string flowName,
+        JsonElement experimentsPatch,
+        IReadOnlyDictionary<string, string> variants,
+        ref JsonElementBuffer buffer)
+    {
+        foreach (var experimentMapping in experimentsPatch.EnumerateArray())
+        {
+            if (experimentMapping.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            string? layer = null;
+            string? variant = null;
+            JsonElement patch = default;
+            var hasPatch = false;
+
+            foreach (var field in experimentMapping.EnumerateObject())
+            {
+                if (field.NameEquals("layer"))
+                {
+                    layer = field.Value.ValueKind == JsonValueKind.String ? field.Value.GetString() : null;
+                    continue;
+                }
+
+                if (field.NameEquals("variant"))
+                {
+                    variant = field.Value.ValueKind == JsonValueKind.String ? field.Value.GetString() : null;
+                    continue;
+                }
+
+                if (field.NameEquals("patch"))
+                {
+                    hasPatch = true;
+                    patch = field.Value;
+                }
+            }
+
+            if (string.IsNullOrEmpty(layer) || variant is null || !hasPatch || patch.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (!variants.TryGetValue(layer!, out var currentVariant)
+                || !string.Equals(currentVariant, variant, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!patch.TryGetProperty("params", out var experimentParamsPatch))
+            {
+                continue;
+            }
+
+            if (experimentParamsPatch.ValueKind == JsonValueKind.Object)
+            {
+                buffer.Add(experimentParamsPatch);
+            }
+            else if (experimentParamsPatch.ValueKind != JsonValueKind.Undefined)
+            {
+                throw new InvalidOperationException(
+                    $"experiments[].patch.params must be an object. Flow: '{flowName}' layer: '{layer}' variant: '{variant}'.");
+            }
+        }
     }
 
     public bool TryGetConfigVersion(out ulong configVersion)
@@ -245,6 +595,11 @@ public sealed class FlowContext
         if (nodeCount <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(nodeCount), nodeCount, "NodeCount must be greater than zero.");
+        }
+
+        lock (_stageFanoutGate)
+        {
+            _stageFanoutSnapshots?.Clear();
         }
 
         lock (_nodeOutcomeGate)
@@ -548,6 +903,36 @@ public sealed class FlowContext
 
         public void Add(string key, string value)
         {
+        }
+    }
+
+    private struct JsonElementBuffer
+    {
+        private JsonElement[] _items;
+        private int _count;
+
+        public int Count => _count;
+
+        public JsonElement[] Items => _items;
+
+        public JsonElementBuffer(int initialCapacity)
+        {
+            _items = initialCapacity <= 0 ? Array.Empty<JsonElement>() : new JsonElement[initialCapacity];
+            _count = 0;
+        }
+
+        public void Add(JsonElement item)
+        {
+            if ((uint)_count >= (uint)_items.Length)
+            {
+                var newSize = _items.Length == 0 ? 4 : _items.Length * 2;
+                var newItems = new JsonElement[newSize];
+                Array.Copy(_items, 0, newItems, 0, _items.Length);
+                _items = newItems;
+            }
+
+            _items[_count] = item;
+            _count++;
         }
     }
 }

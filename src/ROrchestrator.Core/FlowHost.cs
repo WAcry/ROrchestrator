@@ -97,6 +97,11 @@ public sealed class FlowHost
         {
             if (cached is PlanTemplate<TReq, TResp> typedTemplate)
             {
+                if (_registry.TryGetParamsBinding(flowName, out var paramsType, out var patchType, out var defaultParams))
+                {
+                    flowContext.ConfigureFlowBinding(flowName, paramsType, patchType, defaultParams);
+                }
+
                 return _engine.ExecuteAsync(typedTemplate, request, flowContext);
             }
 
@@ -146,6 +151,11 @@ public sealed class FlowHost
                 newCache.Add(key, template);
                 Volatile.Write(ref _templateCache, newCache);
             }
+        }
+
+        if (_registry.TryGetParamsBinding(flowName, out var configuredParamsType, out var configuredPatchType, out var configuredDefaultParams))
+        {
+            flowContext.ConfigureFlowBinding(flowName, configuredParamsType, configuredPatchType, configuredDefaultParams);
         }
 
         return _engine.ExecuteAsync(template, request, flowContext);

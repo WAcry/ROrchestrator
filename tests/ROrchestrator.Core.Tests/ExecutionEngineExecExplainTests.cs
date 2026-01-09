@@ -1,5 +1,6 @@
 using ROrchestrator.Core;
 using ROrchestrator.Core.Blueprint;
+using System.Text.Json;
 
 namespace ROrchestrator.Core.Tests;
 
@@ -72,6 +73,66 @@ public sealed class ExecutionEngineExecExplainTests
         Assert.Equal("OK", join.OutcomeCode);
         Assert.True(join.EndTimestamp >= join.StartTimestamp);
         Assert.Equal(join.EndTimestamp - join.StartTimestamp, join.DurationStopwatchTicks);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Template_WithExecExplainEnabled_ShouldRecordVariantsAndOverlaysApplied()
+    {
+        var patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"ExplainTestFlow.Overlays\":{" +
+            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{}}]}}," +
+            "\"experiments\":[{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{}}]," +
+            "\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{}}" +
+            "}}}";
+
+        var services = new DummyServiceProvider();
+        var flowContext = new FlowContext(
+            services,
+            CancellationToken.None,
+            FutureDeadline,
+            requestOptions: new FlowRequestOptions(
+                variants: new Dictionary<string, string>
+                {
+                    { "l1", "A" },
+                }));
+
+        flowContext.EnableExecExplain();
+
+        var configProvider = new StaticConfigProvider(configVersion: 123, patchJson);
+        _ = await flowContext.GetConfigSnapshotAsync(configProvider);
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<JsonElement, int>("test.ok", _ => new OkJsonElementModule());
+
+        var blueprint = FlowBlueprint.Define<int, int>("ExplainTestFlow.Overlays")
+            .Stage(
+                "s1",
+                stage =>
+                    stage.Join<int>(
+                        "final",
+                        _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0))))
+            .Build();
+
+        var template = PlanCompiler.Compile(blueprint, catalog);
+        var engine = new ExecutionEngine(catalog);
+
+        var result = await engine.ExecuteAsync(template, request: 0, flowContext);
+        Assert.True(result.IsOk);
+
+        Assert.True(flowContext.TryGetExecExplain(out var explain));
+
+        Assert.Equal(3, explain.OverlaysApplied.Count);
+        Assert.Equal("base", explain.OverlaysApplied[0].Layer);
+
+        Assert.Equal("experiment", explain.OverlaysApplied[1].Layer);
+        Assert.Equal("l1", explain.OverlaysApplied[1].ExperimentLayer);
+        Assert.Equal("A", explain.OverlaysApplied[1].ExperimentVariant);
+
+        Assert.Equal("emergency", explain.OverlaysApplied[2].Layer);
+
+        _ = Assert.Single(explain.Variants);
+        Assert.True(explain.Variants.TryGetValue("l1", out var variant));
+        Assert.Equal("A", variant);
     }
 
     [Fact]
@@ -259,6 +320,14 @@ public sealed class ExecutionEngineExecExplainTests
         {
             _cts.Cancel();
             return new ValueTask<Outcome<int>>(Outcome<int>.Ok(context.Args));
+        }
+    }
+
+    private sealed class OkJsonElementModule : IModule<JsonElement, int>
+    {
+        public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<JsonElement> context)
+        {
+            return new ValueTask<Outcome<int>>(Outcome<int>.Ok(0));
         }
     }
 }

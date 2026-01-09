@@ -48,6 +48,16 @@ internal static class FlowMetricsV1
         unit: CountUnit,
         description: "Join outcomes count for plan-template execution.");
 
+    private static readonly Histogram<double> StageFanoutModuleLatencyMs = Meter.CreateHistogram<double>(
+        name: "rorchestrator.stage.fanout.module.latency.ms",
+        unit: DurationUnit,
+        description: "Stage fanout module latency for plan-template execution.");
+
+    private static readonly Counter<long> StageFanoutModuleOutcomes = Meter.CreateCounter<long>(
+        name: "rorchestrator.stage.fanout.module.outcomes",
+        unit: CountUnit,
+        description: "Stage fanout module outcomes count for plan-template execution.");
+
     internal static bool IsFlowEnabled => FlowLatencyMs.Enabled || FlowOutcomes.Enabled;
 
     internal static bool IsStepEnabled => StepLatencyMs.Enabled || StepOutcomes.Enabled;
@@ -55,6 +65,8 @@ internal static class FlowMetricsV1
     internal static bool IsStepSkipReasonEnabled => StepSkippedReasons.Enabled;
 
     internal static bool IsJoinEnabled => JoinLatencyMs.Enabled || JoinOutcomes.Enabled;
+
+    internal static bool IsStageFanoutModuleEnabled => StageFanoutModuleLatencyMs.Enabled || StageFanoutModuleOutcomes.Enabled;
 
     internal static long StartFlowTimer()
     {
@@ -69,6 +81,11 @@ internal static class FlowMetricsV1
     internal static long StartJoinTimer()
     {
         return JoinLatencyMs.Enabled ? Stopwatch.GetTimestamp() : 0;
+    }
+
+    internal static long StartStageFanoutModuleTimer()
+    {
+        return StageFanoutModuleLatencyMs.Enabled ? Stopwatch.GetTimestamp() : 0;
     }
 
     internal static void RecordFlow(long startTimestamp, string flowName, OutcomeKind outcomeKind)
@@ -163,6 +180,39 @@ internal static class FlowMetricsV1
         if (recordOutcome)
         {
             JoinOutcomes.Add(1, tags);
+        }
+    }
+
+    internal static void RecordStageFanoutModule(
+        long startTimestamp,
+        string flowName,
+        string stageName,
+        string moduleType,
+        OutcomeKind outcomeKind)
+    {
+        var recordDuration = startTimestamp != 0 && StageFanoutModuleLatencyMs.Enabled;
+        var recordOutcome = StageFanoutModuleOutcomes.Enabled;
+
+        if (!recordDuration && !recordOutcome)
+        {
+            return;
+        }
+
+        TagList tags = default;
+        tags.Add(FlowActivitySource.TagFlowName, flowName);
+        tags.Add(FlowActivitySource.TagStageName, stageName);
+        tags.Add(FlowActivitySource.TagModuleType, moduleType);
+        tags.Add(FlowActivitySource.TagOutcomeKind, FlowActivitySource.GetOutcomeKindTagValue(outcomeKind));
+
+        if (recordDuration)
+        {
+            var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
+            StageFanoutModuleLatencyMs.Record(elapsed.TotalMilliseconds, tags);
+        }
+
+        if (recordOutcome)
+        {
+            StageFanoutModuleOutcomes.Add(1, tags);
         }
     }
 

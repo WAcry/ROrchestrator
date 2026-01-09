@@ -5,8 +5,13 @@ namespace ROrchestrator.Core;
 
 public sealed class ExecExplain
 {
+    private static readonly IReadOnlyDictionary<string, string> EmptyVariants =
+        new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(new Dictionary<string, string>(0));
+
     private readonly ExecExplainNode[] _nodes;
     private readonly ExecExplainStageModule[] _stageModules;
+    private readonly PatchEvaluatorV1.PatchOverlayAppliedV1[] _overlaysApplied;
+    private readonly IReadOnlyDictionary<string, string> _variants;
     private readonly ulong _configVersion;
     private readonly bool _hasConfigVersion;
 
@@ -24,11 +29,17 @@ public sealed class ExecExplain
 
     public IReadOnlyList<ExecExplainStageModule> StageModules => _stageModules;
 
+    public IReadOnlyList<PatchEvaluatorV1.PatchOverlayAppliedV1> OverlaysApplied => _overlaysApplied;
+
+    public IReadOnlyDictionary<string, string> Variants => _variants;
+
     internal ExecExplain(
         string flowName,
         ulong planHash,
         bool hasConfigVersion,
         ulong configVersion,
+        PatchEvaluatorV1.PatchOverlayAppliedV1[]? overlaysApplied,
+        IReadOnlyDictionary<string, string>? variants,
         long startTimestamp,
         long endTimestamp,
         ExecExplainNode[] nodes,
@@ -50,6 +61,8 @@ public sealed class ExecExplain
         }
 
         _stageModules = stageModules ?? throw new ArgumentNullException(nameof(stageModules));
+        _overlaysApplied = overlaysApplied ?? Array.Empty<PatchEvaluatorV1.PatchOverlayAppliedV1>();
+        _variants = variants ?? EmptyVariants;
 
         if (startTimestamp < 0)
         {

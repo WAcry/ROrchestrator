@@ -189,6 +189,23 @@ public static class ToolingJsonV1
         writer.WriteString("kind", "explain_patch");
         writer.WriteString("flow_name", flowName);
 
+        if (requestOptions.Variants is null)
+        {
+            writer.WriteNull("variants");
+        }
+        else
+        {
+            writer.WritePropertyName("variants");
+            writer.WriteStartObject();
+
+            foreach (var pair in requestOptions.Variants)
+            {
+                writer.WriteString(pair.Key, pair.Value);
+            }
+
+            writer.WriteEndObject();
+        }
+
         writer.WritePropertyName("overlays_applied");
         writer.WriteStartArray();
 

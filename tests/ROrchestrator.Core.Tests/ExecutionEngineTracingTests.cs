@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using ROrchestrator.Core.Blueprint;
 
 namespace ROrchestrator.Core.Tests;
@@ -115,6 +116,73 @@ public sealed class ExecutionEngineTracingTests
 
             AssertTag(nodeActivity, "outcome.kind", "ok");
             AssertTag(nodeActivity, "outcome.code", "OK");
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Template_WithListener_ShouldCreateStageFanoutModuleActivities_WithExpectedTags()
+    {
+        var patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"TracingTestFlow.Fanout\":{" +
+            "\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[" +
+            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{}}," +
+            "{\"id\":\"m2\",\"use\":\"test.ok\",\"with\":{}}" +
+            "]}}}}}";
+
+        var services = new DummyServiceProvider();
+        var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
+        var configProvider = new StaticConfigProvider(configVersion: 123, patchJson: patchJson);
+        _ = await flowContext.GetConfigSnapshotAsync(configProvider);
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<JsonElement, int>("test.ok", _ => new OkJsonElementModule());
+
+        var blueprint = FlowBlueprint.Define<int, int>("TracingTestFlow.Fanout")
+            .Stage(
+                "s1",
+                stage =>
+                    stage.Join<int>(
+                        "final",
+                        _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0))))
+            .Build();
+
+        var template = PlanCompiler.Compile(blueprint, catalog);
+        var engine = new ExecutionEngine(catalog);
+
+        var activities = new List<Activity>();
+
+        using var listener = CreateListenerForFlowName(activities, expectedFlowName: template.Name);
+
+        var result = await engine.ExecuteAsync(template, request: 0, flowContext);
+        Assert.True(result.IsOk);
+
+        Assert.True(TryGetSingleActivity(activities, activityName: Observability.FlowActivitySource.FlowActivityName, out var flowActivity));
+
+        var stageFanoutActivities = new List<Activity>(capacity: 2);
+        for (var i = 0; i < activities.Count; i++)
+        {
+            var activity = activities[i];
+            if (activity.DisplayName == Observability.FlowActivitySource.StageFanoutModuleActivityName)
+            {
+                stageFanoutActivities.Add(activity);
+            }
+        }
+
+        Assert.Equal(2, stageFanoutActivities.Count);
+
+        for (var i = 0; i < stageFanoutActivities.Count; i++)
+        {
+            var activity = stageFanoutActivities[i];
+
+            Assert.Equal(flowActivity.SpanId, activity.ParentSpanId);
+            AssertTag(activity, "flow.name", template.Name);
+            AssertTag(activity, "stage.name", "s1");
+            AssertTag(activity, "module.type", "test.ok");
+            AssertTag(activity, "outcome.kind", "ok");
+            AssertTag(activity, "outcome.code", "OK");
+
+            var moduleId = GetTagString(activity, "module.id");
+            Assert.True(moduleId == "m1" || moduleId == "m2");
         }
     }
 
@@ -353,6 +421,28 @@ public sealed class ExecutionEngineTracingTests
         return listener;
     }
 
+    private static ActivityListener CreateListenerForFlowName(List<Activity> stopped, string expectedFlowName)
+    {
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == Observability.FlowActivitySource.ActivitySourceName,
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity =>
+            {
+                var flowName = GetTagString(activity, "flow.name");
+                if (flowName != expectedFlowName)
+                {
+                    return;
+                }
+
+                stopped.Add(activity);
+            },
+        };
+
+        ActivitySource.AddActivityListener(listener);
+        return listener;
+    }
+
     private static bool TryGetSingleActivity(List<Activity> activities, string activityName, out Activity activity)
     {
         activity = null!;
@@ -503,6 +593,14 @@ public sealed class ExecutionEngineTracingTests
         public ValueTask<ConfigSnapshot> GetSnapshotAsync(FlowContext context)
         {
             return new ValueTask<ConfigSnapshot>(_snapshot);
+        }
+    }
+
+    private sealed class OkJsonElementModule : IModule<JsonElement, int>
+    {
+        public ValueTask<Outcome<int>> ExecuteAsync(ModuleContext<JsonElement> context)
+        {
+            return new ValueTask<Outcome<int>>(Outcome<int>.Ok(0));
         }
     }
 }

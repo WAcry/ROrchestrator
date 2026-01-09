@@ -56,6 +56,15 @@ public sealed class ExecutionEngineStageFanoutTests
 
         Assert.True(result.IsOk);
 
+        Assert.True(flowContext.TryGetStageFanoutSnapshot("s1", out var snapshot));
+        Assert.Single(snapshot.EnabledModuleIds);
+        Assert.Equal("m_high", snapshot.EnabledModuleIds[0]);
+
+        Assert.Equal(3, snapshot.SkippedModules.Count);
+        AssertStageModuleSkip(snapshot, "m_disabled", ExecutionEngine.DisabledCode);
+        AssertStageModuleSkip(snapshot, "m_gate_false", ExecutionEngine.GateFalseCode);
+        AssertStageModuleSkip(snapshot, "m_low", ExecutionEngine.FanoutTrimCode);
+
         Assert.True(flowContext.TryGetExecExplain(out var explain));
 
         Assert.Equal(4, explain.StageModules.Count);
@@ -178,6 +187,24 @@ public sealed class ExecutionEngineStageFanoutTests
         }
 
         Assert.Fail($"Stage module '{moduleId}' was not recorded.");
+    }
+
+    private static void AssertStageModuleSkip(StageFanoutSnapshot snapshot, string moduleId, string code)
+    {
+        var skipped = snapshot.SkippedModules;
+
+        for (var i = 0; i < skipped.Count; i++)
+        {
+            if (!string.Equals(skipped[i].ModuleId, moduleId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            Assert.Equal(code, skipped[i].ReasonCode);
+            return;
+        }
+
+        Assert.Fail($"Stage module '{moduleId}' was not skipped.");
     }
 
     private sealed class DummyServiceProvider : IServiceProvider
