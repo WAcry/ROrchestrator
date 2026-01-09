@@ -1,4 +1,3 @@
-using System.Text.Json;
 using ROrchestrator.Core;
 using ROrchestrator.Core.Blueprint;
 using ROrchestrator.Tooling;
@@ -95,7 +94,7 @@ public static class RunnerApp
             return 1;
         }
 
-        var execExplainJson = JsonSerializer.Serialize(execExplain);
+        var execExplainJson = ExecExplainJsonV1.ExportJson(execExplain);
         writer.Write("exec_explain:");
         writer.WriteLine(execExplainJson);
 

@@ -477,6 +477,16 @@ public static class PatchEvaluatorV1
 
         public IReadOnlyList<StagePatchV1> Stages => _stages;
 
+        internal JsonDocument GetDocumentForTesting()
+        {
+            if (_document is null)
+            {
+                throw new InvalidOperationException("No patch document is associated with this evaluation.");
+            }
+
+            return _document;
+        }
+
         internal FlowPatchEvaluationV1(
             string flowName,
             JsonDocument document,

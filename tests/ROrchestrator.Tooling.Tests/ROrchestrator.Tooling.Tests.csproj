@@ -23,4 +23,8 @@
     <ProjectReference Include="..\..\src\ROrchestrator.Tooling\ROrchestrator.Tooling.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="Golden\**\*.*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

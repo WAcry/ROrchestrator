@@ -21,7 +21,7 @@ public sealed class ToolingJsonV1Tests
         Assert.Equal(2, result.ExitCode);
 
         Assert.Equal(
-            "{\"kind\":\"validate\",\"is_valid\":false,\"findings\":[{\"severity\":\"error\",\"code\":\"CFG_MODULE_ARGS_MISSING\",\"path\":\"$.flows.HomeFeed.stages.s1.modules[0].with\",\"message\":\"modules[].with is required.\"}]}",
+            "{\"kind\":\"validate\",\"tooling_json_version\":\"v1\",\"is_valid\":false,\"findings\":[{\"severity\":\"error\",\"code\":\"CFG_MODULE_ARGS_MISSING\",\"path\":\"$.flows.HomeFeed.stages.s1.modules[0].with\",\"message\":\"modules[].with is required.\"}]}",
             result.Json);
     }
 
@@ -36,7 +36,7 @@ public sealed class ToolingJsonV1Tests
         Assert.Equal(0, result.ExitCode);
 
         Assert.Equal(
-            "{\"kind\":\"explain\",\"flow_name\":\"HomeFeed\",\"plan_template_hash\":\"EB1FEB02AEE93B82\",\"nodes\":[{\"kind\":\"step\",\"name\":\"n1\",\"stage_name\":\"s1\",\"module_type\":\"test.module\",\"output_type\":\"System.Int32\"},{\"kind\":\"join\",\"name\":\"join\",\"stage_name\":\"s1\",\"module_type\":null,\"output_type\":\"System.Int32\"}]}",
+            "{\"kind\":\"explain\",\"tooling_json_version\":\"v1\",\"flow_name\":\"HomeFeed\",\"plan_template_hash\":\"EB1FEB02AEE93B82\",\"nodes\":[{\"kind\":\"step\",\"name\":\"n1\",\"stage_name\":\"s1\",\"module_type\":\"test.module\",\"output_type\":\"System.Int32\"},{\"kind\":\"join\",\"name\":\"join\",\"stage_name\":\"s1\",\"module_type\":null,\"output_type\":\"System.Int32\"}]}",
             result.Json);
     }
 
@@ -51,7 +51,7 @@ public sealed class ToolingJsonV1Tests
         Assert.Equal(0, result.ExitCode);
 
         Assert.Equal(
-            "{\"kind\":\"explain\",\"flow_name\":\"HomeFeed\",\"plan_template_hash\":\"EB1FEB02AEE93B82\",\"nodes\":[{\"kind\":\"step\",\"name\":\"n1\",\"stage_name\":\"s1\",\"module_type\":\"test.module\",\"output_type\":\"System.Int32\"},{\"kind\":\"join\",\"name\":\"join\",\"stage_name\":\"s1\",\"module_type\":null,\"output_type\":\"System.Int32\"}],\"mermaid\":\"flowchart TD\\n  n0[\\\"n1\\\\nstep\\\\n(test.module)\\\\nSystem.Int32\\\"] --> n1[\\\"join\\\\njoin\\\\nSystem.Int32\\\"]\\n\"}",
+            "{\"kind\":\"explain\",\"tooling_json_version\":\"v1\",\"flow_name\":\"HomeFeed\",\"plan_template_hash\":\"EB1FEB02AEE93B82\",\"nodes\":[{\"kind\":\"step\",\"name\":\"n1\",\"stage_name\":\"s1\",\"module_type\":\"test.module\",\"output_type\":\"System.Int32\"},{\"kind\":\"join\",\"name\":\"join\",\"stage_name\":\"s1\",\"module_type\":null,\"output_type\":\"System.Int32\"}],\"mermaid\":\"flowchart TD\\n  n0[\\\"n1\\\\nstep\\\\n(test.module)\\\\nSystem.Int32\\\"] --> n1[\\\"join\\\\njoin\\\\nSystem.Int32\\\"]\\n\"}",
             result.Json);
     }
 
@@ -85,7 +85,7 @@ public sealed class ToolingJsonV1Tests
         Assert.Equal(0, result.ExitCode);
 
         Assert.Equal(
-            "{\"kind\":\"diff\",\"module_diffs\":[{\"kind\":\"added\",\"flow_name\":\"HomeFeed\",\"stage_name\":\"s1\",\"module_id\":\"m2\",\"path\":\"$.flows.HomeFeed.stages.s1.modules[1]\",\"experiment_layer\":null,\"experiment_variant\":null}],\"param_diffs\":[],\"fanout_max_diffs\":[],\"emergency_diffs\":[]}",
+            "{\"kind\":\"diff\",\"tooling_json_version\":\"v1\",\"module_diffs\":[{\"kind\":\"added\",\"flow_name\":\"HomeFeed\",\"stage_name\":\"s1\",\"module_id\":\"m2\",\"path\":\"$.flows.HomeFeed.stages.s1.modules[1]\",\"experiment_layer\":null,\"experiment_variant\":null}],\"param_diffs\":[],\"fanout_max_diffs\":[],\"emergency_diffs\":[]}",
             result.Json);
     }
 
@@ -107,7 +107,7 @@ public sealed class ToolingJsonV1Tests
         Assert.Equal(0, result.ExitCode);
 
         Assert.Equal(
-            "{\"kind\":\"diff\",\"module_diffs\":[{\"kind\":\"shadow_added\",\"flow_name\":\"HomeFeed\",\"stage_name\":\"s1\",\"module_id\":\"m_shadow_added\",\"path\":\"$.flows.HomeFeed.stages.s1.modules[0].shadow\",\"experiment_layer\":null,\"experiment_variant\":null},{\"kind\":\"shadow_removed\",\"flow_name\":\"HomeFeed\",\"stage_name\":\"s1\",\"module_id\":\"m_shadow_removed\",\"path\":\"$.flows.HomeFeed.stages.s1.modules[1].shadow\",\"experiment_layer\":null,\"experiment_variant\":null},{\"kind\":\"shadow_sample_changed\",\"flow_name\":\"HomeFeed\",\"stage_name\":\"s1\",\"module_id\":\"m_shadow_sample\",\"path\":\"$.flows.HomeFeed.stages.s1.modules[2].shadow.sample\",\"experiment_layer\":null,\"experiment_variant\":null}],\"param_diffs\":[],\"fanout_max_diffs\":[],\"emergency_diffs\":[]}",
+            "{\"kind\":\"diff\",\"tooling_json_version\":\"v1\",\"module_diffs\":[{\"kind\":\"shadow_added\",\"flow_name\":\"HomeFeed\",\"stage_name\":\"s1\",\"module_id\":\"m_shadow_added\",\"path\":\"$.flows.HomeFeed.stages.s1.modules[0].shadow\",\"experiment_layer\":null,\"experiment_variant\":null},{\"kind\":\"shadow_removed\",\"flow_name\":\"HomeFeed\",\"stage_name\":\"s1\",\"module_id\":\"m_shadow_removed\",\"path\":\"$.flows.HomeFeed.stages.s1.modules[1].shadow\",\"experiment_layer\":null,\"experiment_variant\":null},{\"kind\":\"shadow_sample_changed\",\"flow_name\":\"HomeFeed\",\"stage_name\":\"s1\",\"module_id\":\"m_shadow_sample\",\"path\":\"$.flows.HomeFeed.stages.s1.modules[2].shadow.sample\",\"experiment_layer\":null,\"experiment_variant\":null}],\"param_diffs\":[],\"fanout_max_diffs\":[],\"emergency_diffs\":[]}",
             result.Json);
     }
 
@@ -121,7 +121,7 @@ public sealed class ToolingJsonV1Tests
         Assert.Equal(2, result.ExitCode);
 
         Assert.Equal(
-            "{\"kind\":\"diff\",\"error\":{\"code\":\"DIFF_INPUT_INVALID\",\"message\":\"oldPatchJson is not a valid JSON document.\"}}",
+            "{\"kind\":\"diff\",\"tooling_json_version\":\"v1\",\"error\":{\"code\":\"DIFF_INPUT_INVALID\",\"message\":\"oldPatchJson is not a valid JSON document.\"}}",
             result.Json);
     }
 
@@ -156,7 +156,7 @@ public sealed class ToolingJsonV1Tests
         Assert.Equal(0, result.ExitCode);
 
         Assert.Equal(
-            "{\"kind\":\"explain_patch\",\"flow_name\":\"HomeFeed\",\"variants\":{\"l1\":\"A\"},\"overlays_applied\":[{\"layer\":\"base\",\"experiment_layer\":null,\"experiment_variant\":null},{\"layer\":\"experiment\",\"experiment_layer\":\"l1\",\"experiment_variant\":\"A\"},{\"layer\":\"emergency\",\"experiment_layer\":null,\"experiment_variant\":null}],\"stages\":[{\"stage_name\":\"s1\",\"fanout_max\":1,\"modules\":[{\"module_id\":\"m_disabled\",\"module_type\":\"test.module\",\"enabled\":false,\"disabled_by_emergency\":true,\"priority\":0,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"skip\",\"decision_code\":\"DISABLED\"},{\"module_id\":\"m_gate_false\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"gate_decision_code\":\"GATE_FALSE\",\"gate_selector_name\":null,\"decision_kind\":\"skip\",\"decision_code\":\"GATE_FALSE\"},{\"module_id\":\"m_high\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":10,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"},{\"module_id\":\"m_low\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"skip\",\"decision_code\":\"FANOUT_TRIM\"},{\"module_id\":\"m_exp\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":5,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"skip\",\"decision_code\":\"FANOUT_TRIM\"}],\"shadow_modules\":[{\"module_id\":\"m_shadow\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"shadow_sample_rate_bps\":10000,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"}]}]}",
+            "{\"kind\":\"explain_patch\",\"tooling_json_version\":\"v1\",\"flow_name\":\"HomeFeed\",\"variants\":{\"l1\":\"A\"},\"overlays_applied\":[{\"layer\":\"base\",\"experiment_layer\":null,\"experiment_variant\":null},{\"layer\":\"experiment\",\"experiment_layer\":\"l1\",\"experiment_variant\":\"A\"},{\"layer\":\"emergency\",\"experiment_layer\":null,\"experiment_variant\":null}],\"stages\":[{\"stage_name\":\"s1\",\"fanout_max\":1,\"modules\":[{\"module_id\":\"m_disabled\",\"module_type\":\"test.module\",\"enabled\":false,\"disabled_by_emergency\":true,\"priority\":0,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"skip\",\"decision_code\":\"DISABLED\"},{\"module_id\":\"m_gate_false\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"gate_decision_code\":\"GATE_FALSE\",\"gate_selector_name\":null,\"decision_kind\":\"skip\",\"decision_code\":\"GATE_FALSE\"},{\"module_id\":\"m_high\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":10,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"},{\"module_id\":\"m_low\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"skip\",\"decision_code\":\"FANOUT_TRIM\"},{\"module_id\":\"m_exp\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":5,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"skip\",\"decision_code\":\"FANOUT_TRIM\"}],\"shadow_modules\":[{\"module_id\":\"m_shadow\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"shadow_sample_rate_bps\":10000,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"}]}]}",
             result.Json);
     }
 
@@ -174,7 +174,7 @@ public sealed class ToolingJsonV1Tests
         Assert.Equal(0, result.ExitCode);
 
         Assert.Equal(
-            "{\"kind\":\"explain_patch\",\"flow_name\":\"HomeFeed\",\"variants\":null,\"overlays_applied\":[{\"layer\":\"base\",\"experiment_layer\":null,\"experiment_variant\":null}],\"stages\":[{\"stage_name\":\"s1\",\"fanout_max\":1,\"modules\":[{\"module_id\":\"m1\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"}],\"shadow_modules\":[{\"module_id\":\"m_shadow\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"shadow_sample_rate_bps\":10000,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"}]}],\"mermaid\":\"flowchart TD\\n  s0[\\\"s1\\\\nfanout_max=1\\\"]\\n  s0 --> m0[\\\"m1\\\\nexecute\\\\nSELECTED\\\"]\\n  s0 -.-> m1[\\\"m_shadow\\\\nshadow\\\\nsample_bps=10000\\\\nexecute\\\\nSELECTED\\\"]\\n\"}",
+            "{\"kind\":\"explain_patch\",\"tooling_json_version\":\"v1\",\"flow_name\":\"HomeFeed\",\"variants\":null,\"overlays_applied\":[{\"layer\":\"base\",\"experiment_layer\":null,\"experiment_variant\":null}],\"stages\":[{\"stage_name\":\"s1\",\"fanout_max\":1,\"modules\":[{\"module_id\":\"m1\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"}],\"shadow_modules\":[{\"module_id\":\"m_shadow\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"shadow_sample_rate_bps\":10000,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"}]}],\"mermaid\":\"flowchart TD\\n  s0[\\\"s1\\\\nfanout_max=1\\\"]\\n  s0 --> m0[\\\"m1\\\\nexecute\\\\nSELECTED\\\"]\\n  s0 -.-> m1[\\\"m_shadow\\\\nshadow\\\\nsample_bps=10000\\\\nexecute\\\\nSELECTED\\\"]\\n\"}",
             result.Json);
     }
 
@@ -202,7 +202,32 @@ public sealed class ToolingJsonV1Tests
         Assert.Equal(0, result.ExitCode);
 
         Assert.Equal(
-            "{\"kind\":\"explain_patch\",\"flow_name\":\"HomeFeed\",\"variants\":null,\"overlays_applied\":[{\"layer\":\"base\",\"experiment_layer\":null,\"experiment_variant\":null}],\"stages\":[{\"stage_name\":\"s1\",\"fanout_max\":2,\"modules\":[{\"module_id\":\"m_sel_true\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"gate_decision_code\":\"GATE_TRUE\",\"gate_selector_name\":\"always_true\",\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"},{\"module_id\":\"m_sel_false\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"gate_decision_code\":\"GATE_FALSE\",\"gate_selector_name\":\"always_false\",\"decision_kind\":\"skip\",\"decision_code\":\"GATE_FALSE\"}],\"shadow_modules\":[]}]}",
+            "{\"kind\":\"explain_patch\",\"tooling_json_version\":\"v1\",\"flow_name\":\"HomeFeed\",\"variants\":null,\"overlays_applied\":[{\"layer\":\"base\",\"experiment_layer\":null,\"experiment_variant\":null}],\"stages\":[{\"stage_name\":\"s1\",\"fanout_max\":2,\"modules\":[{\"module_id\":\"m_sel_true\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"gate_decision_code\":\"GATE_TRUE\",\"gate_selector_name\":\"always_true\",\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"},{\"module_id\":\"m_sel_false\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"gate_decision_code\":\"GATE_FALSE\",\"gate_selector_name\":\"always_false\",\"decision_kind\":\"skip\",\"decision_code\":\"GATE_FALSE\"}],\"shadow_modules\":[]}]}",
+            result.Json);
+    }
+
+    [Fact]
+    public void ExplainPatchJson_ShouldSortVariantsByKey()
+    {
+        var patchJson = "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}}";
+
+        var requestOptions = new FlowRequestOptions(
+            variants: new Dictionary<string, string>
+            {
+                { "l2", "A" },
+                { "l1", "B" },
+            });
+
+        var result = ToolingJsonV1.ExplainPatchJson(
+            flowName: "HomeFeed",
+            patchJson: patchJson,
+            requestOptions: requestOptions,
+            includeMermaid: false);
+
+        Assert.Equal(0, result.ExitCode);
+
+        Assert.Equal(
+            "{\"kind\":\"explain_patch\",\"tooling_json_version\":\"v1\",\"flow_name\":\"HomeFeed\",\"variants\":{\"l1\":\"B\",\"l2\":\"A\"},\"overlays_applied\":[{\"layer\":\"base\",\"experiment_layer\":null,\"experiment_variant\":null}],\"stages\":[{\"stage_name\":\"s1\",\"fanout_max\":1,\"modules\":[{\"module_id\":\"m1\",\"module_type\":\"test.module\",\"enabled\":true,\"disabled_by_emergency\":false,\"priority\":0,\"gate_decision_code\":null,\"gate_selector_name\":null,\"decision_kind\":\"execute\",\"decision_code\":\"SELECTED\"}],\"shadow_modules\":[]}]}",
             result.Json);
     }
 

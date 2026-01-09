@@ -180,12 +180,6 @@ public sealed class PatchEvaluatorV1Tests
 
     private static JsonDocument GetEvaluationDocument(PatchEvaluatorV1.FlowPatchEvaluationV1 evaluation)
     {
-        var documentField = typeof(PatchEvaluatorV1.FlowPatchEvaluationV1).GetField(
-            "_document",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-
-        var document = documentField?.GetValue(evaluation) as JsonDocument;
-        Assert.NotNull(document);
-        return document!;
+        return evaluation.GetDocumentForTesting();
     }
 }

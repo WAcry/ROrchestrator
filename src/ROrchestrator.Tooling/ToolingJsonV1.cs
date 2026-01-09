@@ -9,6 +9,8 @@ namespace ROrchestrator.Tooling;
 
 public static class ToolingJsonV1
 {
+    private const string ToolingJsonVersion = "v1";
+
     public static ToolingCommandResult ValidatePatchJson(string patchJson, FlowRegistry registry, ModuleCatalog catalog)
     {
         return ValidatePatchJson(patchJson, registry, catalog, SelectorRegistry.Empty);
@@ -189,24 +191,10 @@ public static class ToolingJsonV1
 
         writer.WriteStartObject();
         writer.WriteString("kind", "explain_patch");
+        writer.WriteString("tooling_json_version", ToolingJsonVersion);
         writer.WriteString("flow_name", flowName);
 
-        if (requestOptions.Variants is null)
-        {
-            writer.WriteNull("variants");
-        }
-        else
-        {
-            writer.WritePropertyName("variants");
-            writer.WriteStartObject();
-
-            foreach (var pair in requestOptions.Variants)
-            {
-                writer.WriteString(pair.Key, pair.Value);
-            }
-
-            writer.WriteEndObject();
-        }
+        WriteSortedVariants(writer, requestOptions.Variants);
 
         writer.WritePropertyName("overlays_applied");
         writer.WriteStartArray();
@@ -268,6 +256,62 @@ public static class ToolingJsonV1
         }
 
         writer.WriteEndObject();
+    }
+
+    private static void WriteSortedVariants(Utf8JsonWriter writer, IReadOnlyDictionary<string, string>? variants)
+    {
+        if (variants is null)
+        {
+            writer.WriteNull("variants");
+            return;
+        }
+
+        writer.WritePropertyName("variants");
+        writer.WriteStartObject();
+
+        if (variants.Count != 0)
+        {
+            var rented = ArrayPool<KeyValuePair<string, string>>.Shared.Rent(variants.Count);
+            var filledCount = 0;
+
+            try
+            {
+                foreach (var pair in variants)
+                {
+                    rented[filledCount] = pair;
+                    filledCount++;
+                }
+
+                Array.Sort(rented, 0, filledCount, KeyValuePairByKeyComparer.Instance);
+
+                for (var i = 0; i < filledCount; i++)
+                {
+                    var pair = rented[i];
+                    writer.WriteString(pair.Key, pair.Value);
+                }
+            }
+            finally
+            {
+                Array.Clear(rented, 0, filledCount);
+                ArrayPool<KeyValuePair<string, string>>.Shared.Return(rented);
+            }
+        }
+
+        writer.WriteEndObject();
+    }
+
+    private sealed class KeyValuePairByKeyComparer : IComparer<KeyValuePair<string, string>>
+    {
+        public static readonly KeyValuePairByKeyComparer Instance = new();
+
+        private KeyValuePairByKeyComparer()
+        {
+        }
+
+        public int Compare(KeyValuePair<string, string> x, KeyValuePair<string, string> y)
+        {
+            return string.Compare(x.Key, y.Key, StringComparison.Ordinal);
+        }
     }
 
     private static void WriteExplainPatchStage(
@@ -834,6 +878,7 @@ public static class ToolingJsonV1
 
         writer.WriteStartObject();
         writer.WriteString("kind", "explain_patch");
+        writer.WriteString("tooling_json_version", ToolingJsonVersion);
         writer.WritePropertyName("error");
         writer.WriteStartObject();
         writer.WriteString("code", code);
@@ -893,6 +938,7 @@ public static class ToolingJsonV1
 
         writer.WriteStartObject();
         writer.WriteString("kind", "explain");
+        writer.WriteString("tooling_json_version", ToolingJsonVersion);
         writer.WriteString("flow_name", explain.FlowName);
         writer.WriteString("plan_template_hash", explain.PlanTemplateHash.ToString("X16"));
 
@@ -1024,6 +1070,7 @@ public static class ToolingJsonV1
 
         writer.WriteStartObject();
         writer.WriteString("kind", "explain");
+        writer.WriteString("tooling_json_version", ToolingJsonVersion);
 
         writer.WritePropertyName("error");
         writer.WriteStartObject();
@@ -1044,6 +1091,7 @@ public static class ToolingJsonV1
 
         writer.WriteStartObject();
         writer.WriteString("kind", "validate");
+        writer.WriteString("tooling_json_version", ToolingJsonVersion);
         writer.WriteBoolean("is_valid", report.IsValid);
 
         writer.WritePropertyName("findings");
@@ -1100,6 +1148,7 @@ public static class ToolingJsonV1
 
         writer.WriteStartObject();
         writer.WriteString("kind", "diff");
+        writer.WriteString("tooling_json_version", ToolingJsonVersion);
 
         WriteModuleDiffs(writer, moduleReport.Diffs);
         WriteParamDiffs(writer, paramReport.Diffs);
@@ -1119,6 +1168,7 @@ public static class ToolingJsonV1
 
         writer.WriteStartObject();
         writer.WriteString("kind", "diff");
+        writer.WriteString("tooling_json_version", ToolingJsonVersion);
         writer.WritePropertyName("error");
         writer.WriteStartObject();
         writer.WriteString("code", code);
