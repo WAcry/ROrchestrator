@@ -205,6 +205,11 @@ internal sealed class LkgConfigProvider : IConfigProvider
         catch
         {
         }
+
+        if (context.TryGetFlowNameHint(out var flowName))
+        {
+            Observability.FlowMetricsV1.RecordConfigLkgFallback(flowName);
+        }
     }
 
     private sealed class SnapshotBox

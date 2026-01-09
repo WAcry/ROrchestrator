@@ -115,7 +115,8 @@ public static class ToolingJsonV1
         try
         {
             using var evaluation = PatchEvaluatorV1.Evaluate(flowName, patchJson, requestOptions, qosTier: qosTier);
-            var json = BuildExplainPatchJson(flowName, evaluation, requestOptions, includeMermaid, selectorRegistry, qosTier);
+            var maxInFlight = ParseMaxInFlightMap(patchJson);
+            var json = BuildExplainPatchJson(flowName, evaluation, requestOptions, includeMermaid, selectorRegistry, qosTier, maxInFlight);
             return new ToolingCommandResult(exitCode: 0, json);
         }
         catch (Exception ex) when (IsExplainPatchInputException(ex))
@@ -192,12 +193,14 @@ public static class ToolingJsonV1
         try
         {
             var moduleReport = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+            var qosReport = PatchDiffV1.DiffQosTierPatches(oldPatchJson, newPatchJson);
+            var limitReport = PatchDiffV1.DiffLimitsMaxInFlight(oldPatchJson, newPatchJson);
             var paramReport = PatchDiffV1.DiffParams(oldPatchJson, newPatchJson);
             var fanoutReport = PatchDiffV1.DiffFanoutMax(oldPatchJson, newPatchJson);
             var emergencyReport = PatchDiffV1.DiffEmergency(oldPatchJson, newPatchJson);
 
-            var riskReport = AnalyzeRiskReport(oldPatchJson, newPatchJson, moduleReport, paramReport, fanoutReport, emergencyReport);
-            var json = BuildDiffJson(moduleReport, paramReport, fanoutReport, emergencyReport, riskReport);
+            var riskReport = AnalyzeRiskReport(oldPatchJson, newPatchJson, moduleReport, qosReport, limitReport, paramReport, fanoutReport, emergencyReport);
+            var json = BuildDiffJson(moduleReport, qosReport, limitReport, paramReport, fanoutReport, emergencyReport, riskReport);
             return new ToolingCommandResult(exitCode: 0, json);
         }
         catch (Exception ex) when (IsDiffInputException(ex))
@@ -224,7 +227,8 @@ public static class ToolingJsonV1
         FlowRequestOptions requestOptions,
         bool includeMermaid,
         SelectorRegistry? selectorRegistry,
-        QosTier qosTier)
+        QosTier qosTier,
+        Dictionary<string, int>? maxInFlight)
     {
         var output = new ArrayBufferWriter<byte>(256);
         using var writer = new Utf8JsonWriter(
@@ -267,7 +271,7 @@ public static class ToolingJsonV1
 
         for (var i = 0; i < stages.Count; i++)
         {
-            WriteExplainPatchStage(writer, stages[i], requestOptions, selectorRegistry, ref selectorFlowContext);
+            WriteExplainPatchStage(writer, stages[i], requestOptions, selectorRegistry, maxInFlight, ref selectorFlowContext);
         }
 
         writer.WriteEndArray();
@@ -290,6 +294,8 @@ public static class ToolingJsonV1
         SelectorRegistry? selectorRegistry,
         QosTier qosTier)
     {
+        var maxInFlight = ParseMaxInFlightMap(patchJson);
+
         var output = new ArrayBufferWriter<byte>(512);
         using var writer = new Utf8JsonWriter(
             output,
@@ -355,7 +361,7 @@ public static class ToolingJsonV1
                 writer.WritePropertyName("stages");
                 writer.WriteStartArray();
 
-                WritePreviewMatrixStages(writer, evaluation.Stages, requestOptions, selectorRegistry, ref selectorFlowContext);
+                WritePreviewMatrixStages(writer, evaluation.Stages, requestOptions, selectorRegistry, maxInFlight, ref selectorFlowContext);
 
                 writer.WriteEndArray();
 
@@ -395,11 +401,86 @@ public static class ToolingJsonV1
         return Encoding.UTF8.GetString(output.WrittenSpan);
     }
 
+    private static Dictionary<string, int>? ParseMaxInFlightMap(string patchJson)
+    {
+        if (patchJson.Length == 0)
+        {
+            return null;
+        }
+
+        using var document = JsonDocument.Parse(patchJson);
+
+        var root = document.RootElement;
+
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            throw new FormatException("patchJson must be a JSON object.");
+        }
+
+        if (!root.TryGetProperty("schemaVersion", out var schemaVersion)
+            || schemaVersion.ValueKind != JsonValueKind.String
+            || !schemaVersion.ValueEquals("v1"))
+        {
+            throw new FormatException("patchJson schemaVersion is missing or unsupported.");
+        }
+
+        if (!root.TryGetProperty("limits", out var limitsElement) || limitsElement.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        if (!limitsElement.TryGetProperty("moduleConcurrency", out var moduleConcurrencyElement)
+            || moduleConcurrencyElement.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        if (!moduleConcurrencyElement.TryGetProperty("maxInFlight", out var maxInFlightElement)
+            || maxInFlightElement.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var count = 0;
+
+        foreach (var _ in maxInFlightElement.EnumerateObject())
+        {
+            count++;
+        }
+
+        if (count == 0)
+        {
+            return null;
+        }
+
+        var map = new Dictionary<string, int>(capacity: count);
+
+        foreach (var entry in maxInFlightElement.EnumerateObject())
+        {
+            var key = entry.Name;
+
+            if (string.IsNullOrEmpty(key))
+            {
+                continue;
+            }
+
+            if (entry.Value.ValueKind != JsonValueKind.Number || !entry.Value.TryGetInt32(out var max) || max <= 0)
+            {
+                continue;
+            }
+
+            map[key] = max;
+        }
+
+        return map.Count == 0 ? null : map;
+    }
+
     private static void WritePreviewMatrixStages(
         Utf8JsonWriter writer,
         IReadOnlyList<PatchEvaluatorV1.StagePatchV1> stages,
         FlowRequestOptions requestOptions,
         SelectorRegistry? selectorRegistry,
+        Dictionary<string, int>? maxInFlight,
         ref FlowContext? selectorFlowContext)
     {
         if (stages.Count == 0)
@@ -421,7 +502,7 @@ public static class ToolingJsonV1
 
         for (var i = 0; i < sorted.Length; i++)
         {
-            WritePreviewMatrixStage(writer, sorted[i], requestOptions, selectorRegistry, ref selectorFlowContext);
+            WritePreviewMatrixStage(writer, sorted[i], requestOptions, selectorRegistry, maxInFlight, ref selectorFlowContext);
         }
     }
 
@@ -430,6 +511,7 @@ public static class ToolingJsonV1
         PatchEvaluatorV1.StagePatchV1 stage,
         FlowRequestOptions requestOptions,
         SelectorRegistry? selectorRegistry,
+        Dictionary<string, int>? maxInFlight,
         ref FlowContext? selectorFlowContext)
     {
         var modules = stage.Modules;
@@ -484,21 +566,53 @@ public static class ToolingJsonV1
             executeCount = 0;
         }
 
-        var selectedModuleIds = executeCount == 0 ? Array.Empty<string>() : new string[executeCount];
-
-        for (var rank = 0; rank < executeCount; rank++)
-        {
-            var moduleIndex = candidates[rank].ModuleIndex;
-            selectedModuleIds[rank] = modules[moduleIndex].ModuleId;
-        }
-
         var shadowModules = stage.ShadowModules;
         var shadowCount = shadowModules.Count;
 
         var userId = requestOptions.UserId;
 
-        var selectedShadowModuleIds = shadowCount == 0 ? Array.Empty<string>() : new string[shadowCount];
-        var selectedShadowCount = 0;
+        writer.WriteStartObject();
+        writer.WriteString("stage_name", stage.StageName);
+
+        if (stage.HasFanoutMax)
+        {
+            writer.WriteNumber("fanout_max", stage.FanoutMax);
+        }
+        else
+        {
+            writer.WriteNull("fanout_max");
+        }
+
+        writer.WritePropertyName("selected_modules");
+        writer.WriteStartArray();
+
+        for (var rank = 0; rank < executeCount; rank++)
+        {
+            var moduleIndex = candidates[rank].ModuleIndex;
+            var module = modules[moduleIndex];
+
+            writer.WriteStartObject();
+            writer.WriteString("module_id", module.ModuleId);
+
+            var limitKey = module.LimitKey ?? module.ModuleType;
+            writer.WriteString("limit_key", limitKey);
+
+            if (maxInFlight is not null && maxInFlight.TryGetValue(limitKey, out var max))
+            {
+                writer.WriteNumber("max_in_flight", max);
+            }
+            else
+            {
+                writer.WriteNull("max_in_flight");
+            }
+
+            writer.WriteEndObject();
+        }
+
+        writer.WriteEndArray();
+
+        writer.WritePropertyName("selected_shadow_modules");
+        writer.WriteStartArray();
 
         for (var i = 0; i < shadowCount; i++)
         {
@@ -523,52 +637,22 @@ public static class ToolingJsonV1
                 continue;
             }
 
-            selectedShadowModuleIds[selectedShadowCount] = module.ModuleId;
-            selectedShadowCount++;
-        }
+            writer.WriteStartObject();
+            writer.WriteString("module_id", module.ModuleId);
 
-        if (selectedShadowCount != selectedShadowModuleIds.Length)
-        {
-            if (selectedShadowCount == 0)
+            var limitKey = module.LimitKey ?? module.ModuleType;
+            writer.WriteString("limit_key", limitKey);
+
+            if (maxInFlight is not null && maxInFlight.TryGetValue(limitKey, out var max))
             {
-                selectedShadowModuleIds = Array.Empty<string>();
+                writer.WriteNumber("max_in_flight", max);
             }
             else
             {
-                var trimmed = new string[selectedShadowCount];
-                Array.Copy(selectedShadowModuleIds, 0, trimmed, 0, selectedShadowCount);
-                selectedShadowModuleIds = trimmed;
+                writer.WriteNull("max_in_flight");
             }
-        }
 
-        writer.WriteStartObject();
-        writer.WriteString("stage_name", stage.StageName);
-
-        if (stage.HasFanoutMax)
-        {
-            writer.WriteNumber("fanout_max", stage.FanoutMax);
-        }
-        else
-        {
-            writer.WriteNull("fanout_max");
-        }
-
-        writer.WritePropertyName("selected_module_ids");
-        writer.WriteStartArray();
-
-        for (var i = 0; i < selectedModuleIds.Length; i++)
-        {
-            writer.WriteStringValue(selectedModuleIds[i]);
-        }
-
-        writer.WriteEndArray();
-
-        writer.WritePropertyName("selected_shadow_module_ids");
-        writer.WriteStartArray();
-
-        for (var i = 0; i < selectedShadowModuleIds.Length; i++)
-        {
-            writer.WriteStringValue(selectedShadowModuleIds[i]);
+            writer.WriteEndObject();
         }
 
         writer.WriteEndArray();
@@ -753,6 +837,7 @@ public static class ToolingJsonV1
         PatchEvaluatorV1.StagePatchV1 stage,
         FlowRequestOptions requestOptions,
         SelectorRegistry? selectorRegistry,
+        Dictionary<string, int>? maxInFlight,
         ref FlowContext? selectorFlowContext)
     {
         var modules = stage.Modules;
@@ -858,6 +943,19 @@ public static class ToolingJsonV1
             writer.WriteStartObject();
             writer.WriteString("module_id", module.ModuleId);
             writer.WriteString("module_type", module.ModuleType);
+
+            var limitKey = module.LimitKey ?? module.ModuleType;
+            writer.WriteString("limit_key", limitKey);
+
+            if (maxInFlight is not null && maxInFlight.TryGetValue(limitKey, out var max))
+            {
+                writer.WriteNumber("max_in_flight", max);
+            }
+            else
+            {
+                writer.WriteNull("max_in_flight");
+            }
+
             writer.WriteBoolean("enabled", module.Enabled);
             writer.WriteBoolean("disabled_by_emergency", module.DisabledByEmergency);
             writer.WriteNumber("priority", module.Priority);
@@ -940,6 +1038,19 @@ public static class ToolingJsonV1
             writer.WriteStartObject();
             writer.WriteString("module_id", module.ModuleId);
             writer.WriteString("module_type", module.ModuleType);
+
+            var limitKey = module.LimitKey ?? module.ModuleType;
+            writer.WriteString("limit_key", limitKey);
+
+            if (maxInFlight is not null && maxInFlight.TryGetValue(limitKey, out var max))
+            {
+                writer.WriteNumber("max_in_flight", max);
+            }
+            else
+            {
+                writer.WriteNull("max_in_flight");
+            }
+
             writer.WriteBoolean("enabled", module.Enabled);
             writer.WriteBoolean("disabled_by_emergency", module.DisabledByEmergency);
             writer.WriteNumber("priority", module.Priority);
@@ -1573,6 +1684,8 @@ public static class ToolingJsonV1
 
     private static string BuildDiffJson(
         PatchModuleDiffReport moduleReport,
+        PatchQosTierDiffReport qosReport,
+        PatchLimitDiffReport limitReport,
         PatchParamDiffReport paramReport,
         PatchFanoutMaxDiffReport fanoutReport,
         PatchEmergencyDiffReport emergencyReport,
@@ -1586,6 +1699,8 @@ public static class ToolingJsonV1
         writer.WriteString("tooling_json_version", ToolingJsonVersion);
 
         WriteModuleDiffs(writer, moduleReport.Diffs);
+        WriteQosTierDiffs(writer, qosReport.Diffs);
+        WriteLimitDiffs(writer, limitReport.Diffs);
         WriteParamDiffs(writer, paramReport.Diffs);
         WriteFanoutMaxDiffs(writer, fanoutReport.Diffs);
         WriteEmergencyDiffs(writer, emergencyReport.Diffs);
@@ -1616,6 +1731,12 @@ public static class ToolingJsonV1
 
         public int ShadowChangeCount { get; }
 
+        public int LimitKeyChangeCount { get; }
+
+        public int LimitChangeCount { get; }
+
+        public int QosChangeCount { get; }
+
         public int ParamChangeCount { get; }
 
         public int EmergencyChangeCount { get; }
@@ -1626,6 +1747,9 @@ public static class ToolingJsonV1
             int moduleAddedCount,
             int moduleRemovedCount,
             int shadowChangeCount,
+            int limitKeyChangeCount,
+            int limitChangeCount,
+            int qosChangeCount,
             int paramChangeCount,
             int emergencyChangeCount)
         {
@@ -1634,6 +1758,9 @@ public static class ToolingJsonV1
             ModuleAddedCount = moduleAddedCount;
             ModuleRemovedCount = moduleRemovedCount;
             ShadowChangeCount = shadowChangeCount;
+            LimitKeyChangeCount = limitKeyChangeCount;
+            LimitChangeCount = limitChangeCount;
+            QosChangeCount = qosChangeCount;
             ParamChangeCount = paramChangeCount;
             EmergencyChangeCount = emergencyChangeCount;
         }
@@ -1643,6 +1770,8 @@ public static class ToolingJsonV1
         string oldPatchJson,
         string newPatchJson,
         PatchModuleDiffReport moduleReport,
+        PatchQosTierDiffReport qosReport,
+        PatchLimitDiffReport limitReport,
         PatchParamDiffReport paramReport,
         PatchFanoutMaxDiffReport fanoutReport,
         PatchEmergencyDiffReport emergencyReport)
@@ -1650,6 +1779,7 @@ public static class ToolingJsonV1
         var moduleAddedCount = 0;
         var moduleRemovedCount = 0;
         var shadowChangeCount = 0;
+        var limitKeyChangeCount = 0;
 
         var moduleDiffs = moduleReport.Diffs;
         for (var i = 0; i < moduleDiffs.Count; i++)
@@ -1670,19 +1800,27 @@ public static class ToolingJsonV1
             {
                 shadowChangeCount++;
             }
+            else if (diff.Kind == PatchModuleDiffKind.LimitKeyAdded
+                || diff.Kind == PatchModuleDiffKind.LimitKeyRemoved
+                || diff.Kind == PatchModuleDiffKind.LimitKeyChanged)
+            {
+                limitKeyChangeCount++;
+            }
         }
 
+        var limitChangeCount = limitReport.Diffs.Count;
+        var qosChangeCount = qosReport.Diffs.Count;
         var paramChangeCount = paramReport.Diffs.Count;
         var emergencyChangeCount = emergencyReport.Diffs.Count;
         var fanoutIncreaseCount = ComputeFanoutIncreaseCount(oldPatchJson, newPatchJson, fanoutReport.Diffs);
 
         var level = RiskLevel.Low;
 
-        if (fanoutIncreaseCount != 0 || moduleRemovedCount != 0 || emergencyChangeCount != 0)
+        if (fanoutIncreaseCount != 0 || moduleRemovedCount != 0 || emergencyChangeCount != 0 || limitChangeCount != 0)
         {
             level = RiskLevel.High;
         }
-        else if (moduleAddedCount != 0 || shadowChangeCount != 0 || paramChangeCount != 0)
+        else if (moduleAddedCount != 0 || shadowChangeCount != 0 || limitKeyChangeCount != 0 || qosChangeCount != 0 || paramChangeCount != 0)
         {
             level = RiskLevel.Medium;
         }
@@ -1693,6 +1831,9 @@ public static class ToolingJsonV1
             moduleAddedCount,
             moduleRemovedCount,
             shadowChangeCount,
+            limitKeyChangeCount,
+            limitChangeCount,
+            qosChangeCount,
             paramChangeCount,
             emergencyChangeCount);
     }
@@ -1706,6 +1847,9 @@ public static class ToolingJsonV1
         writer.WriteNumber("module_added_count", report.ModuleAddedCount);
         writer.WriteNumber("module_removed_count", report.ModuleRemovedCount);
         writer.WriteNumber("shadow_change_count", report.ShadowChangeCount);
+        writer.WriteNumber("limit_key_change_count", report.LimitKeyChangeCount);
+        writer.WriteNumber("limit_change_count", report.LimitChangeCount);
+        writer.WriteNumber("qos_change_count", report.QosChangeCount);
         writer.WriteNumber("param_change_count", report.ParamChangeCount);
         writer.WriteNumber("emergency_change_count", report.EmergencyChangeCount);
         writer.WriteEndObject();
@@ -2035,6 +2179,102 @@ public static class ToolingJsonV1
         writer.WriteEndObject();
     }
 
+    private static void WriteQosTierDiffs(Utf8JsonWriter writer, IReadOnlyList<PatchQosTierDiff> diffs)
+    {
+        writer.WritePropertyName("qos_tier_diffs");
+        writer.WriteStartArray();
+
+        if (diffs.Count == 1)
+        {
+            WriteQosTierDiff(writer, diffs[0]);
+        }
+        else if (diffs.Count > 1)
+        {
+            var sorted = new PatchQosTierDiff[diffs.Count];
+
+            for (var i = 0; i < sorted.Length; i++)
+            {
+                sorted[i] = diffs[i];
+            }
+
+            Array.Sort(sorted, PatchQosTierDiffComparer.Instance);
+
+            for (var i = 0; i < sorted.Length; i++)
+            {
+                WriteQosTierDiff(writer, sorted[i]);
+            }
+        }
+
+        writer.WriteEndArray();
+    }
+
+    private static void WriteQosTierDiff(Utf8JsonWriter writer, PatchQosTierDiff diff)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("kind", GetPatchDiffKindString(diff.Kind));
+        writer.WriteString("flow_name", diff.FlowName);
+        writer.WriteString("qos_tier", diff.TierName);
+        writer.WriteString("path", diff.Path);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteLimitDiffs(Utf8JsonWriter writer, IReadOnlyList<PatchLimitDiff> diffs)
+    {
+        writer.WritePropertyName("limit_diffs");
+        writer.WriteStartArray();
+
+        if (diffs.Count == 1)
+        {
+            WriteLimitDiff(writer, diffs[0]);
+        }
+        else if (diffs.Count > 1)
+        {
+            var sorted = new PatchLimitDiff[diffs.Count];
+
+            for (var i = 0; i < sorted.Length; i++)
+            {
+                sorted[i] = diffs[i];
+            }
+
+            Array.Sort(sorted, PatchLimitDiffComparer.Instance);
+
+            for (var i = 0; i < sorted.Length; i++)
+            {
+                WriteLimitDiff(writer, sorted[i]);
+            }
+        }
+
+        writer.WriteEndArray();
+    }
+
+    private static void WriteLimitDiff(Utf8JsonWriter writer, PatchLimitDiff diff)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("kind", GetPatchDiffKindString(diff.Kind));
+        writer.WriteString("limit_key", diff.LimitKey);
+        writer.WriteString("path", diff.Path);
+
+        if (diff.OldMaxInFlight.HasValue)
+        {
+            writer.WriteNumber("old_max_in_flight", diff.OldMaxInFlight.Value);
+        }
+        else
+        {
+            writer.WriteNull("old_max_in_flight");
+        }
+
+        if (diff.NewMaxInFlight.HasValue)
+        {
+            writer.WriteNumber("new_max_in_flight", diff.NewMaxInFlight.Value);
+        }
+        else
+        {
+            writer.WriteNull("new_max_in_flight");
+        }
+
+        writer.WriteEndObject();
+    }
+
     private static void WriteParamDiffs(Utf8JsonWriter writer, IReadOnlyList<PatchParamDiff> diffs)
     {
         writer.WritePropertyName("param_diffs");
@@ -2195,6 +2435,31 @@ public static class ToolingJsonV1
             PatchModuleDiffKind.ShadowAdded => "shadow_added",
             PatchModuleDiffKind.ShadowRemoved => "shadow_removed",
             PatchModuleDiffKind.ShadowSampleChanged => "shadow_sample_changed",
+            PatchModuleDiffKind.LimitKeyAdded => "limit_key_added",
+            PatchModuleDiffKind.LimitKeyRemoved => "limit_key_removed",
+            PatchModuleDiffKind.LimitKeyChanged => "limit_key_changed",
+            _ => "unknown",
+        };
+    }
+
+    private static string GetPatchDiffKindString(PatchQosTierDiffKind kind)
+    {
+        return kind switch
+        {
+            PatchQosTierDiffKind.Added => "added",
+            PatchQosTierDiffKind.Removed => "removed",
+            PatchQosTierDiffKind.Changed => "changed",
+            _ => "unknown",
+        };
+    }
+
+    private static string GetPatchDiffKindString(PatchLimitDiffKind kind)
+    {
+        return kind switch
+        {
+            PatchLimitDiffKind.Added => "added",
+            PatchLimitDiffKind.Removed => "removed",
+            PatchLimitDiffKind.Changed => "changed",
             _ => "unknown",
         };
     }
@@ -2318,6 +2583,56 @@ public static class ToolingJsonV1
             }
 
             return CompareNullableString(x.ExperimentVariant, y.ExperimentVariant);
+        }
+    }
+
+    private sealed class PatchQosTierDiffComparer : IComparer<PatchQosTierDiff>
+    {
+        public static PatchQosTierDiffComparer Instance { get; } = new();
+
+        public int Compare(PatchQosTierDiff x, PatchQosTierDiff y)
+        {
+            var c = string.CompareOrdinal(x.FlowName, y.FlowName);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            c = string.CompareOrdinal(x.TierName, y.TierName);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            c = x.Kind.CompareTo(y.Kind);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            return string.CompareOrdinal(x.Path, y.Path);
+        }
+    }
+
+    private sealed class PatchLimitDiffComparer : IComparer<PatchLimitDiff>
+    {
+        public static PatchLimitDiffComparer Instance { get; } = new();
+
+        public int Compare(PatchLimitDiff x, PatchLimitDiff y)
+        {
+            var c = string.CompareOrdinal(x.LimitKey, y.LimitKey);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            c = x.Kind.CompareTo(y.Kind);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            return string.CompareOrdinal(x.Path, y.Path);
         }
     }
 

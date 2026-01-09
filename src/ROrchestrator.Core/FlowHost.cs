@@ -138,6 +138,8 @@ public sealed class FlowHost
             throw new ArgumentNullException(nameof(request));
         }
 
+        flowContext.SetFlowNameHint(flowName);
+
         var snapshotTask = flowContext.GetConfigSnapshotAsync(_configProvider);
         if (!snapshotTask.IsCompletedSuccessfully)
         {
@@ -261,6 +263,7 @@ public sealed class FlowHost
         }
 
         context.SetQosSelectedTier(selectedTier);
+        Observability.FlowMetricsV1.RecordQosTierSelected(flowName, selectedTier);
     }
 
     private static QosTier NormalizeQosTier(QosTier tier)

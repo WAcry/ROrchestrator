@@ -31,6 +31,7 @@ public sealed class FlowContext
     private bool _hasRecordedOutcomes;
     private IFlowTestOverrideProvider? _flowTestOverrideProvider;
     private IFlowTestInvocationSink? _flowTestInvocationSink;
+    private string? _flowNameHint;
     private string? _currentFlowName;
     private Type? _flowParamsType;
     private Type? _flowParamsPatchType;
@@ -181,6 +182,30 @@ public sealed class FlowContext
     {
         _flowTestOverrideProvider = overrideProvider;
         _flowTestInvocationSink = invocationSink;
+    }
+
+    internal void SetFlowNameHint(string flowName)
+    {
+        if (string.IsNullOrEmpty(flowName))
+        {
+            throw new ArgumentException("FlowName must be non-empty.", nameof(flowName));
+        }
+
+        Volatile.Write(ref _flowNameHint, flowName);
+    }
+
+    internal bool TryGetFlowNameHint(out string flowName)
+    {
+        var value = Volatile.Read(ref _flowNameHint);
+
+        if (!string.IsNullOrEmpty(value))
+        {
+            flowName = value;
+            return true;
+        }
+
+        flowName = string.Empty;
+        return false;
     }
 
     internal void ConfigureFlowBinding(string flowName, Type? paramsType, Type? patchType, object? defaultParams)

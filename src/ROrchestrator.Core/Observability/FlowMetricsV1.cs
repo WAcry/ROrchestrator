@@ -63,6 +63,16 @@ internal static class FlowMetricsV1
         unit: CountUnit,
         description: "Stage fanout module skip reasons count for plan-template execution.");
 
+    private static readonly Counter<long> QosTierSelected = Meter.CreateCounter<long>(
+        name: "rorchestrator.qos.tier.selected",
+        unit: CountUnit,
+        description: "Selected QoS tier count for plan-template execution.");
+
+    private static readonly Counter<long> ConfigLkgFallbacks = Meter.CreateCounter<long>(
+        name: "rorchestrator.config.lkg.fallbacks",
+        unit: CountUnit,
+        description: "Last-known-good config fallback count for plan-template execution.");
+
     internal static bool IsFlowEnabled => FlowLatencyMs.Enabled || FlowOutcomes.Enabled;
 
     internal static bool IsStepEnabled => StepLatencyMs.Enabled || StepOutcomes.Enabled;
@@ -119,6 +129,33 @@ internal static class FlowMetricsV1
         {
             FlowOutcomes.Add(1, tags);
         }
+    }
+
+    internal static void RecordQosTierSelected(string flowName, QosTier qosTier)
+    {
+        if (!QosTierSelected.Enabled)
+        {
+            return;
+        }
+
+        TagList tags = default;
+        tags.Add("flow_name", flowName);
+        tags.Add("qos_tier", GetQosTierTagValue(qosTier));
+
+        QosTierSelected.Add(1, tags);
+    }
+
+    internal static void RecordConfigLkgFallback(string flowName)
+    {
+        if (!ConfigLkgFallbacks.Enabled)
+        {
+            return;
+        }
+
+        TagList tags = default;
+        tags.Add("flow_name", flowName);
+
+        ConfigLkgFallbacks.Add(1, tags);
     }
 
     internal static void RecordStep(long startTimestamp, string flowName, string moduleType, OutcomeKind outcomeKind)
@@ -289,5 +326,17 @@ internal static class FlowMetricsV1
         }
 
         return code;
+    }
+
+    private static string GetQosTierTagValue(QosTier tier)
+    {
+        return tier switch
+        {
+            QosTier.Full => "full",
+            QosTier.Conserve => "conserve",
+            QosTier.Emergency => "emergency",
+            QosTier.Fallback => "fallback",
+            _ => "full",
+        };
     }
 }

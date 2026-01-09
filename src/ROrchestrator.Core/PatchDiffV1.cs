@@ -101,8 +101,19 @@ public static class PatchDiffV1
                         var isShadowRemoved = oldHasShadow && !newHasShadow;
                         var isShadowSampleChanged = oldHasShadow && newHasShadow && oldModule.ShadowSampleBps != newModule.ShadowSampleBps;
 
+                        var oldLimitKey = oldModule.LimitKey;
+                        var newLimitKey = newModule.LimitKey;
+
+                        var oldHasLimitKey = oldLimitKey is not null;
+                        var newHasLimitKey = newLimitKey is not null;
+
+                        var isLimitKeyAdded = !oldHasLimitKey && newHasLimitKey;
+                        var isLimitKeyRemoved = oldHasLimitKey && !newHasLimitKey;
+                        var isLimitKeyChanged = oldHasLimitKey && newHasLimitKey && !string.Equals(oldLimitKey, newLimitKey, StringComparison.Ordinal);
+
                         if (isUseChanged || isWithChanged || isEnabledChanged || isPriorityChanged || isGateAdded || isGateRemoved || isGateChanged
-                            || isShadowAdded || isShadowRemoved || isShadowSampleChanged)
+                            || isShadowAdded || isShadowRemoved || isShadowSampleChanged
+                            || isLimitKeyAdded || isLimitKeyRemoved || isLimitKeyChanged)
                         {
                             var modulePath = BuildModulePath(key.FlowName, key.StageName, newModule.Index, newModule.ExperimentIndex);
 
@@ -138,6 +149,40 @@ public static class PatchDiffV1
                                         key.StageName,
                                         key.ModuleId,
                                         string.Concat(modulePath, ".priority"),
+                                        key.ExperimentLayer,
+                                        key.ExperimentVariant));
+                            }
+
+                            if (isLimitKeyAdded)
+                            {
+                                buffer.Add(
+                                    PatchModuleDiff.CreateLimitKeyAdded(
+                                        key.FlowName,
+                                        key.StageName,
+                                        key.ModuleId,
+                                        string.Concat(modulePath, ".limitKey"),
+                                        key.ExperimentLayer,
+                                        key.ExperimentVariant));
+                            }
+                            else if (isLimitKeyRemoved)
+                            {
+                                buffer.Add(
+                                    PatchModuleDiff.CreateLimitKeyRemoved(
+                                        key.FlowName,
+                                        key.StageName,
+                                        key.ModuleId,
+                                        string.Concat(modulePath, ".limitKey"),
+                                        key.ExperimentLayer,
+                                        key.ExperimentVariant));
+                            }
+                            else if (isLimitKeyChanged)
+                            {
+                                buffer.Add(
+                                    PatchModuleDiff.CreateLimitKeyChanged(
+                                        key.FlowName,
+                                        key.StageName,
+                                        key.ModuleId,
+                                        string.Concat(modulePath, ".limitKey"),
                                         key.ExperimentLayer,
                                         key.ExperimentVariant));
                             }
@@ -600,6 +645,154 @@ public static class PatchDiffV1
         }
     }
 
+    public static PatchQosTierDiffReport DiffQosTierPatches(string oldPatchJson, string newPatchJson)
+    {
+        if (oldPatchJson is null)
+        {
+            throw new ArgumentNullException(nameof(oldPatchJson));
+        }
+
+        if (newPatchJson is null)
+        {
+            throw new ArgumentNullException(nameof(newPatchJson));
+        }
+
+        JsonDocument oldDocument;
+
+        try
+        {
+            oldDocument = JsonDocument.Parse(oldPatchJson);
+        }
+        catch (JsonException ex)
+        {
+            throw new FormatException("oldPatchJson is not a valid JSON document.", ex);
+        }
+
+        using (oldDocument)
+        {
+            EnsureSupportedSchemaVersion(oldDocument.RootElement);
+
+            JsonDocument newDocument;
+
+            try
+            {
+                newDocument = JsonDocument.Parse(newPatchJson);
+            }
+            catch (JsonException ex)
+            {
+                throw new FormatException("newPatchJson is not a valid JSON document.", ex);
+            }
+
+            using (newDocument)
+            {
+                EnsureSupportedSchemaVersion(newDocument.RootElement);
+
+                Dictionary<QosTierKey, QosTierInfo>? oldQosTierMap = null;
+                Dictionary<QosTierKey, QosTierInfo>? newQosTierMap = null;
+
+                CollectQosTierPatches(oldDocument.RootElement, ref oldQosTierMap);
+                CollectQosTierPatches(newDocument.RootElement, ref newQosTierMap);
+
+                if (oldQosTierMap is null && newQosTierMap is null)
+                {
+                    return PatchQosTierDiffReport.Empty;
+                }
+
+                var buffer = new QosTierDiffBuffer();
+
+                DiffQosTierMaps(oldQosTierMap, newQosTierMap, ref buffer);
+
+                var diffs = buffer.ToArray();
+
+                if (diffs.Length == 0)
+                {
+                    return PatchQosTierDiffReport.Empty;
+                }
+
+                if (diffs.Length > 1)
+                {
+                    Array.Sort(diffs, PatchQosTierDiffComparer.Instance);
+                }
+
+                return new PatchQosTierDiffReport(diffs);
+            }
+        }
+    }
+
+    public static PatchLimitDiffReport DiffLimitsMaxInFlight(string oldPatchJson, string newPatchJson)
+    {
+        if (oldPatchJson is null)
+        {
+            throw new ArgumentNullException(nameof(oldPatchJson));
+        }
+
+        if (newPatchJson is null)
+        {
+            throw new ArgumentNullException(nameof(newPatchJson));
+        }
+
+        JsonDocument oldDocument;
+
+        try
+        {
+            oldDocument = JsonDocument.Parse(oldPatchJson);
+        }
+        catch (JsonException ex)
+        {
+            throw new FormatException("oldPatchJson is not a valid JSON document.", ex);
+        }
+
+        using (oldDocument)
+        {
+            EnsureSupportedSchemaVersion(oldDocument.RootElement);
+
+            JsonDocument newDocument;
+
+            try
+            {
+                newDocument = JsonDocument.Parse(newPatchJson);
+            }
+            catch (JsonException ex)
+            {
+                throw new FormatException("newPatchJson is not a valid JSON document.", ex);
+            }
+
+            using (newDocument)
+            {
+                EnsureSupportedSchemaVersion(newDocument.RootElement);
+
+                Dictionary<string, int>? oldMaxInFlightMap = null;
+                Dictionary<string, int>? newMaxInFlightMap = null;
+
+                CollectMaxInFlight(oldDocument.RootElement, ref oldMaxInFlightMap);
+                CollectMaxInFlight(newDocument.RootElement, ref newMaxInFlightMap);
+
+                if (oldMaxInFlightMap is null && newMaxInFlightMap is null)
+                {
+                    return PatchLimitDiffReport.Empty;
+                }
+
+                var buffer = new LimitDiffBuffer();
+
+                DiffMaxInFlightMaps(oldMaxInFlightMap, newMaxInFlightMap, ref buffer);
+
+                var diffs = buffer.ToArray();
+
+                if (diffs.Length == 0)
+                {
+                    return PatchLimitDiffReport.Empty;
+                }
+
+                if (diffs.Length > 1)
+                {
+                    Array.Sort(diffs, PatchLimitDiffComparer.Instance);
+                }
+
+                return new PatchLimitDiffReport(diffs);
+            }
+        }
+    }
+
     private static void EnsureSupportedSchemaVersion(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object)
@@ -613,6 +806,103 @@ public static class PatchDiffV1
         {
             throw new NotSupportedException("schemaVersion is missing or unsupported. Supported: v1.");
         }
+    }
+
+    private static void CollectMaxInFlight(JsonElement root, ref Dictionary<string, int>? maxInFlightMap)
+    {
+        if (!root.TryGetProperty("limits", out var limitsElement) || limitsElement.ValueKind == JsonValueKind.Null)
+        {
+            return;
+        }
+
+        if (limitsElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new FormatException("limits must be an object.");
+        }
+
+        if (!limitsElement.TryGetProperty("moduleConcurrency", out var moduleConcurrencyElement) || moduleConcurrencyElement.ValueKind == JsonValueKind.Null)
+        {
+            return;
+        }
+
+        if (moduleConcurrencyElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new FormatException("limits.moduleConcurrency must be an object.");
+        }
+
+        if (!moduleConcurrencyElement.TryGetProperty("maxInFlight", out var maxInFlightElement) || maxInFlightElement.ValueKind == JsonValueKind.Null)
+        {
+            return;
+        }
+
+        if (maxInFlightElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new FormatException("limits.moduleConcurrency.maxInFlight must be an object.");
+        }
+
+        foreach (var entry in maxInFlightElement.EnumerateObject())
+        {
+            var key = entry.Name;
+
+            if (string.IsNullOrEmpty(key))
+            {
+                continue;
+            }
+
+            if (entry.Value.ValueKind != JsonValueKind.Number || !entry.Value.TryGetInt32(out var max) || max <= 0)
+            {
+                continue;
+            }
+
+            maxInFlightMap ??= new Dictionary<string, int>(capacity: 4);
+            maxInFlightMap[key] = max;
+        }
+    }
+
+    private static void DiffMaxInFlightMaps(
+        Dictionary<string, int>? oldMap,
+        Dictionary<string, int>? newMap,
+        ref LimitDiffBuffer buffer)
+    {
+        if (oldMap is not null)
+        {
+            foreach (var pair in oldMap)
+            {
+                var key = pair.Key;
+                var oldValue = pair.Value;
+
+                if (newMap is null || !newMap.TryGetValue(key, out var newValue))
+                {
+                    buffer.Add(PatchLimitDiff.CreateRemoved(key, oldValue, BuildMaxInFlightPath(key)));
+                    continue;
+                }
+
+                if (oldValue != newValue)
+                {
+                    buffer.Add(PatchLimitDiff.CreateChanged(key, oldValue, newValue, BuildMaxInFlightPath(key)));
+                }
+            }
+        }
+
+        if (newMap is not null)
+        {
+            foreach (var pair in newMap)
+            {
+                var key = pair.Key;
+
+                if (oldMap is not null && oldMap.ContainsKey(key))
+                {
+                    continue;
+                }
+
+                buffer.Add(PatchLimitDiff.CreateAdded(key, pair.Value, BuildMaxInFlightPath(key)));
+            }
+        }
+    }
+
+    private static string BuildMaxInFlightPath(string key)
+    {
+        return string.Concat("$.limits.moduleConcurrency.maxInFlight.", key);
     }
 
     private static void CollectEmergency(JsonElement root, ref Dictionary<string, JsonElement>? emergencyMap)
@@ -650,6 +940,499 @@ public static class PatchDiffV1
             emergencyMap ??= new Dictionary<string, JsonElement>(4);
             emergencyMap.Add(flowName, emergencyElement);
         }
+    }
+
+    private static void CollectQosTierPatches(JsonElement root, ref Dictionary<QosTierKey, QosTierInfo>? qosTierMap)
+    {
+        if (!root.TryGetProperty("flows", out var flowsElement))
+        {
+            return;
+        }
+
+        if (flowsElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new FormatException("flows must be an object.");
+        }
+
+        foreach (var flowProperty in flowsElement.EnumerateObject())
+        {
+            var flowName = flowProperty.Name;
+            var flowPatch = flowProperty.Value;
+
+            if (flowPatch.ValueKind != JsonValueKind.Object)
+            {
+                throw new FormatException(string.Concat("Flow patch must be an object. Flow: ", flowName));
+            }
+
+            if (!flowPatch.TryGetProperty("qos", out var qosElement) || qosElement.ValueKind == JsonValueKind.Null)
+            {
+                continue;
+            }
+
+            if (qosElement.ValueKind != JsonValueKind.Object)
+            {
+                throw new FormatException(string.Concat("qos must be an object. Flow: ", flowName));
+            }
+
+            if (!qosElement.TryGetProperty("tiers", out var tiersElement) || tiersElement.ValueKind == JsonValueKind.Null)
+            {
+                continue;
+            }
+
+            if (tiersElement.ValueKind != JsonValueKind.Object)
+            {
+                throw new FormatException(string.Concat("qos.tiers must be an object. Flow: ", flowName));
+            }
+
+            foreach (var tierProperty in tiersElement.EnumerateObject())
+            {
+                var tierName = tierProperty.Name;
+                var tierElement = tierProperty.Value;
+
+                if (tierElement.ValueKind != JsonValueKind.Object)
+                {
+                    throw new FormatException(string.Concat("qos.tiers.<tier> must be an object. Flow: ", flowName, ", Tier: ", tierName));
+                }
+
+                if (!tierElement.TryGetProperty("patch", out var patchElement) || patchElement.ValueKind == JsonValueKind.Null)
+                {
+                    continue;
+                }
+
+                if (patchElement.ValueKind != JsonValueKind.Object)
+                {
+                    throw new FormatException(string.Concat("qos.tiers.<tier>.patch must be an object. Flow: ", flowName, ", Tier: ", tierName));
+                }
+
+                var tierKey = new QosTierKey(flowName, tierName);
+
+                if (!TryParseQosTierPatch(flowName, tierName, patchElement, out var tierInfo))
+                {
+                    continue;
+                }
+
+                qosTierMap ??= new Dictionary<QosTierKey, QosTierInfo>(capacity: 4);
+
+                if (!qosTierMap.TryAdd(tierKey, tierInfo))
+                {
+                    throw new FormatException(string.Concat("Duplicate QoS tier. Flow: ", flowName, ", Tier: ", tierName));
+                }
+            }
+        }
+    }
+
+    private static bool TryParseQosTierPatch(string flowName, string tierName, JsonElement patchElement, out QosTierInfo tierInfo)
+    {
+        Dictionary<string, QosStageInfo>? stages = null;
+
+        if (patchElement.TryGetProperty("stages", out var stagesElement) && stagesElement.ValueKind != JsonValueKind.Null)
+        {
+            if (stagesElement.ValueKind != JsonValueKind.Object)
+            {
+                throw new FormatException(string.Concat("qos.tiers.<tier>.patch.stages must be an object. Flow: ", flowName, ", Tier: ", tierName));
+            }
+
+            foreach (var stageProperty in stagesElement.EnumerateObject())
+            {
+                var stageName = stageProperty.Name;
+                var stagePatch = stageProperty.Value;
+
+                if (stagePatch.ValueKind != JsonValueKind.Object)
+                {
+                    throw new FormatException(
+                        string.Concat("qos.tiers.<tier>.patch.stages.<stage> must be an object. Flow: ", flowName, ", Tier: ", tierName, ", Stage: ", stageName));
+                }
+
+                var hasFanoutMax = false;
+                var fanoutMax = 0;
+
+                if (stagePatch.TryGetProperty("fanoutMax", out var fanoutMaxElement) && fanoutMaxElement.ValueKind != JsonValueKind.Null)
+                {
+                    if (fanoutMaxElement.ValueKind == JsonValueKind.Number
+                        && fanoutMaxElement.TryGetInt32(out var fanoutMaxValue)
+                        && fanoutMaxValue >= 0)
+                    {
+                        hasFanoutMax = true;
+                        fanoutMax = fanoutMaxValue;
+                    }
+                }
+
+                Dictionary<string, QosModuleInfo>? modules = null;
+
+                if (stagePatch.TryGetProperty("modules", out var modulesElement) && modulesElement.ValueKind != JsonValueKind.Null)
+                {
+                    if (modulesElement.ValueKind != JsonValueKind.Array)
+                    {
+                        throw new FormatException(
+                            string.Concat("qos.tiers.<tier>.patch.stages.<stage>.modules must be an array. Flow: ", flowName, ", Tier: ", tierName, ", Stage: ", stageName));
+                    }
+
+                    var moduleCount = modulesElement.GetArrayLength();
+                    modules = moduleCount == 0 ? new Dictionary<string, QosModuleInfo>(capacity: 0) : new Dictionary<string, QosModuleInfo>(capacity: moduleCount);
+
+                    var index = 0;
+
+                    foreach (var moduleElement in modulesElement.EnumerateArray())
+                    {
+                        if (moduleElement.ValueKind != JsonValueKind.Object)
+                        {
+                            throw new FormatException(
+                                string.Concat("qos.tiers.<tier>.patch.stages.<stage>.modules must be an array of objects. Flow: ", flowName, ", Tier: ", tierName, ", Stage: ", stageName));
+                        }
+
+                        if (!moduleElement.TryGetProperty("id", out var idElement) || idElement.ValueKind != JsonValueKind.String)
+                        {
+                            throw new FormatException(
+                                string.Concat("qos.tiers.<tier>.patch.stages.<stage>.modules[].id is required and must be a string. Flow: ", flowName, ", Tier: ", tierName, ", Stage: ", stageName));
+                        }
+
+                        var moduleId = idElement.GetString();
+
+                        if (string.IsNullOrEmpty(moduleId))
+                        {
+                            throw new FormatException(
+                                string.Concat("qos.tiers.<tier>.patch.stages.<stage>.modules[].id is required and must be non-empty. Flow: ", flowName, ", Tier: ", tierName, ", Stage: ", stageName));
+                        }
+
+                        var hasEnabled = false;
+                        var enabled = true;
+
+                        if (moduleElement.TryGetProperty("enabled", out var enabledElement) && enabledElement.ValueKind != JsonValueKind.Null)
+                        {
+                            hasEnabled = true;
+
+                            if (enabledElement.ValueKind == JsonValueKind.True || enabledElement.ValueKind == JsonValueKind.False)
+                            {
+                                enabled = enabledElement.GetBoolean();
+                            }
+                        }
+
+                        var hasShadowSample = false;
+                        ushort shadowSampleBps = 0;
+
+                        if (moduleElement.TryGetProperty("shadow", out var shadowElement) && shadowElement.ValueKind != JsonValueKind.Null)
+                        {
+                            hasShadowSample = true;
+                            shadowSampleBps = ParseShadowSampleBps(shadowElement, flowName, stageName, moduleId);
+                        }
+
+                        if (!modules.TryAdd(moduleId, new QosModuleInfo(hasEnabled, enabled, hasShadowSample, shadowSampleBps, index)))
+                        {
+                            throw new FormatException(
+                                string.Concat("Duplicate module id within QoS stage patch. Flow: ", flowName, ", Tier: ", tierName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
+                        }
+
+                        index++;
+                    }
+                }
+
+                if (!hasFanoutMax && modules is null)
+                {
+                    continue;
+                }
+
+                stages ??= new Dictionary<string, QosStageInfo>(capacity: 4);
+
+                if (!stages.TryAdd(stageName, new QosStageInfo(hasFanoutMax, fanoutMax, modules)))
+                {
+                    throw new FormatException(string.Concat("Duplicate stage name within QoS patch. Flow: ", flowName, ", Tier: ", tierName, ", Stage: ", stageName));
+                }
+            }
+        }
+
+        tierInfo = new QosTierInfo(stages);
+        return true;
+    }
+
+    private static void DiffQosTierMaps(
+        Dictionary<QosTierKey, QosTierInfo>? oldMap,
+        Dictionary<QosTierKey, QosTierInfo>? newMap,
+        ref QosTierDiffBuffer buffer)
+    {
+        if (oldMap is not null)
+        {
+            foreach (var pair in oldMap)
+            {
+                var key = pair.Key;
+                var oldInfo = pair.Value;
+
+                if (newMap is null || !newMap.TryGetValue(key, out var newInfo))
+                {
+                    buffer.Add(PatchQosTierDiff.CreateRemoved(key.FlowName, key.TierName, BuildQosTierPatchPath(key.FlowName, key.TierName)));
+                    continue;
+                }
+
+                DiffQosTierInfos(key.FlowName, key.TierName, oldInfo, newInfo, ref buffer);
+            }
+        }
+
+        if (newMap is not null)
+        {
+            foreach (var pair in newMap)
+            {
+                var key = pair.Key;
+
+                if (oldMap is not null && oldMap.ContainsKey(key))
+                {
+                    continue;
+                }
+
+                buffer.Add(PatchQosTierDiff.CreateAdded(key.FlowName, key.TierName, BuildQosTierPatchPath(key.FlowName, key.TierName)));
+            }
+        }
+    }
+
+    private static void DiffQosTierInfos(
+        string flowName,
+        string tierName,
+        QosTierInfo oldInfo,
+        QosTierInfo newInfo,
+        ref QosTierDiffBuffer buffer)
+    {
+        var oldStages = oldInfo.Stages;
+        var newStages = newInfo.Stages;
+
+        if (oldStages is not null)
+        {
+            foreach (var pair in oldStages)
+            {
+                var stageName = pair.Key;
+                var oldStage = pair.Value;
+
+                if (newStages is null || !newStages.TryGetValue(stageName, out var newStage))
+                {
+                    DiffQosStageRemoved(flowName, tierName, stageName, oldStage, ref buffer);
+                    continue;
+                }
+
+                DiffQosStages(flowName, tierName, stageName, oldStage, newStage, ref buffer);
+            }
+        }
+
+        if (newStages is not null)
+        {
+            foreach (var pair in newStages)
+            {
+                var stageName = pair.Key;
+
+                if (oldStages is not null && oldStages.ContainsKey(stageName))
+                {
+                    continue;
+                }
+
+                DiffQosStageAdded(flowName, tierName, stageName, pair.Value, ref buffer);
+            }
+        }
+    }
+
+    private static void DiffQosStageAdded(string flowName, string tierName, string stageName, QosStageInfo stage, ref QosTierDiffBuffer buffer)
+    {
+        if (stage.HasFanoutMax)
+        {
+            buffer.Add(PatchQosTierDiff.CreateAdded(flowName, tierName, BuildQosTierFanoutMaxPath(flowName, tierName, stageName)));
+        }
+
+        var modules = stage.Modules;
+        if (modules is null)
+        {
+            return;
+        }
+
+        foreach (var pair in modules)
+        {
+            var module = pair.Value;
+
+            if (module.HasEnabled)
+            {
+                buffer.Add(PatchQosTierDiff.CreateAdded(flowName, tierName, BuildQosTierModuleEnabledPath(flowName, tierName, stageName, module.Index)));
+            }
+
+            if (module.HasShadowSample)
+            {
+                buffer.Add(PatchQosTierDiff.CreateAdded(flowName, tierName, BuildQosTierModuleShadowSamplePath(flowName, tierName, stageName, module.Index)));
+            }
+        }
+    }
+
+    private static void DiffQosStageRemoved(string flowName, string tierName, string stageName, QosStageInfo stage, ref QosTierDiffBuffer buffer)
+    {
+        if (stage.HasFanoutMax)
+        {
+            buffer.Add(PatchQosTierDiff.CreateRemoved(flowName, tierName, BuildQosTierFanoutMaxPath(flowName, tierName, stageName)));
+        }
+
+        var modules = stage.Modules;
+        if (modules is null)
+        {
+            return;
+        }
+
+        foreach (var pair in modules)
+        {
+            var module = pair.Value;
+
+            if (module.HasEnabled)
+            {
+                buffer.Add(PatchQosTierDiff.CreateRemoved(flowName, tierName, BuildQosTierModuleEnabledPath(flowName, tierName, stageName, module.Index)));
+            }
+
+            if (module.HasShadowSample)
+            {
+                buffer.Add(PatchQosTierDiff.CreateRemoved(flowName, tierName, BuildQosTierModuleShadowSamplePath(flowName, tierName, stageName, module.Index)));
+            }
+        }
+    }
+
+    private static void DiffQosStages(
+        string flowName,
+        string tierName,
+        string stageName,
+        QosStageInfo oldStage,
+        QosStageInfo newStage,
+        ref QosTierDiffBuffer buffer)
+    {
+        if (oldStage.HasFanoutMax)
+        {
+            if (!newStage.HasFanoutMax)
+            {
+                buffer.Add(PatchQosTierDiff.CreateRemoved(flowName, tierName, BuildQosTierFanoutMaxPath(flowName, tierName, stageName)));
+            }
+            else if (oldStage.FanoutMax != newStage.FanoutMax)
+            {
+                buffer.Add(PatchQosTierDiff.CreateChanged(flowName, tierName, BuildQosTierFanoutMaxPath(flowName, tierName, stageName)));
+            }
+        }
+        else if (newStage.HasFanoutMax)
+        {
+            buffer.Add(PatchQosTierDiff.CreateAdded(flowName, tierName, BuildQosTierFanoutMaxPath(flowName, tierName, stageName)));
+        }
+
+        var oldModules = oldStage.Modules;
+        var newModules = newStage.Modules;
+
+        if (oldModules is not null)
+        {
+            foreach (var pair in oldModules)
+            {
+                var moduleId = pair.Key;
+                var oldModule = pair.Value;
+
+                if (newModules is null || !newModules.TryGetValue(moduleId, out var newModule))
+                {
+                    if (oldModule.HasEnabled)
+                    {
+                        buffer.Add(PatchQosTierDiff.CreateRemoved(flowName, tierName, BuildQosTierModuleEnabledPath(flowName, tierName, stageName, oldModule.Index)));
+                    }
+
+                    if (oldModule.HasShadowSample)
+                    {
+                        buffer.Add(PatchQosTierDiff.CreateRemoved(flowName, tierName, BuildQosTierModuleShadowSamplePath(flowName, tierName, stageName, oldModule.Index)));
+                    }
+
+                    continue;
+                }
+
+                DiffQosModules(flowName, tierName, stageName, oldModule, newModule, ref buffer);
+            }
+        }
+
+        if (newModules is not null)
+        {
+            foreach (var pair in newModules)
+            {
+                var moduleId = pair.Key;
+
+                if (oldModules is not null && oldModules.ContainsKey(moduleId))
+                {
+                    continue;
+                }
+
+                var newModule = pair.Value;
+
+                if (newModule.HasEnabled)
+                {
+                    buffer.Add(PatchQosTierDiff.CreateAdded(flowName, tierName, BuildQosTierModuleEnabledPath(flowName, tierName, stageName, newModule.Index)));
+                }
+
+                if (newModule.HasShadowSample)
+                {
+                    buffer.Add(PatchQosTierDiff.CreateAdded(flowName, tierName, BuildQosTierModuleShadowSamplePath(flowName, tierName, stageName, newModule.Index)));
+                }
+            }
+        }
+    }
+
+    private static void DiffQosModules(
+        string flowName,
+        string tierName,
+        string stageName,
+        QosModuleInfo oldModule,
+        QosModuleInfo newModule,
+        ref QosTierDiffBuffer buffer)
+    {
+        if (oldModule.HasEnabled)
+        {
+            if (!newModule.HasEnabled)
+            {
+                buffer.Add(PatchQosTierDiff.CreateRemoved(flowName, tierName, BuildQosTierModuleEnabledPath(flowName, tierName, stageName, newModule.Index)));
+            }
+            else if (oldModule.Enabled != newModule.Enabled)
+            {
+                buffer.Add(PatchQosTierDiff.CreateChanged(flowName, tierName, BuildQosTierModuleEnabledPath(flowName, tierName, stageName, newModule.Index)));
+            }
+        }
+        else if (newModule.HasEnabled)
+        {
+            buffer.Add(PatchQosTierDiff.CreateAdded(flowName, tierName, BuildQosTierModuleEnabledPath(flowName, tierName, stageName, newModule.Index)));
+        }
+
+        if (oldModule.HasShadowSample)
+        {
+            if (!newModule.HasShadowSample)
+            {
+                buffer.Add(PatchQosTierDiff.CreateRemoved(flowName, tierName, BuildQosTierModuleShadowSamplePath(flowName, tierName, stageName, newModule.Index)));
+            }
+            else if (oldModule.ShadowSampleBps != newModule.ShadowSampleBps)
+            {
+                buffer.Add(PatchQosTierDiff.CreateChanged(flowName, tierName, BuildQosTierModuleShadowSamplePath(flowName, tierName, stageName, newModule.Index)));
+            }
+        }
+        else if (newModule.HasShadowSample)
+        {
+            buffer.Add(PatchQosTierDiff.CreateAdded(flowName, tierName, BuildQosTierModuleShadowSamplePath(flowName, tierName, stageName, newModule.Index)));
+        }
+    }
+
+    private static string BuildQosTierPatchPath(string flowName, string tierName)
+    {
+        return string.Concat("$.flows.", flowName, ".qos.tiers.", tierName, ".patch");
+    }
+
+    private static string BuildQosTierFanoutMaxPath(string flowName, string tierName, string stageName)
+    {
+        return string.Concat(BuildQosTierPatchPath(flowName, tierName), ".stages.", stageName, ".fanoutMax");
+    }
+
+    private static string BuildQosTierModuleEnabledPath(string flowName, string tierName, string stageName, int moduleIndex)
+    {
+        return string.Concat(
+            BuildQosTierPatchPath(flowName, tierName),
+            ".stages.",
+            stageName,
+            ".modules[",
+            moduleIndex.ToString(CultureInfo.InvariantCulture),
+            "].enabled");
+    }
+
+    private static string BuildQosTierModuleShadowSamplePath(string flowName, string tierName, string stageName, int moduleIndex)
+    {
+        return string.Concat(
+            BuildQosTierPatchPath(flowName, tierName),
+            ".stages.",
+            stageName,
+            ".modules[",
+            moduleIndex.ToString(CultureInfo.InvariantCulture),
+            "].shadow.sample");
     }
 
     private static void DiffEmergencyObjects(
@@ -1516,11 +2299,26 @@ public static class PatchDiffV1
                     shadowSampleBps = ParseShadowSampleBps(shadowElement, flowName, stageName, moduleId);
                 }
 
+                string? limitKey = null;
+
+                if (moduleElement.TryGetProperty("limitKey", out var limitKeyElement) && limitKeyElement.ValueKind != JsonValueKind.Null)
+                {
+                    if (limitKeyElement.ValueKind == JsonValueKind.String)
+                    {
+                        limitKey = limitKeyElement.GetString();
+
+                        if (string.IsNullOrEmpty(limitKey))
+                        {
+                            limitKey = null;
+                        }
+                    }
+                }
+
                 moduleMap ??= new Dictionary<ModuleKey, ModuleInfo>(4);
 
                 var key = new ModuleKey(flowName, stageName, moduleId, experimentLayer, experimentVariant);
 
-                if (!moduleMap.TryAdd(key, new ModuleInfo(moduleUse!, withElement, gateElement, enabled, priority, hasShadow, shadowSampleBps, index, experimentIndex)))
+                if (!moduleMap.TryAdd(key, new ModuleInfo(moduleUse!, limitKey, withElement, gateElement, enabled, priority, hasShadow, shadowSampleBps, index, experimentIndex)))
                 {
                     throw new FormatException(
                         string.Concat("Duplicate module id within stage. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
@@ -1795,6 +2593,79 @@ public static class PatchDiffV1
         }
     }
 
+    private readonly struct QosTierKey : IEquatable<QosTierKey>
+    {
+        public readonly string FlowName;
+        public readonly string TierName;
+
+        public QosTierKey(string flowName, string tierName)
+        {
+            FlowName = flowName;
+            TierName = tierName;
+        }
+
+        public bool Equals(QosTierKey other)
+        {
+            return string.Equals(FlowName, other.FlowName, StringComparison.Ordinal)
+                && string.Equals(TierName, other.TierName, StringComparison.Ordinal);
+        }
+
+        public override bool Equals(object? obj)
+        {
+            return obj is QosTierKey other && Equals(other);
+        }
+
+        public override int GetHashCode()
+        {
+            var hash = new HashCode();
+            hash.Add(FlowName);
+            hash.Add(TierName);
+            return hash.ToHashCode();
+        }
+    }
+
+    private readonly struct QosTierInfo
+    {
+        public readonly Dictionary<string, QosStageInfo>? Stages;
+
+        public QosTierInfo(Dictionary<string, QosStageInfo>? stages)
+        {
+            Stages = stages;
+        }
+    }
+
+    private readonly struct QosStageInfo
+    {
+        public readonly bool HasFanoutMax;
+        public readonly int FanoutMax;
+        public readonly Dictionary<string, QosModuleInfo>? Modules;
+
+        public QosStageInfo(bool hasFanoutMax, int fanoutMax, Dictionary<string, QosModuleInfo>? modules)
+        {
+            HasFanoutMax = hasFanoutMax;
+            FanoutMax = fanoutMax;
+            Modules = modules;
+        }
+    }
+
+    private readonly struct QosModuleInfo
+    {
+        public readonly bool HasEnabled;
+        public readonly bool Enabled;
+        public readonly bool HasShadowSample;
+        public readonly ushort ShadowSampleBps;
+        public readonly int Index;
+
+        public QosModuleInfo(bool hasEnabled, bool enabled, bool hasShadowSample, ushort shadowSampleBps, int index)
+        {
+            HasEnabled = hasEnabled;
+            Enabled = enabled;
+            HasShadowSample = hasShadowSample;
+            ShadowSampleBps = shadowSampleBps;
+            Index = index;
+        }
+    }
+
     private readonly struct FanoutMaxKey : IEquatable<FanoutMaxKey>
     {
         public readonly string FlowName;
@@ -1849,6 +2720,7 @@ public static class PatchDiffV1
     private readonly struct ModuleInfo
     {
         public readonly string Use;
+        public readonly string? LimitKey;
         public readonly JsonElement With;
         public readonly JsonElement Gate;
         public readonly bool Enabled;
@@ -1860,6 +2732,7 @@ public static class PatchDiffV1
 
         public ModuleInfo(
             string use,
+            string? limitKey,
             JsonElement with,
             JsonElement gate,
             bool enabled,
@@ -1870,6 +2743,7 @@ public static class PatchDiffV1
             int experimentIndex)
         {
             Use = use;
+            LimitKey = limitKey;
             With = with;
             Gate = gate;
             Enabled = enabled;
@@ -1922,6 +2796,98 @@ public static class PatchDiffV1
             }
 
             var trimmed = new PatchModuleDiff[_count];
+            Array.Copy(items, 0, trimmed, 0, _count);
+            return trimmed;
+        }
+    }
+
+    private struct QosTierDiffBuffer
+    {
+        private PatchQosTierDiff[]? _items;
+        private int _count;
+
+        public void Add(PatchQosTierDiff item)
+        {
+            var items = _items;
+
+            if (items is null)
+            {
+                items = new PatchQosTierDiff[4];
+                _items = items;
+            }
+            else if ((uint)_count >= (uint)items.Length)
+            {
+                var newItems = new PatchQosTierDiff[items.Length * 2];
+                Array.Copy(items, 0, newItems, 0, items.Length);
+                items = newItems;
+                _items = items;
+            }
+
+            items[_count] = item;
+            _count++;
+        }
+
+        public PatchQosTierDiff[] ToArray()
+        {
+            if (_count == 0)
+            {
+                return Array.Empty<PatchQosTierDiff>();
+            }
+
+            var items = _items!;
+
+            if (_count == items.Length)
+            {
+                return items;
+            }
+
+            var trimmed = new PatchQosTierDiff[_count];
+            Array.Copy(items, 0, trimmed, 0, _count);
+            return trimmed;
+        }
+    }
+
+    private struct LimitDiffBuffer
+    {
+        private PatchLimitDiff[]? _items;
+        private int _count;
+
+        public void Add(PatchLimitDiff item)
+        {
+            var items = _items;
+
+            if (items is null)
+            {
+                items = new PatchLimitDiff[4];
+                _items = items;
+            }
+            else if ((uint)_count >= (uint)items.Length)
+            {
+                var newItems = new PatchLimitDiff[items.Length * 2];
+                Array.Copy(items, 0, newItems, 0, items.Length);
+                items = newItems;
+                _items = items;
+            }
+
+            items[_count] = item;
+            _count++;
+        }
+
+        public PatchLimitDiff[] ToArray()
+        {
+            if (_count == 0)
+            {
+                return Array.Empty<PatchLimitDiff>();
+            }
+
+            var items = _items!;
+
+            if (_count == items.Length)
+            {
+                return items;
+            }
+
+            var trimmed = new PatchLimitDiff[_count];
             Array.Copy(items, 0, trimmed, 0, _count);
             return trimmed;
         }
@@ -2139,6 +3105,56 @@ public static class PatchDiffV1
         }
     }
 
+    private sealed class PatchQosTierDiffComparer : IComparer<PatchQosTierDiff>
+    {
+        public static PatchQosTierDiffComparer Instance { get; } = new();
+
+        public int Compare(PatchQosTierDiff x, PatchQosTierDiff y)
+        {
+            var c = string.CompareOrdinal(x.FlowName, y.FlowName);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            c = string.CompareOrdinal(x.TierName, y.TierName);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            c = ((int)x.Kind).CompareTo((int)y.Kind);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            return string.CompareOrdinal(x.Path, y.Path);
+        }
+    }
+
+    private sealed class PatchLimitDiffComparer : IComparer<PatchLimitDiff>
+    {
+        public static PatchLimitDiffComparer Instance { get; } = new();
+
+        public int Compare(PatchLimitDiff x, PatchLimitDiff y)
+        {
+            var c = string.CompareOrdinal(x.LimitKey, y.LimitKey);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            c = ((int)x.Kind).CompareTo((int)y.Kind);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            return string.CompareOrdinal(x.Path, y.Path);
+        }
+    }
+
     private sealed class PatchEmergencyDiffComparer : IComparer<PatchEmergencyDiff>
     {
         public static PatchEmergencyDiffComparer Instance { get; } = new();
@@ -2238,6 +3254,9 @@ public enum PatchModuleDiffKind
     ShadowAdded = 12,
     ShadowRemoved = 13,
     ShadowSampleChanged = 14,
+    LimitKeyAdded = 15,
+    LimitKeyRemoved = 16,
+    LimitKeyChanged = 17,
 }
 
 public readonly struct PatchModuleDiff
@@ -2426,6 +3445,152 @@ public readonly struct PatchModuleDiff
         string? experimentVariant = null)
     {
         return new PatchModuleDiff(PatchModuleDiffKind.ShadowSampleChanged, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
+    }
+
+    internal static PatchModuleDiff CreateLimitKeyAdded(
+        string flowName,
+        string stageName,
+        string moduleId,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchModuleDiff(PatchModuleDiffKind.LimitKeyAdded, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
+    }
+
+    internal static PatchModuleDiff CreateLimitKeyRemoved(
+        string flowName,
+        string stageName,
+        string moduleId,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchModuleDiff(PatchModuleDiffKind.LimitKeyRemoved, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
+    }
+
+    internal static PatchModuleDiff CreateLimitKeyChanged(
+        string flowName,
+        string stageName,
+        string moduleId,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchModuleDiff(PatchModuleDiffKind.LimitKeyChanged, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
+    }
+}
+
+public sealed class PatchQosTierDiffReport
+{
+    public static PatchQosTierDiffReport Empty { get; } = new(Array.Empty<PatchQosTierDiff>());
+
+    private readonly PatchQosTierDiff[] _diffs;
+
+    public IReadOnlyList<PatchQosTierDiff> Diffs => _diffs;
+
+    internal PatchQosTierDiffReport(PatchQosTierDiff[] diffs)
+    {
+        _diffs = diffs ?? throw new ArgumentNullException(nameof(diffs));
+    }
+}
+
+public enum PatchQosTierDiffKind
+{
+    Added = 1,
+    Removed = 2,
+    Changed = 3,
+}
+
+public readonly struct PatchQosTierDiff
+{
+    public PatchQosTierDiffKind Kind { get; }
+
+    public string FlowName { get; }
+
+    public string TierName { get; }
+
+    public string Path { get; }
+
+    private PatchQosTierDiff(PatchQosTierDiffKind kind, string flowName, string tierName, string path)
+    {
+        Kind = kind;
+        FlowName = flowName;
+        TierName = tierName;
+        Path = path;
+    }
+
+    internal static PatchQosTierDiff CreateAdded(string flowName, string tierName, string path)
+    {
+        return new PatchQosTierDiff(PatchQosTierDiffKind.Added, flowName, tierName, path);
+    }
+
+    internal static PatchQosTierDiff CreateRemoved(string flowName, string tierName, string path)
+    {
+        return new PatchQosTierDiff(PatchQosTierDiffKind.Removed, flowName, tierName, path);
+    }
+
+    internal static PatchQosTierDiff CreateChanged(string flowName, string tierName, string path)
+    {
+        return new PatchQosTierDiff(PatchQosTierDiffKind.Changed, flowName, tierName, path);
+    }
+}
+
+public sealed class PatchLimitDiffReport
+{
+    public static PatchLimitDiffReport Empty { get; } = new(Array.Empty<PatchLimitDiff>());
+
+    private readonly PatchLimitDiff[] _diffs;
+
+    public IReadOnlyList<PatchLimitDiff> Diffs => _diffs;
+
+    internal PatchLimitDiffReport(PatchLimitDiff[] diffs)
+    {
+        _diffs = diffs ?? throw new ArgumentNullException(nameof(diffs));
+    }
+}
+
+public enum PatchLimitDiffKind
+{
+    Added = 1,
+    Removed = 2,
+    Changed = 3,
+}
+
+public readonly struct PatchLimitDiff
+{
+    public PatchLimitDiffKind Kind { get; }
+
+    public string LimitKey { get; }
+
+    public int? OldMaxInFlight { get; }
+
+    public int? NewMaxInFlight { get; }
+
+    public string Path { get; }
+
+    private PatchLimitDiff(PatchLimitDiffKind kind, string limitKey, int? oldMaxInFlight, int? newMaxInFlight, string path)
+    {
+        Kind = kind;
+        LimitKey = limitKey;
+        OldMaxInFlight = oldMaxInFlight;
+        NewMaxInFlight = newMaxInFlight;
+        Path = path;
+    }
+
+    internal static PatchLimitDiff CreateAdded(string limitKey, int maxInFlight, string path)
+    {
+        return new PatchLimitDiff(PatchLimitDiffKind.Added, limitKey, oldMaxInFlight: null, newMaxInFlight: maxInFlight, path);
+    }
+
+    internal static PatchLimitDiff CreateRemoved(string limitKey, int maxInFlight, string path)
+    {
+        return new PatchLimitDiff(PatchLimitDiffKind.Removed, limitKey, oldMaxInFlight: maxInFlight, newMaxInFlight: null, path);
+    }
+
+    internal static PatchLimitDiff CreateChanged(string limitKey, int oldMaxInFlight, int newMaxInFlight, string path)
+    {
+        return new PatchLimitDiff(PatchLimitDiffKind.Changed, limitKey, oldMaxInFlight, newMaxInFlight, path);
     }
 }
 
