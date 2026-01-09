@@ -170,3 +170,15 @@ public sealed class RequestAttrGate : Gate
         _values = values;
     }
 }
+
+public sealed class SelectorGate : Gate
+{
+    public string SelectorName { get; }
+
+    public SelectorGate(string selectorName)
+    {
+        SelectorName = string.IsNullOrEmpty(selectorName)
+            ? throw new ArgumentException("SelectorName must be non-empty.", nameof(selectorName))
+            : selectorName;
+    }
+}

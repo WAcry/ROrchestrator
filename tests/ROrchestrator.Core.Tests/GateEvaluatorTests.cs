@@ -157,5 +157,90 @@ public sealed class GateEvaluatorTests
     {
         Assert.Throws<ArgumentNullException>(() => new NotGate(null!));
     }
-}
 
+    [Fact]
+    public void RolloutGate_ShouldMatchStableHashAlgorithm()
+    {
+        var variants = new Dictionary<string, string>(0);
+        var gate = new RolloutGate(percent: 50, salt: "m1");
+
+        var context = new GateEvaluationContext(new VariantSet(variants), userId: "user_1");
+        var decision = GateEvaluator.Evaluate(gate, in context);
+
+        var bucket = ComputeRolloutBucket("user_1", "m1");
+        Assert.Equal(bucket < 50, decision.Allowed);
+        Assert.Equal(decision.Allowed ? GateDecision.AllowedCode : GateDecision.DeniedCode, decision.Code);
+    }
+
+    [Fact]
+    public void RequestAttrGate_ShouldAllow_WhenFieldMatches()
+    {
+        var variants = new Dictionary<string, string>(0);
+        var requestAttrs = new Dictionary<string, string>(1)
+        {
+            ["region"] = "US",
+        };
+
+        var gate = new RequestAttrGate("region", ["US"]);
+        var context = new GateEvaluationContext(new VariantSet(variants), requestAttributes: requestAttrs);
+
+        var decision = GateEvaluator.Evaluate(gate, in context);
+
+        Assert.True(decision.Allowed);
+        Assert.Equal(GateDecision.AllowedCode, decision.Code);
+    }
+
+    [Fact]
+    public void RequestAttrGate_ShouldDeny_WhenFieldDoesNotMatch()
+    {
+        var variants = new Dictionary<string, string>(0);
+        var requestAttrs = new Dictionary<string, string>(1)
+        {
+            ["region"] = "US",
+        };
+
+        var gate = new RequestAttrGate("region", ["CN"]);
+        var context = new GateEvaluationContext(new VariantSet(variants), requestAttributes: requestAttrs);
+
+        var decision = GateEvaluator.Evaluate(gate, in context);
+
+        Assert.False(decision.Allowed);
+        Assert.Equal(GateDecision.DeniedCode, decision.Code);
+    }
+
+    private static int ComputeRolloutBucket(string userId, string salt)
+    {
+        const ulong offsetBasis = 14695981039346656037;
+        const ulong prime = 1099511628211;
+
+        var hash = offsetBasis;
+
+        hash = HashChars(hash, userId);
+        hash = HashChar(hash, '\0');
+        hash = HashChars(hash, salt);
+
+        return (int)(hash % 100);
+
+        static ulong HashChars(ulong hash, string value)
+        {
+            for (var i = 0; i < value.Length; i++)
+            {
+                hash = HashChar(hash, value[i]);
+            }
+
+            return hash;
+        }
+
+        static ulong HashChar(ulong hash, char c)
+        {
+            var u = (ushort)c;
+
+            hash ^= (byte)u;
+            hash *= prime;
+            hash ^= (byte)(u >> 8);
+            hash *= prime;
+
+            return hash;
+        }
+    }
+}

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ROrchestrator.Core;
+using ROrchestrator.Core.Selectors;
 
 namespace ROrchestrator.Core.Gates;
 
@@ -7,6 +8,7 @@ public static class GateJsonV1
 {
     public const int DefaultMaxDepth = 10;
 
+    public const string CodeUnknownField = "CFG_UNKNOWN_FIELD";
     public const string CodeUnknownType = "CFG_GATE_UNKNOWN_TYPE";
     public const string CodeEmptyComposite = "CFG_GATE_EMPTY_COMPOSITE";
     public const string CodeTooDeep = "CFG_GATE_TOO_DEEP";
@@ -14,6 +16,8 @@ public static class GateJsonV1
     public const string CodeRolloutInvalid = "CFG_GATE_ROLLOUT_INVALID";
     public const string CodeRequestInvalid = "CFG_GATE_REQUEST_INVALID";
     public const string CodeRequestFieldNotAllowed = "CFG_GATE_REQUEST_FIELD_NOT_ALLOWED";
+    public const string CodeSelectorInvalid = "CFG_GATE_SELECTOR_INVALID";
+    public const string CodeSelectorNotRegistered = "CFG_SELECTOR_NOT_REGISTERED";
 
     public const string MessageUnknownType = "gate type is unknown or unsupported.";
     public const string MessageEmptyComposite = "gate composite must be a non-empty array.";
@@ -25,6 +29,7 @@ public static class GateJsonV1
     public const string MessageRequestFieldInvalid = "gate.request.field is required and must be a non-empty string.";
     public const string MessageRequestInInvalid = "gate.request.in is required and must be a non-empty array of strings.";
     public const string MessageRequestFieldNotAllowed = "gate.request.field is not allowed.";
+    public const string MessageSelectorInvalid = "gate.selector is required and must be a non-empty string.";
 
     private static readonly string[] AllowedRequestFields =
     {
@@ -50,10 +55,41 @@ public static class GateJsonV1
             return true;
         }
 
-        return TryParseInternal(gateElement, gatePath, depth: 0, out gate, out finding);
+        return TryParseInternal(gateElement, gatePath, depth: 0, selectorRegistry: null, out gate, out finding);
     }
 
-    private static bool TryParseInternal(JsonElement gateElement, string gatePath, int depth, out Gate? gate, out ValidationFinding finding)
+    public static bool TryParseOptional(JsonElement gateElement, string gatePath, SelectorRegistry selectorRegistry, out Gate? gate, out ValidationFinding finding)
+    {
+        if (gatePath is null)
+        {
+            throw new ArgumentNullException(nameof(gatePath));
+        }
+
+        if (selectorRegistry is null)
+        {
+            throw new ArgumentNullException(nameof(selectorRegistry));
+        }
+
+        gate = null;
+        finding = default;
+
+        var kind = gateElement.ValueKind;
+
+        if (kind == JsonValueKind.Null || kind == JsonValueKind.Undefined)
+        {
+            return true;
+        }
+
+        return TryParseInternal(gateElement, gatePath, depth: 0, selectorRegistry, out gate, out finding);
+    }
+
+    private static bool TryParseInternal(
+        JsonElement gateElement,
+        string gatePath,
+        int depth,
+        SelectorRegistry? selectorRegistry,
+        out Gate? gate,
+        out ValidationFinding finding)
     {
         gate = null;
         finding = default;
@@ -101,6 +137,14 @@ public static class GateJsonV1
                 continue;
             }
 
+            if (property.NameEquals("selector"))
+            {
+                gateType = GateType.Selector;
+                gateTypeValue = property.Value;
+                gateTypeCount++;
+                continue;
+            }
+
             if (property.NameEquals("all"))
             {
                 gateType = GateType.All;
@@ -142,12 +186,14 @@ public static class GateJsonV1
                 return TryParseRollout(gateTypeValue, gatePath, out gate, out finding);
             case GateType.Request:
                 return TryParseRequest(gateTypeValue, gatePath, out gate, out finding);
+            case GateType.Selector:
+                return TryParseSelector(gateTypeValue, gatePath, selectorRegistry, out gate, out finding);
             case GateType.All:
-                return TryParseComposite(GateType.All, gateTypeValue, string.Concat(gatePath, ".all"), depth, out gate, out finding);
+                return TryParseComposite(GateType.All, gateTypeValue, string.Concat(gatePath, ".all"), depth, selectorRegistry, out gate, out finding);
             case GateType.Any:
-                return TryParseComposite(GateType.Any, gateTypeValue, string.Concat(gatePath, ".any"), depth, out gate, out finding);
+                return TryParseComposite(GateType.Any, gateTypeValue, string.Concat(gatePath, ".any"), depth, selectorRegistry, out gate, out finding);
             case GateType.Not:
-                return TryParseNot(gateTypeValue, string.Concat(gatePath, ".not"), depth, out gate, out finding);
+                return TryParseNot(gateTypeValue, string.Concat(gatePath, ".not"), depth, selectorRegistry, out gate, out finding);
             default:
                 finding = new ValidationFinding(ValidationSeverity.Error, CodeUnknownType, gatePath, MessageUnknownType);
                 return false;
@@ -170,6 +216,8 @@ public static class GateJsonV1
 
         var hasIn = false;
         JsonElement inElement = default;
+
+        string? unknownField = null;
 
         foreach (var property in element.EnumerateObject())
         {
@@ -194,6 +242,19 @@ public static class GateJsonV1
                 inElement = property.Value;
                 continue;
             }
+
+            unknownField = property.Name;
+            break;
+        }
+
+        if (unknownField is not null)
+        {
+            finding = new ValidationFinding(
+                ValidationSeverity.Error,
+                CodeUnknownField,
+                string.Concat(gatePath, ".experiment.", unknownField),
+                string.Concat("Unknown field: ", unknownField));
+            return false;
         }
 
         if (!hasLayer || string.IsNullOrEmpty(layer))
@@ -267,6 +328,7 @@ public static class GateJsonV1
         JsonElement percentElement = default;
         string? salt = null;
         var hasSalt = false;
+        string? unknownField = null;
 
         foreach (var property in element.EnumerateObject())
         {
@@ -291,6 +353,19 @@ public static class GateJsonV1
 
                 continue;
             }
+
+            unknownField = property.Name;
+            break;
+        }
+
+        if (unknownField is not null)
+        {
+            finding = new ValidationFinding(
+                ValidationSeverity.Error,
+                CodeUnknownField,
+                string.Concat(gatePath, ".rollout.", unknownField),
+                string.Concat("Unknown field: ", unknownField));
+            return false;
         }
 
         if (!hasPercent || percentElement.ValueKind != JsonValueKind.Number || !percentElement.TryGetDouble(out var percent))
@@ -343,6 +418,7 @@ public static class GateJsonV1
 
         var hasIn = false;
         JsonElement inElement = default;
+        string? unknownField = null;
 
         foreach (var property in element.EnumerateObject())
         {
@@ -367,6 +443,19 @@ public static class GateJsonV1
                 inElement = property.Value;
                 continue;
             }
+
+            unknownField = property.Name;
+            break;
+        }
+
+        if (unknownField is not null)
+        {
+            finding = new ValidationFinding(
+                ValidationSeverity.Error,
+                CodeUnknownField,
+                string.Concat(gatePath, ".request.", unknownField),
+                string.Concat("Unknown field: ", unknownField));
+            return false;
         }
 
         if (!hasField || string.IsNullOrEmpty(field))
@@ -435,6 +524,52 @@ public static class GateJsonV1
         return true;
     }
 
+    private static bool TryParseSelector(
+        JsonElement element,
+        string gatePath,
+        SelectorRegistry? selectorRegistry,
+        out Gate? gate,
+        out ValidationFinding finding)
+    {
+        gate = null;
+        finding = default;
+
+        if (element.ValueKind != JsonValueKind.String)
+        {
+            finding = new ValidationFinding(
+                ValidationSeverity.Error,
+                CodeSelectorInvalid,
+                string.Concat(gatePath, ".selector"),
+                MessageSelectorInvalid);
+            return false;
+        }
+
+        var selectorName = element.GetString();
+
+        if (string.IsNullOrEmpty(selectorName))
+        {
+            finding = new ValidationFinding(
+                ValidationSeverity.Error,
+                CodeSelectorInvalid,
+                string.Concat(gatePath, ".selector"),
+                MessageSelectorInvalid);
+            return false;
+        }
+
+        if (selectorRegistry is not null && !selectorRegistry.IsRegistered(selectorName))
+        {
+            finding = new ValidationFinding(
+                ValidationSeverity.Error,
+                CodeSelectorNotRegistered,
+                string.Concat(gatePath, ".selector"),
+                string.Concat("selector is not registered: ", selectorName));
+            return false;
+        }
+
+        gate = new SelectorGate(selectorName);
+        return true;
+    }
+
     private static bool IsAllowedRequestField(string field)
     {
         for (var i = 0; i < AllowedRequestFields.Length; i++)
@@ -448,7 +583,14 @@ public static class GateJsonV1
         return false;
     }
 
-    private static bool TryParseComposite(GateType gateType, JsonElement element, string pathPrefix, int depth, out Gate? gate, out ValidationFinding finding)
+    private static bool TryParseComposite(
+        GateType gateType,
+        JsonElement element,
+        string pathPrefix,
+        int depth,
+        SelectorRegistry? selectorRegistry,
+        out Gate? gate,
+        out ValidationFinding finding)
     {
         gate = null;
         finding = default;
@@ -467,7 +609,7 @@ public static class GateJsonV1
         {
             var childPath = string.Concat(pathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "]");
 
-            if (!TryParseInternal(item, childPath, depth + 1, out var childGate, out finding))
+            if (!TryParseInternal(item, childPath, depth + 1, selectorRegistry, out var childGate, out finding))
             {
                 return false;
             }
@@ -483,12 +625,18 @@ public static class GateJsonV1
         return true;
     }
 
-    private static bool TryParseNot(JsonElement element, string pathPrefix, int depth, out Gate? gate, out ValidationFinding finding)
+    private static bool TryParseNot(
+        JsonElement element,
+        string pathPrefix,
+        int depth,
+        SelectorRegistry? selectorRegistry,
+        out Gate? gate,
+        out ValidationFinding finding)
     {
         gate = null;
         finding = default;
 
-        if (!TryParseInternal(element, pathPrefix, depth + 1, out var child, out finding))
+        if (!TryParseInternal(element, pathPrefix, depth + 1, selectorRegistry, out var child, out finding))
         {
             return false;
         }
@@ -506,5 +654,6 @@ public static class GateJsonV1
         All = 4,
         Any = 5,
         Not = 6,
+        Selector = 7,
     }
 }

@@ -14,7 +14,9 @@ public static class GateEvaluator
             throw new ArgumentNullException(nameof(variants));
         }
 
-        return EvaluateAllowed(gate, variants)
+        var context = new GateEvaluationContext(new VariantSet(variants));
+
+        return EvaluateAllowed(gate, in context)
             ? GateDecision.AllowedDecision
             : GateDecision.DeniedDecision;
     }
@@ -26,13 +28,31 @@ public static class GateEvaluator
             throw new ArgumentNullException(nameof(gate));
         }
 
-        return Evaluate(gate, variants.Dictionary);
+        var context = new GateEvaluationContext(variants);
+
+        return EvaluateAllowed(gate, in context)
+            ? GateDecision.AllowedDecision
+            : GateDecision.DeniedDecision;
     }
 
-    private static bool EvaluateAllowed(Gate gate, IReadOnlyDictionary<string, string> variants)
+    public static GateDecision Evaluate(Gate gate, in GateEvaluationContext context)
+    {
+        if (gate is null)
+        {
+            throw new ArgumentNullException(nameof(gate));
+        }
+
+        return EvaluateAllowed(gate, in context)
+            ? GateDecision.AllowedDecision
+            : GateDecision.DeniedDecision;
+    }
+
+    private static bool EvaluateAllowed(Gate gate, in GateEvaluationContext context)
     {
         if (gate is ExperimentGate experiment)
         {
+            var variants = context.Variants.Dictionary;
+
             if (!variants.TryGetValue(experiment.Layer, out var currentVariant))
             {
                 return false;
@@ -50,12 +70,43 @@ public static class GateEvaluator
             return false;
         }
 
+        if (gate is RolloutGate rollout)
+        {
+            if (string.IsNullOrEmpty(context.UserId))
+            {
+                return false;
+            }
+
+            var bucket = ComputeRolloutBucket(context.UserId, rollout.Salt);
+            return bucket < rollout.Percent;
+        }
+
+        if (gate is RequestAttrGate request)
+        {
+            var requestAttributes = context.RequestAttributes;
+            if (requestAttributes is null || !requestAttributes.TryGetValue(request.Field, out var value))
+            {
+                return false;
+            }
+
+            var allowedValues = request.Values.Span;
+            for (var i = 0; i < allowedValues.Length; i++)
+            {
+                if (string.Equals(value, allowedValues[i], StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         if (gate is AllGate all)
         {
             var children = all.Children.Span;
             for (var i = 0; i < children.Length; i++)
             {
-                if (!EvaluateAllowed(children[i], variants))
+                if (!EvaluateAllowed(children[i], in context))
                 {
                     return false;
                 }
@@ -69,7 +120,7 @@ public static class GateEvaluator
             var children = any.Children.Span;
             for (var i = 0; i < children.Length; i++)
             {
-                if (EvaluateAllowed(children[i], variants))
+                if (EvaluateAllowed(children[i], in context))
                 {
                     return true;
                 }
@@ -80,10 +131,45 @@ public static class GateEvaluator
 
         if (gate is NotGate not)
         {
-            return !EvaluateAllowed(not.Child, variants);
+            return !EvaluateAllowed(not.Child, in context);
         }
 
         throw new InvalidOperationException($"Unsupported gate type: '{gate.GetType()}'.");
+    }
+
+    private static ulong ComputeRolloutBucket(string userId, string salt)
+    {
+        const ulong offsetBasis = 14695981039346656037;
+        const ulong prime = 1099511628211;
+
+        var hash = offsetBasis;
+        hash = HashChars(hash, userId);
+        hash = HashChar(hash, '\0');
+        hash = HashChars(hash, salt);
+
+        return hash % 100;
+
+        static ulong HashChars(ulong hash, string value)
+        {
+            for (var i = 0; i < value.Length; i++)
+            {
+                hash = HashChar(hash, value[i]);
+            }
+
+            return hash;
+        }
+
+        static ulong HashChar(ulong hash, char c)
+        {
+            var u = (ushort)c;
+
+            hash ^= (byte)u;
+            hash *= prime;
+            hash ^= (byte)(u >> 8);
+            hash *= prime;
+
+            return hash;
+        }
     }
 }
 

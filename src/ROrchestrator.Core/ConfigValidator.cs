@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Reflection;
 using ROrchestrator.Core.Gates;
+using ROrchestrator.Core.Selectors;
 
 namespace ROrchestrator.Core;
 
@@ -31,6 +32,7 @@ public sealed class ConfigValidator
     private const string CodeModuleArgsMissing = "CFG_MODULE_ARGS_MISSING";
     private const string CodeModuleArgsBindFailed = "CFG_MODULE_ARGS_BIND_FAILED";
     private const string CodeModuleArgsUnknownField = "CFG_MODULE_ARGS_UNKNOWN_FIELD";
+    private const string CodeModuleEnabledInvalid = "CFG_MODULE_ENABLED_INVALID";
     private const string CodePriorityInvalid = "CFG_PRIORITY_INVALID";
     private const string CodeExperimentMappingInvalid = "CFG_EXPERIMENT_MAPPING_INVALID";
     private const string CodeExperimentMappingDuplicate = "CFG_EXPERIMENT_MAPPING_DUPLICATE";
@@ -44,11 +46,18 @@ public sealed class ConfigValidator
 
     private readonly FlowRegistry _flowRegistry;
     private readonly ModuleCatalog _moduleCatalog;
+    private readonly SelectorRegistry _selectorRegistry;
 
     public ConfigValidator(FlowRegistry flowRegistry, ModuleCatalog moduleCatalog)
+        : this(flowRegistry, moduleCatalog, SelectorRegistry.Empty)
+    {
+    }
+
+    public ConfigValidator(FlowRegistry flowRegistry, ModuleCatalog moduleCatalog, SelectorRegistry selectorRegistry)
     {
         _flowRegistry = flowRegistry ?? throw new ArgumentNullException(nameof(flowRegistry));
         _moduleCatalog = moduleCatalog ?? throw new ArgumentNullException(nameof(moduleCatalog));
+        _selectorRegistry = selectorRegistry ?? throw new ArgumentNullException(nameof(selectorRegistry));
     }
 
     public ValidationReport ValidatePatchJson(string patchJson)
@@ -204,7 +213,7 @@ public sealed class ConfigValidator
                     }
                     else if (flowRegistered && stagesPatch.ValueKind == JsonValueKind.Object)
                     {
-                        ValidateStagePatches(flowName, stagesPatch, blueprintStageNameSet, _moduleCatalog, ref findings);
+                        ValidateStagePatches(flowName, stagesPatch, blueprintStageNameSet, _moduleCatalog, _selectorRegistry, ref findings);
                     }
 
                     ValidateExperiments(
@@ -214,6 +223,7 @@ public sealed class ConfigValidator
                         patchType,
                         blueprintStageNameSet,
                         _moduleCatalog,
+                        _selectorRegistry,
                         flowRegistered,
                         ref findings);
                 }
@@ -287,6 +297,7 @@ public sealed class ConfigValidator
         Type? patchType,
         string[] blueprintStageNameSet,
         ModuleCatalog moduleCatalog,
+        SelectorRegistry selectorRegistry,
         bool flowRegistered,
         ref FindingBuffer findings)
     {
@@ -483,7 +494,7 @@ public sealed class ConfigValidator
             if (flowRegistered)
             {
                 var patchFlowName = string.Concat(flowName, ".experiments[", indexString, "].patch");
-                ValidateExperimentPatch(patchFlowName, patchType, blueprintStageNameSet, moduleCatalog, patch, ref findings);
+                ValidateExperimentPatch(patchFlowName, patchType, blueprintStageNameSet, moduleCatalog, selectorRegistry, patch, ref findings);
             }
 
             index++;
@@ -495,6 +506,7 @@ public sealed class ConfigValidator
         Type? patchType,
         string[] blueprintStageNameSet,
         ModuleCatalog moduleCatalog,
+        SelectorRegistry selectorRegistry,
         JsonElement patch,
         ref FindingBuffer findings)
     {
@@ -524,7 +536,7 @@ public sealed class ConfigValidator
         }
         else if (stagesPatch.ValueKind == JsonValueKind.Object)
         {
-            ValidateStagePatches(patchFlowName, stagesPatch, blueprintStageNameSet, moduleCatalog, ref patchFindings);
+            ValidateStagePatches(patchFlowName, stagesPatch, blueprintStageNameSet, moduleCatalog, selectorRegistry, ref patchFindings);
         }
 
         ValidateExperiments(
@@ -534,6 +546,7 @@ public sealed class ConfigValidator
             patchType,
             blueprintStageNameSet,
             moduleCatalog,
+            selectorRegistry,
             flowRegistered: true,
             ref patchFindings);
 
@@ -685,6 +698,7 @@ public sealed class ConfigValidator
         JsonElement stagesPatch,
         string[] blueprintStageNameSet,
         ModuleCatalog moduleCatalog,
+        SelectorRegistry selectorRegistry,
         ref FindingBuffer findings)
     {
         Dictionary<string, ModuleIdFirstOccurrence>? moduleIdFirstOccurrenceMap = null;
@@ -720,7 +734,7 @@ public sealed class ConfigValidator
                 continue;
             }
 
-            ValidateStagePatch(flowName, stageName, stageProperty.Value, moduleCatalog, ref findings, ref moduleIdFirstOccurrenceMap);
+            ValidateStagePatch(flowName, stageName, stageProperty.Value, moduleCatalog, selectorRegistry, ref findings, ref moduleIdFirstOccurrenceMap);
         }
     }
 
@@ -729,6 +743,7 @@ public sealed class ConfigValidator
         string stageName,
         JsonElement stagePatch,
         ModuleCatalog moduleCatalog,
+        SelectorRegistry selectorRegistry,
         ref FindingBuffer findings,
         ref Dictionary<string, ModuleIdFirstOccurrence>? moduleIdFirstOccurrenceMap)
     {
@@ -785,7 +800,7 @@ public sealed class ConfigValidator
             return;
         }
 
-        ValidateModulesPatch(flowName, stageName, modulesPathPrefix, modulesPatch, moduleCatalog, ref findings, ref moduleIdFirstOccurrenceMap);
+        ValidateModulesPatch(flowName, stageName, modulesPathPrefix, modulesPatch, moduleCatalog, selectorRegistry, ref findings, ref moduleIdFirstOccurrenceMap);
     }
 
     private static void ValidateFanoutMax(
@@ -885,6 +900,7 @@ public sealed class ConfigValidator
         string modulesPathPrefix,
         JsonElement modulesPatch,
         ModuleCatalog moduleCatalog,
+        SelectorRegistry selectorRegistry,
         ref FindingBuffer findings,
         ref Dictionary<string, ModuleIdFirstOccurrence>? moduleIdFirstOccurrenceMap)
     {
@@ -953,6 +969,19 @@ public sealed class ConfigValidator
                     if (moduleField.Value.ValueKind == JsonValueKind.True || moduleField.Value.ValueKind == JsonValueKind.False)
                     {
                         moduleEnabled = moduleField.Value.GetBoolean();
+                    }
+                    else
+                    {
+                        findings.Add(
+                            new ValidationFinding(
+                                ValidationSeverity.Error,
+                                code: CodeModuleEnabledInvalid,
+                                path: string.Concat(
+                                    modulesPathPrefix,
+                                    "[",
+                                    index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                    "].enabled"),
+                                message: "modules[].enabled must be a boolean."));
                     }
 
                     continue;
@@ -1241,7 +1270,7 @@ public sealed class ConfigValidator
                             message: "gate is redundant when enabled=false."));
                 }
 
-                if (!GateJsonV1.TryParseOptional(moduleGate, gatePath, out _, out var gateFinding))
+                if (!GateJsonV1.TryParseOptional(moduleGate, gatePath, selectorRegistry, out _, out var gateFinding))
                 {
                     findings.Add(gateFinding);
                 }

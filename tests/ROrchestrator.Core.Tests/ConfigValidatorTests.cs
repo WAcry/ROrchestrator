@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using ROrchestrator.Core;
 using ROrchestrator.Core.Blueprint;
+using ROrchestrator.Core.Selectors;
 
 namespace ROrchestrator.Core.Tests;
 
@@ -619,6 +620,26 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
+    public void ValidatePatchJson_ShouldReportModuleEnabledInvalid_WhenEnabledIsNotBoolean()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":\"false\"}]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_MODULE_ENABLED_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].enabled", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
     public void ValidatePatchJson_ShouldBeValid_WhenExperimentPatchModuleEnabledAndPriorityAreValid()
     {
         var registry = new FlowRegistry();
@@ -1171,6 +1192,26 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
+    public void ValidatePatchJson_ShouldReportUnknownField_WhenGateRolloutHasUnknownField()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"rollout\":{\"percent\":5,\"salt\":\"m1\",\"oops\":1}}}]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_UNKNOWN_FIELD");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].gate.rollout.oops", finding.Path);
+        Assert.Equal("Unknown field: oops", finding.Message);
+    }
+
+    [Fact]
     public void ValidatePatchJson_ShouldReportGateRolloutInvalid_WhenPercentIsOutOfRange()
     {
         var registry = new FlowRegistry();
@@ -1284,6 +1325,48 @@ public sealed class ConfigValidatorTests
 
         Assert.True(report.IsValid);
         Assert.Empty(report.Findings);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenModuleGateSelectorIsRegistered()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var selectors = new SelectorRegistry();
+        selectors.Register("is_new_user", _ => true);
+
+        var validator = new ConfigValidator(registry, catalog, selectors);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"selector\":\"is_new_user\"}}]}}}}}");
+
+        Assert.True(report.IsValid);
+        Assert.Empty(report.Findings);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportSelectorNotRegistered_WhenModuleGateSelectorIsNotRegistered()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var selectors = new SelectorRegistry();
+        var validator = new ConfigValidator(registry, catalog, selectors);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"selector\":\"is_new_user\"}}]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_SELECTOR_NOT_REGISTERED");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].gate.selector", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
     }
 
     [Fact]
