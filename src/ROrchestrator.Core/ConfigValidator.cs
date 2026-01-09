@@ -31,12 +31,16 @@ public sealed class ConfigValidator
     private const string CodeModuleArgsMissing = "CFG_MODULE_ARGS_MISSING";
     private const string CodeModuleArgsBindFailed = "CFG_MODULE_ARGS_BIND_FAILED";
     private const string CodeModuleArgsUnknownField = "CFG_MODULE_ARGS_UNKNOWN_FIELD";
+    private const string CodePriorityInvalid = "CFG_PRIORITY_INVALID";
     private const string CodeExperimentMappingInvalid = "CFG_EXPERIMENT_MAPPING_INVALID";
     private const string CodeExperimentMappingDuplicate = "CFG_EXPERIMENT_MAPPING_DUPLICATE";
     private const string CodeExperimentPatchInvalid = "CFG_EXPERIMENT_PATCH_INVALID";
+    private const string CodeGateRedundant = "CFG_GATE_REDUNDANT";
     private const string GateCodePrefix = "CFG_GATE_";
 
     private const int MaxAllowedFanoutMax = 8;
+    private const int MinModulePriority = -1000;
+    private const int MaxModulePriority = 1000;
 
     private readonly FlowRegistry _flowRegistry;
     private readonly ModuleCatalog _moduleCatalog;
@@ -908,6 +912,10 @@ public sealed class ConfigValidator
             JsonElement moduleWith = default;
             var hasModuleGate = false;
             JsonElement moduleGate = default;
+            var hasModuleEnabled = false;
+            var moduleEnabled = true;
+            var hasModulePriority = false;
+            JsonElement modulePriority = default;
 
             foreach (var moduleField in modulePatch.EnumerateObject())
             {
@@ -938,6 +946,25 @@ public sealed class ConfigValidator
                     continue;
                 }
 
+                if (moduleField.NameEquals("enabled"))
+                {
+                    hasModuleEnabled = true;
+
+                    if (moduleField.Value.ValueKind == JsonValueKind.True || moduleField.Value.ValueKind == JsonValueKind.False)
+                    {
+                        moduleEnabled = moduleField.Value.GetBoolean();
+                    }
+
+                    continue;
+                }
+
+                if (moduleField.NameEquals("priority"))
+                {
+                    hasModulePriority = true;
+                    modulePriority = moduleField.Value;
+                    continue;
+                }
+
                 if (moduleField.NameEquals("gate"))
                 {
                     hasModuleGate = true;
@@ -957,6 +984,27 @@ public sealed class ConfigValidator
                             "].",
                             fieldName),
                         message: string.Concat("Unknown field: ", fieldName)));
+            }
+
+            if (hasModulePriority)
+            {
+                if (modulePriority.ValueKind != JsonValueKind.Number
+                    || !modulePriority.TryGetInt32(out var priority)
+                    || priority < MinModulePriority
+                    || priority > MaxModulePriority)
+                {
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Warn,
+                            code: CodePriorityInvalid,
+                            path: string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].priority"),
+                            message: string.Concat(
+                                "modules[].priority must be an integer in range ",
+                                MinModulePriority.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                "..",
+                                MaxModulePriority.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                ".")));
+                }
             }
 
             if (string.IsNullOrEmpty(moduleId))
@@ -1179,6 +1227,19 @@ public sealed class ConfigValidator
             if (hasModuleGate)
             {
                 var gatePath = string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].gate");
+
+                if (hasModuleEnabled
+                    && !moduleEnabled
+                    && moduleGate.ValueKind != JsonValueKind.Null
+                    && moduleGate.ValueKind != JsonValueKind.Undefined)
+                {
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Info,
+                            code: CodeGateRedundant,
+                            path: gatePath,
+                            message: "gate is redundant when enabled=false."));
+                }
 
                 if (!GateJsonV1.TryParseOptional(moduleGate, gatePath, out _, out var gateFinding))
                 {

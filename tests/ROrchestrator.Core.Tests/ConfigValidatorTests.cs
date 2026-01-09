@@ -601,6 +601,130 @@ public sealed class ConfigValidatorTests
     }
 
     [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenModuleEnabledAndPriorityAreValid()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":false,\"priority\":10}]}}}}}");
+
+        Assert.True(report.IsValid);
+        Assert.Empty(report.Findings);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenExperimentPatchModuleEnabledAndPriorityAreValid()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":true,\"priority\":-5}]}}}}]}}}");
+
+        Assert.True(report.IsValid);
+        Assert.Empty(report.Findings);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportPriorityInvalid_WhenModulePriorityIsOutOfRange()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"priority\":1001}]}}}}}");
+
+        Assert.True(report.IsValid);
+
+        var finding = GetSingleFinding(report, "CFG_PRIORITY_INVALID");
+        Assert.Equal(ValidationSeverity.Warn, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].priority", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportPriorityInvalid_WhenExperimentPatchModulePriorityIsOutOfRange()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"priority\":1001}]}}}}]}}}");
+
+        Assert.True(report.IsValid);
+
+        var finding = GetSingleFinding(report, "CFG_PRIORITY_INVALID");
+        Assert.Equal(ValidationSeverity.Warn, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].priority", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportGateRedundant_WhenEnabledIsFalseAndGateIsPresent()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":false,\"gate\":{\"experiment\":{\"layer\":\"recall_layer\",\"in\":[\"B\"]}}}]}}}}}");
+
+        Assert.True(report.IsValid);
+
+        var finding = GetSingleFinding(report, "CFG_GATE_REDUNDANT");
+        Assert.Equal(ValidationSeverity.Info, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].gate", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportGateRedundant_WhenEnabledIsFalseAndGateIsPresentInExperimentPatch()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":false,\"gate\":{\"experiment\":{\"layer\":\"recall_layer\",\"in\":[\"B\"]}}}]}}}}]}}}");
+
+        Assert.True(report.IsValid);
+
+        var finding = GetSingleFinding(report, "CFG_GATE_REDUNDANT");
+        Assert.Equal(ValidationSeverity.Info, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].gate", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
     public void ValidatePatchJson_ShouldReportModuleArgsMissing_WhenModuleWithIsMissing()
     {
         var registry = new FlowRegistry();
@@ -1008,6 +1132,198 @@ public sealed class ConfigValidatorTests
             "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"not\":{\"experiment\":{\"layer\":\"recall_layer\",\"in\":[\"B\"]}}}}]}}}}]}}}");
 
         Assert.True(report.IsValid);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenModuleGateRolloutIsValid()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"rollout\":{\"percent\":5,\"salt\":\"m1\"}}}]}}}}}");
+
+        Assert.True(report.IsValid);
+        Assert.Empty(report.Findings);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenExperimentPatchModuleGateRolloutIsValid()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"rollout\":{\"percent\":5,\"salt\":\"m1\"}}}]}}}}]}}}");
+
+        Assert.True(report.IsValid);
+        Assert.Empty(report.Findings);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportGateRolloutInvalid_WhenPercentIsOutOfRange()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"rollout\":{\"percent\":120,\"salt\":\"m1\"}}}]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_GATE_ROLLOUT_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].gate.rollout.percent", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportGateRolloutInvalid_WhenPercentIsOutOfRangeInExperimentPatch()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"rollout\":{\"percent\":120,\"salt\":\"m1\"}}}]}}}}]}}}");
+
+        var finding = GetSingleFinding(report, "CFG_GATE_ROLLOUT_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].gate.rollout.percent", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportGateRolloutInvalid_WhenSaltIsMissing()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"rollout\":{\"percent\":5}}}]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_GATE_ROLLOUT_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].gate.rollout.salt", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportGateRolloutInvalid_WhenSaltIsMissingInExperimentPatch()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"rollout\":{\"percent\":5}}}]}}}}]}}}");
+
+        var finding = GetSingleFinding(report, "CFG_GATE_ROLLOUT_INVALID");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].gate.rollout.salt", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenModuleGateRequestIsValid()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"request\":{\"field\":\"region\",\"in\":[\"US\"]}}}]}}}}}");
+
+        Assert.True(report.IsValid);
+        Assert.Empty(report.Findings);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldBeValid_WhenExperimentPatchModuleGateRequestIsValid()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"request\":{\"field\":\"region\",\"in\":[\"US\"]}}}]}}}}]}}}");
+
+        Assert.True(report.IsValid);
+        Assert.Empty(report.Findings);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportGateRequestFieldNotAllowed_WhenFieldIsNotAllowed()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"request\":{\"field\":\"raw_query\",\"in\":[\"x\"]}}}]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_GATE_REQUEST_FIELD_NOT_ALLOWED");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].gate.request.field", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldReportGateRequestFieldNotAllowed_WhenFieldIsNotAllowedInExperimentPatch()
+    {
+        var registry = new FlowRegistry();
+        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<ModuleArgs, int>("test.module", _ => new TestModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"request\":{\"field\":\"raw_query\",\"in\":[\"x\"]}}}]}}}}]}}}");
+
+        var finding = GetSingleFinding(report, "CFG_GATE_REQUEST_FIELD_NOT_ALLOWED");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].gate.request.field", finding.Path);
+        Assert.False(string.IsNullOrEmpty(finding.Message));
     }
 
     [Fact]

@@ -84,6 +84,8 @@ public static class PatchDiffV1
 
                         var isUseChanged = !string.Equals(oldModule.Use, newModule.Use, StringComparison.Ordinal);
                         var isWithChanged = !JsonElementDeepEquals(oldModule.With, newModule.With);
+                        var isEnabledChanged = oldModule.Enabled != newModule.Enabled;
+                        var isPriorityChanged = oldModule.Priority != newModule.Priority;
 
                         var oldHasGate = oldModule.Gate.ValueKind != JsonValueKind.Undefined;
                         var newHasGate = newModule.Gate.ValueKind != JsonValueKind.Undefined;
@@ -92,7 +94,7 @@ public static class PatchDiffV1
                         var isGateRemoved = oldHasGate && !newHasGate;
                         var isGateChanged = oldHasGate && newHasGate && !JsonElementDeepEquals(oldModule.Gate, newModule.Gate);
 
-                        if (isUseChanged || isWithChanged || isGateAdded || isGateRemoved || isGateChanged)
+                        if (isUseChanged || isWithChanged || isEnabledChanged || isPriorityChanged || isGateAdded || isGateRemoved || isGateChanged)
                         {
                             var modulePath = BuildModulePath(key.FlowName, key.StageName, newModule.Index, newModule.ExperimentIndex);
 
@@ -104,6 +106,30 @@ public static class PatchDiffV1
                                         key.StageName,
                                         key.ModuleId,
                                         string.Concat(modulePath, ".use"),
+                                        key.ExperimentLayer,
+                                        key.ExperimentVariant));
+                            }
+
+                            if (isEnabledChanged)
+                            {
+                                buffer.Add(
+                                    PatchModuleDiff.CreateEnabledChanged(
+                                        key.FlowName,
+                                        key.StageName,
+                                        key.ModuleId,
+                                        string.Concat(modulePath, ".enabled"),
+                                        key.ExperimentLayer,
+                                        key.ExperimentVariant));
+                            }
+
+                            if (isPriorityChanged)
+                            {
+                                buffer.Add(
+                                    PatchModuleDiff.CreatePriorityChanged(
+                                        key.FlowName,
+                                        key.StageName,
+                                        key.ModuleId,
+                                        string.Concat(modulePath, ".priority"),
                                         key.ExperimentLayer,
                                         key.ExperimentVariant));
                             }
@@ -297,6 +323,133 @@ public static class PatchDiffV1
                 }
 
                 return new PatchParamDiffReport(diffs);
+            }
+        }
+    }
+
+    public static PatchFanoutMaxDiffReport DiffFanoutMax(string oldPatchJson, string newPatchJson)
+    {
+        if (oldPatchJson is null)
+        {
+            throw new ArgumentNullException(nameof(oldPatchJson));
+        }
+
+        if (newPatchJson is null)
+        {
+            throw new ArgumentNullException(nameof(newPatchJson));
+        }
+
+        JsonDocument oldDocument;
+
+        try
+        {
+            oldDocument = JsonDocument.Parse(oldPatchJson);
+        }
+        catch (JsonException ex)
+        {
+            throw new FormatException("oldPatchJson is not a valid JSON document.", ex);
+        }
+
+        using (oldDocument)
+        {
+            EnsureSupportedSchemaVersion(oldDocument.RootElement);
+
+            JsonDocument newDocument;
+
+            try
+            {
+                newDocument = JsonDocument.Parse(newPatchJson);
+            }
+            catch (JsonException ex)
+            {
+                throw new FormatException("newPatchJson is not a valid JSON document.", ex);
+            }
+
+            using (newDocument)
+            {
+                EnsureSupportedSchemaVersion(newDocument.RootElement);
+
+                Dictionary<FanoutMaxKey, FanoutMaxInfo>? oldFanoutMaxMap = null;
+                Dictionary<FanoutMaxKey, FanoutMaxInfo>? newFanoutMaxMap = null;
+
+                CollectFanoutMax(oldDocument.RootElement, ref oldFanoutMaxMap);
+                CollectFanoutMax(newDocument.RootElement, ref newFanoutMaxMap);
+
+                if (oldFanoutMaxMap is null && newFanoutMaxMap is null)
+                {
+                    return PatchFanoutMaxDiffReport.Empty;
+                }
+
+                var buffer = new FanoutMaxDiffBuffer();
+
+                if (oldFanoutMaxMap is not null)
+                {
+                    foreach (var pair in oldFanoutMaxMap)
+                    {
+                        var key = pair.Key;
+                        var oldValue = pair.Value;
+
+                        if (newFanoutMaxMap is null || !newFanoutMaxMap.TryGetValue(key, out var newValue))
+                        {
+                            buffer.Add(
+                                PatchFanoutMaxDiff.CreateRemoved(
+                                    key.FlowName,
+                                    key.StageName,
+                                    BuildFanoutMaxPath(key.FlowName, key.StageName, oldValue.ExperimentIndex),
+                                    key.ExperimentLayer,
+                                    key.ExperimentVariant));
+                            continue;
+                        }
+
+                        if (!JsonElementDeepEquals(oldValue.Value, newValue.Value))
+                        {
+                            buffer.Add(
+                                PatchFanoutMaxDiff.CreateChanged(
+                                    key.FlowName,
+                                    key.StageName,
+                                    BuildFanoutMaxPath(key.FlowName, key.StageName, newValue.ExperimentIndex),
+                                    key.ExperimentLayer,
+                                    key.ExperimentVariant));
+                        }
+                    }
+                }
+
+                if (newFanoutMaxMap is not null)
+                {
+                    foreach (var pair in newFanoutMaxMap)
+                    {
+                        var key = pair.Key;
+
+                        if (oldFanoutMaxMap is not null && oldFanoutMaxMap.ContainsKey(key))
+                        {
+                            continue;
+                        }
+
+                        var newValue = pair.Value;
+
+                        buffer.Add(
+                            PatchFanoutMaxDiff.CreateAdded(
+                                key.FlowName,
+                                key.StageName,
+                                BuildFanoutMaxPath(key.FlowName, key.StageName, newValue.ExperimentIndex),
+                                key.ExperimentLayer,
+                                key.ExperimentVariant));
+                    }
+                }
+
+                var diffs = buffer.ToArray();
+
+                if (diffs.Length == 0)
+                {
+                    return PatchFanoutMaxDiffReport.Empty;
+                }
+
+                if (diffs.Length > 1)
+                {
+                    Array.Sort(diffs, PatchFanoutMaxDiffComparer.Instance);
+                }
+
+                return new PatchFanoutMaxDiffReport(diffs);
             }
         }
     }
@@ -589,6 +742,166 @@ public static class PatchDiffV1
         }
     }
 
+    private static void CollectFanoutMax(JsonElement root, ref Dictionary<FanoutMaxKey, FanoutMaxInfo>? fanoutMaxMap)
+    {
+        if (!root.TryGetProperty("flows", out var flowsElement))
+        {
+            return;
+        }
+
+        if (flowsElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new FormatException("flows must be an object.");
+        }
+
+        foreach (var flowProperty in flowsElement.EnumerateObject())
+        {
+            var flowName = flowProperty.Name;
+            var flowPatch = flowProperty.Value;
+
+            if (flowPatch.ValueKind != JsonValueKind.Object)
+            {
+                throw new FormatException(string.Concat("Flow patch must be an object. Flow: ", flowName));
+            }
+
+            CollectFlowFanoutMax(flowName, flowPatch, experimentLayer: null, experimentVariant: null, experimentIndex: -1, ref fanoutMaxMap);
+
+            if (!flowPatch.TryGetProperty("experiments", out var experimentsElement) || experimentsElement.ValueKind == JsonValueKind.Null)
+            {
+                continue;
+            }
+
+            if (experimentsElement.ValueKind != JsonValueKind.Array)
+            {
+                throw new FormatException(string.Concat("experiments must be an array. Flow: ", flowName));
+            }
+
+            var experimentIndex = 0;
+
+            foreach (var experimentMapping in experimentsElement.EnumerateArray())
+            {
+                if (experimentMapping.ValueKind != JsonValueKind.Object)
+                {
+                    throw new FormatException(string.Concat("experiments must be an array of objects. Flow: ", flowName));
+                }
+
+                if (!experimentMapping.TryGetProperty("layer", out var layerElement) || layerElement.ValueKind != JsonValueKind.String)
+                {
+                    throw new FormatException(
+                        string.Concat(
+                            "experiments[].layer is required and must be a non-empty string. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
+                }
+
+                var layer = layerElement.GetString();
+
+                if (string.IsNullOrEmpty(layer))
+                {
+                    throw new FormatException(
+                        string.Concat(
+                            "experiments[].layer is required and must be a non-empty string. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
+                }
+
+                if (!experimentMapping.TryGetProperty("variant", out var variantElement) || variantElement.ValueKind != JsonValueKind.String)
+                {
+                    throw new FormatException(
+                        string.Concat(
+                            "experiments[].variant is required and must be a non-empty string. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
+                }
+
+                var variant = variantElement.GetString();
+
+                if (string.IsNullOrEmpty(variant))
+                {
+                    throw new FormatException(
+                        string.Concat(
+                            "experiments[].variant is required and must be a non-empty string. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
+                }
+
+                if (!experimentMapping.TryGetProperty("patch", out var patchElement) || patchElement.ValueKind == JsonValueKind.Null)
+                {
+                    throw new FormatException(
+                        string.Concat(
+                            "experiments[].patch is required. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
+                }
+
+                if (patchElement.ValueKind != JsonValueKind.Object)
+                {
+                    throw new FormatException(
+                        string.Concat(
+                            "experiments[].patch must be a non-null object. Flow: ",
+                            flowName,
+                            ", ExperimentIndex: ",
+                            experimentIndex.ToString(CultureInfo.InvariantCulture)));
+                }
+
+                CollectFlowFanoutMax(flowName, patchElement, layer!, variant!, experimentIndex, ref fanoutMaxMap);
+
+                experimentIndex++;
+            }
+        }
+    }
+
+    private static void CollectFlowFanoutMax(
+        string flowName,
+        JsonElement flowPatch,
+        string? experimentLayer,
+        string? experimentVariant,
+        int experimentIndex,
+        ref Dictionary<FanoutMaxKey, FanoutMaxInfo>? fanoutMaxMap)
+    {
+        if (!flowPatch.TryGetProperty("stages", out var stagesElement) || stagesElement.ValueKind == JsonValueKind.Null)
+        {
+            return;
+        }
+
+        if (stagesElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new FormatException(string.Concat("stages must be an object. Flow: ", flowName));
+        }
+
+        foreach (var stageProperty in stagesElement.EnumerateObject())
+        {
+            var stageName = stageProperty.Name;
+            var stagePatch = stageProperty.Value;
+
+            if (stagePatch.ValueKind != JsonValueKind.Object)
+            {
+                throw new FormatException(
+                    string.Concat("Stage patch must be an object. Flow: ", flowName, ", Stage: ", stageName));
+            }
+
+            if (!stagePatch.TryGetProperty("fanoutMax", out var fanoutMaxElement) || fanoutMaxElement.ValueKind == JsonValueKind.Null)
+            {
+                continue;
+            }
+
+            fanoutMaxMap ??= new Dictionary<FanoutMaxKey, FanoutMaxInfo>(4);
+
+            var key = new FanoutMaxKey(flowName, stageName, experimentLayer, experimentVariant);
+
+            if (!fanoutMaxMap.TryAdd(key, new FanoutMaxInfo(fanoutMaxElement, experimentIndex)))
+            {
+                throw new FormatException(
+                    string.Concat("Duplicate stage entry within flow. Flow: ", flowName, ", Stage: ", stageName));
+            }
+        }
+    }
+
     private static string BuildParamsPath(string flowName, int experimentIndex)
     {
         if (experimentIndex < 0)
@@ -602,6 +915,23 @@ public static class PatchDiffV1
             ".experiments[",
             experimentIndex.ToString(CultureInfo.InvariantCulture),
             "].patch.params");
+    }
+
+    private static string BuildFanoutMaxPath(string flowName, string stageName, int experimentIndex)
+    {
+        if (experimentIndex < 0)
+        {
+            return string.Concat("$.flows.", flowName, ".stages.", stageName, ".fanoutMax");
+        }
+
+        return string.Concat(
+            "$.flows.",
+            flowName,
+            ".experiments[",
+            experimentIndex.ToString(CultureInfo.InvariantCulture),
+            "].patch.stages.",
+            stageName,
+            ".fanoutMax");
     }
 
     private static void AddAllParamPropertiesAsAdded(ParamsKey key, string pathPrefix, JsonElement paramsElement, ref ParamDiffBuffer buffer)
@@ -919,6 +1249,26 @@ public static class PatchDiffV1
                         string.Concat("modules[].with is required. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
                 }
 
+                var enabled = true;
+
+                if (moduleElement.TryGetProperty("enabled", out var enabledElement) && enabledElement.ValueKind != JsonValueKind.Null)
+                {
+                    if (enabledElement.ValueKind == JsonValueKind.True || enabledElement.ValueKind == JsonValueKind.False)
+                    {
+                        enabled = enabledElement.GetBoolean();
+                    }
+                }
+
+                var priority = 0;
+
+                if (moduleElement.TryGetProperty("priority", out var priorityElement) && priorityElement.ValueKind != JsonValueKind.Null)
+                {
+                    if (priorityElement.ValueKind == JsonValueKind.Number && priorityElement.TryGetInt32(out var priorityValue))
+                    {
+                        priority = priorityValue;
+                    }
+                }
+
                 JsonElement gateElement = default;
 
                 if (moduleElement.TryGetProperty("gate", out var rawGateElement) && rawGateElement.ValueKind != JsonValueKind.Null)
@@ -930,7 +1280,7 @@ public static class PatchDiffV1
 
                 var key = new ModuleKey(flowName, stageName, moduleId, experimentLayer, experimentVariant);
 
-                if (!moduleMap.TryAdd(key, new ModuleInfo(moduleUse, withElement, gateElement, index, experimentIndex)))
+                if (!moduleMap.TryAdd(key, new ModuleInfo(moduleUse, withElement, gateElement, enabled, priority, index, experimentIndex)))
                 {
                     throw new FormatException(
                         string.Concat("Duplicate module id within stage. Flow: ", flowName, ", Stage: ", stageName, ", ModuleId: ", moduleId));
@@ -1143,19 +1493,74 @@ public static class PatchDiffV1
         }
     }
 
+    private readonly struct FanoutMaxKey : IEquatable<FanoutMaxKey>
+    {
+        public readonly string FlowName;
+        public readonly string? ExperimentLayer;
+        public readonly string? ExperimentVariant;
+        public readonly string StageName;
+
+        public FanoutMaxKey(string flowName, string stageName, string? experimentLayer, string? experimentVariant)
+        {
+            FlowName = flowName;
+            ExperimentLayer = experimentLayer;
+            ExperimentVariant = experimentVariant;
+            StageName = stageName;
+        }
+
+        public bool Equals(FanoutMaxKey other)
+        {
+            return string.Equals(FlowName, other.FlowName, StringComparison.Ordinal)
+                && string.Equals(ExperimentLayer, other.ExperimentLayer, StringComparison.Ordinal)
+                && string.Equals(ExperimentVariant, other.ExperimentVariant, StringComparison.Ordinal)
+                && string.Equals(StageName, other.StageName, StringComparison.Ordinal);
+        }
+
+        public override bool Equals(object? obj)
+        {
+            return obj is FanoutMaxKey other && Equals(other);
+        }
+
+        public override int GetHashCode()
+        {
+            var hash = new HashCode();
+            hash.Add(FlowName);
+            hash.Add(ExperimentLayer);
+            hash.Add(ExperimentVariant);
+            hash.Add(StageName);
+            return hash.ToHashCode();
+        }
+    }
+
+    private readonly struct FanoutMaxInfo
+    {
+        public readonly JsonElement Value;
+        public readonly int ExperimentIndex;
+
+        public FanoutMaxInfo(JsonElement value, int experimentIndex)
+        {
+            Value = value;
+            ExperimentIndex = experimentIndex;
+        }
+    }
+
     private readonly struct ModuleInfo
     {
         public readonly string Use;
         public readonly JsonElement With;
         public readonly JsonElement Gate;
+        public readonly bool Enabled;
+        public readonly int Priority;
         public readonly int Index;
         public readonly int ExperimentIndex;
 
-        public ModuleInfo(string use, JsonElement with, JsonElement gate, int index, int experimentIndex)
+        public ModuleInfo(string use, JsonElement with, JsonElement gate, bool enabled, int priority, int index, int experimentIndex)
         {
             Use = use;
             With = with;
             Gate = gate;
+            Enabled = enabled;
+            Priority = priority;
             Index = index;
             ExperimentIndex = experimentIndex;
         }
@@ -1253,6 +1658,52 @@ public static class PatchDiffV1
         }
     }
 
+    private struct FanoutMaxDiffBuffer
+    {
+        private PatchFanoutMaxDiff[]? _items;
+        private int _count;
+
+        public void Add(PatchFanoutMaxDiff item)
+        {
+            var items = _items;
+
+            if (items is null)
+            {
+                items = new PatchFanoutMaxDiff[4];
+                _items = items;
+            }
+            else if ((uint)_count >= (uint)items.Length)
+            {
+                var newItems = new PatchFanoutMaxDiff[items.Length * 2];
+                Array.Copy(items, 0, newItems, 0, items.Length);
+                items = newItems;
+                _items = items;
+            }
+
+            items[_count] = item;
+            _count++;
+        }
+
+        public PatchFanoutMaxDiff[] ToArray()
+        {
+            if (_count == 0)
+            {
+                return Array.Empty<PatchFanoutMaxDiff>();
+            }
+
+            var items = _items!;
+
+            if (_count == items.Length)
+            {
+                return items;
+            }
+
+            var trimmed = new PatchFanoutMaxDiff[_count];
+            Array.Copy(items, 0, trimmed, 0, _count);
+            return trimmed;
+        }
+    }
+
     private sealed class PatchModuleDiffComparer : IComparer<PatchModuleDiff>
     {
         public static PatchModuleDiffComparer Instance { get; } = new();
@@ -1332,6 +1783,46 @@ public static class PatchDiffV1
             return ((int)x.Kind).CompareTo((int)y.Kind);
         }
     }
+
+    private sealed class PatchFanoutMaxDiffComparer : IComparer<PatchFanoutMaxDiff>
+    {
+        public static PatchFanoutMaxDiffComparer Instance { get; } = new();
+
+        public int Compare(PatchFanoutMaxDiff x, PatchFanoutMaxDiff y)
+        {
+            var c = string.CompareOrdinal(x.FlowName, y.FlowName);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            c = string.CompareOrdinal(x.ExperimentLayer, y.ExperimentLayer);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            c = string.CompareOrdinal(x.ExperimentVariant, y.ExperimentVariant);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            c = string.CompareOrdinal(x.StageName, y.StageName);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            c = string.CompareOrdinal(x.Path, y.Path);
+            if (c != 0)
+            {
+                return c;
+            }
+
+            return ((int)x.Kind).CompareTo((int)y.Kind);
+        }
+    }
 }
 
 public sealed class PatchModuleDiffReport
@@ -1359,6 +1850,8 @@ public enum PatchModuleDiffKind
     GateAdded = 7,
     GateRemoved = 8,
     GateChanged = 9,
+    EnabledChanged = 10,
+    PriorityChanged = 11,
 }
 
 public readonly struct PatchModuleDiff
@@ -1428,6 +1921,28 @@ public readonly struct PatchModuleDiff
         return new PatchModuleDiff(PatchModuleDiffKind.UseChanged, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
     }
 
+    internal static PatchModuleDiff CreateEnabledChanged(
+        string flowName,
+        string stageName,
+        string moduleId,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchModuleDiff(PatchModuleDiffKind.EnabledChanged, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
+    }
+
+    internal static PatchModuleDiff CreatePriorityChanged(
+        string flowName,
+        string stageName,
+        string moduleId,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchModuleDiff(PatchModuleDiffKind.PriorityChanged, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
+    }
+
     internal static PatchModuleDiff CreateWithChanged(
         string flowName,
         string stageName,
@@ -1492,6 +2007,88 @@ public readonly struct PatchModuleDiff
         string? experimentVariant = null)
     {
         return new PatchModuleDiff(PatchModuleDiffKind.GateChanged, flowName, stageName, moduleId, path, experimentLayer, experimentVariant);
+    }
+}
+
+public sealed class PatchFanoutMaxDiffReport
+{
+    public static PatchFanoutMaxDiffReport Empty { get; } = new(Array.Empty<PatchFanoutMaxDiff>());
+
+    private readonly PatchFanoutMaxDiff[] _diffs;
+
+    public IReadOnlyList<PatchFanoutMaxDiff> Diffs => _diffs;
+
+    internal PatchFanoutMaxDiffReport(PatchFanoutMaxDiff[] diffs)
+    {
+        _diffs = diffs ?? throw new ArgumentNullException(nameof(diffs));
+    }
+}
+
+public enum PatchFanoutMaxDiffKind
+{
+    Added = 1,
+    Removed = 2,
+    Changed = 3,
+}
+
+public readonly struct PatchFanoutMaxDiff
+{
+    public PatchFanoutMaxDiffKind Kind { get; }
+
+    public string FlowName { get; }
+
+    public string? ExperimentLayer { get; }
+
+    public string? ExperimentVariant { get; }
+
+    public string StageName { get; }
+
+    public string Path { get; }
+
+    private PatchFanoutMaxDiff(
+        PatchFanoutMaxDiffKind kind,
+        string flowName,
+        string stageName,
+        string path,
+        string? experimentLayer,
+        string? experimentVariant)
+    {
+        Kind = kind;
+        FlowName = flowName;
+        ExperimentLayer = experimentLayer;
+        ExperimentVariant = experimentVariant;
+        StageName = stageName;
+        Path = path;
+    }
+
+    internal static PatchFanoutMaxDiff CreateAdded(
+        string flowName,
+        string stageName,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchFanoutMaxDiff(PatchFanoutMaxDiffKind.Added, flowName, stageName, path, experimentLayer, experimentVariant);
+    }
+
+    internal static PatchFanoutMaxDiff CreateRemoved(
+        string flowName,
+        string stageName,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchFanoutMaxDiff(PatchFanoutMaxDiffKind.Removed, flowName, stageName, path, experimentLayer, experimentVariant);
+    }
+
+    internal static PatchFanoutMaxDiff CreateChanged(
+        string flowName,
+        string stageName,
+        string path,
+        string? experimentLayer = null,
+        string? experimentVariant = null)
+    {
+        return new PatchFanoutMaxDiff(PatchFanoutMaxDiffKind.Changed, flowName, stageName, path, experimentLayer, experimentVariant);
     }
 }
 

@@ -11,12 +11,27 @@ public static class GateJsonV1
     public const string CodeEmptyComposite = "CFG_GATE_EMPTY_COMPOSITE";
     public const string CodeTooDeep = "CFG_GATE_TOO_DEEP";
     public const string CodeExperimentInvalid = "CFG_GATE_EXPERIMENT_INVALID";
+    public const string CodeRolloutInvalid = "CFG_GATE_ROLLOUT_INVALID";
+    public const string CodeRequestInvalid = "CFG_GATE_REQUEST_INVALID";
+    public const string CodeRequestFieldNotAllowed = "CFG_GATE_REQUEST_FIELD_NOT_ALLOWED";
 
     public const string MessageUnknownType = "gate type is unknown or unsupported.";
     public const string MessageEmptyComposite = "gate composite must be a non-empty array.";
     public const string MessageTooDeep = "gate nesting is too deep.";
     public const string MessageExperimentLayerInvalid = "gate.experiment.layer is required and must be a non-empty string.";
     public const string MessageExperimentInInvalid = "gate.experiment.in is required and must be a non-empty array of strings.";
+    public const string MessageRolloutPercentInvalid = "gate.rollout.percent must be a number between 0 and 100.";
+    public const string MessageRolloutSaltInvalid = "gate.rollout.salt is required and must be a non-empty string.";
+    public const string MessageRequestFieldInvalid = "gate.request.field is required and must be a non-empty string.";
+    public const string MessageRequestInInvalid = "gate.request.in is required and must be a non-empty array of strings.";
+    public const string MessageRequestFieldNotAllowed = "gate.request.field is not allowed.";
+
+    private static readonly string[] AllowedRequestFields =
+    {
+        "region",
+        "device",
+        "appVersion",
+    };
 
     public static bool TryParseOptional(JsonElement gateElement, string gatePath, out Gate? gate, out ValidationFinding finding)
     {
@@ -70,6 +85,22 @@ public static class GateJsonV1
                 continue;
             }
 
+            if (property.NameEquals("rollout"))
+            {
+                gateType = GateType.Rollout;
+                gateTypeValue = property.Value;
+                gateTypeCount++;
+                continue;
+            }
+
+            if (property.NameEquals("request"))
+            {
+                gateType = GateType.Request;
+                gateTypeValue = property.Value;
+                gateTypeCount++;
+                continue;
+            }
+
             if (property.NameEquals("all"))
             {
                 gateType = GateType.All;
@@ -107,6 +138,10 @@ public static class GateJsonV1
         {
             case GateType.Experiment:
                 return TryParseExperiment(gateTypeValue, gatePath, out gate, out finding);
+            case GateType.Rollout:
+                return TryParseRollout(gateTypeValue, gatePath, out gate, out finding);
+            case GateType.Request:
+                return TryParseRequest(gateTypeValue, gatePath, out gate, out finding);
             case GateType.All:
                 return TryParseComposite(GateType.All, gateTypeValue, string.Concat(gatePath, ".all"), depth, out gate, out finding);
             case GateType.Any:
@@ -217,6 +252,202 @@ public static class GateJsonV1
         return true;
     }
 
+    private static bool TryParseRollout(JsonElement element, string gatePath, out Gate? gate, out ValidationFinding finding)
+    {
+        gate = null;
+        finding = default;
+
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            finding = new ValidationFinding(ValidationSeverity.Error, CodeRolloutInvalid, string.Concat(gatePath, ".rollout"), MessageUnknownType);
+            return false;
+        }
+
+        var hasPercent = false;
+        JsonElement percentElement = default;
+        string? salt = null;
+        var hasSalt = false;
+
+        foreach (var property in element.EnumerateObject())
+        {
+            if (property.NameEquals("percent"))
+            {
+                hasPercent = true;
+                percentElement = property.Value;
+                continue;
+            }
+
+            if (property.NameEquals("salt"))
+            {
+                hasSalt = true;
+                if (property.Value.ValueKind == JsonValueKind.String)
+                {
+                    salt = property.Value.GetString();
+                }
+                else
+                {
+                    salt = null;
+                }
+
+                continue;
+            }
+        }
+
+        if (!hasPercent || percentElement.ValueKind != JsonValueKind.Number || !percentElement.TryGetDouble(out var percent))
+        {
+            finding = new ValidationFinding(
+                ValidationSeverity.Error,
+                CodeRolloutInvalid,
+                string.Concat(gatePath, ".rollout.percent"),
+                MessageRolloutPercentInvalid);
+            return false;
+        }
+
+        if (percent < 0 || percent > 100)
+        {
+            finding = new ValidationFinding(
+                ValidationSeverity.Error,
+                CodeRolloutInvalid,
+                string.Concat(gatePath, ".rollout.percent"),
+                MessageRolloutPercentInvalid);
+            return false;
+        }
+
+        if (!hasSalt || string.IsNullOrEmpty(salt))
+        {
+            finding = new ValidationFinding(
+                ValidationSeverity.Error,
+                CodeRolloutInvalid,
+                string.Concat(gatePath, ".rollout.salt"),
+                MessageRolloutSaltInvalid);
+            return false;
+        }
+
+        gate = new RolloutGate(percent, salt);
+        return true;
+    }
+
+    private static bool TryParseRequest(JsonElement element, string gatePath, out Gate? gate, out ValidationFinding finding)
+    {
+        gate = null;
+        finding = default;
+
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            finding = new ValidationFinding(ValidationSeverity.Error, CodeRequestInvalid, string.Concat(gatePath, ".request"), MessageUnknownType);
+            return false;
+        }
+
+        string? field = null;
+        var hasField = false;
+
+        var hasIn = false;
+        JsonElement inElement = default;
+
+        foreach (var property in element.EnumerateObject())
+        {
+            if (property.NameEquals("field"))
+            {
+                hasField = true;
+                if (property.Value.ValueKind == JsonValueKind.String)
+                {
+                    field = property.Value.GetString();
+                }
+                else
+                {
+                    field = null;
+                }
+
+                continue;
+            }
+
+            if (property.NameEquals("in"))
+            {
+                hasIn = true;
+                inElement = property.Value;
+                continue;
+            }
+        }
+
+        if (!hasField || string.IsNullOrEmpty(field))
+        {
+            finding = new ValidationFinding(
+                ValidationSeverity.Error,
+                CodeRequestInvalid,
+                string.Concat(gatePath, ".request.field"),
+                MessageRequestFieldInvalid);
+            return false;
+        }
+
+        if (!IsAllowedRequestField(field))
+        {
+            finding = new ValidationFinding(
+                ValidationSeverity.Error,
+                CodeRequestFieldNotAllowed,
+                string.Concat(gatePath, ".request.field"),
+                MessageRequestFieldNotAllowed);
+            return false;
+        }
+
+        if (!hasIn || inElement.ValueKind != JsonValueKind.Array || inElement.GetArrayLength() == 0)
+        {
+            finding = new ValidationFinding(
+                ValidationSeverity.Error,
+                CodeRequestInvalid,
+                string.Concat(gatePath, ".request.in"),
+                MessageRequestInInvalid);
+            return false;
+        }
+
+        var valuesCount = inElement.GetArrayLength();
+        var values = new string[valuesCount];
+
+        var index = 0;
+        foreach (var item in inElement.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String)
+            {
+                finding = new ValidationFinding(
+                    ValidationSeverity.Error,
+                    CodeRequestInvalid,
+                    string.Concat(gatePath, ".request.in[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "]"),
+                    MessageRequestInInvalid);
+                return false;
+            }
+
+            var value = item.GetString();
+
+            if (string.IsNullOrEmpty(value))
+            {
+                finding = new ValidationFinding(
+                    ValidationSeverity.Error,
+                    CodeRequestInvalid,
+                    string.Concat(gatePath, ".request.in[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "]"),
+                    MessageRequestInInvalid);
+                return false;
+            }
+
+            values[index] = value;
+            index++;
+        }
+
+        gate = new RequestAttrGate(field, values);
+        return true;
+    }
+
+    private static bool IsAllowedRequestField(string field)
+    {
+        for (var i = 0; i < AllowedRequestFields.Length; i++)
+        {
+            if (string.Equals(field, AllowedRequestFields[i], StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static bool TryParseComposite(GateType gateType, JsonElement element, string pathPrefix, int depth, out Gate? gate, out ValidationFinding finding)
     {
         gate = null;
@@ -270,9 +501,10 @@ public static class GateJsonV1
     {
         Unknown = 0,
         Experiment = 1,
-        All = 2,
-        Any = 3,
-        Not = 4,
+        Rollout = 2,
+        Request = 3,
+        All = 4,
+        Any = 5,
+        Not = 6,
     }
 }
-

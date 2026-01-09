@@ -64,6 +64,46 @@ public sealed class ConfigDiffTests
     }
 
     [Fact]
+    public void DiffModules_ShouldReportEnabledChanged_WhenModuleEnabledChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"enabled\":false}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.EnabledChanged, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].enabled", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportPriorityChanged_WhenExperimentPatchModulePriorityChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"priority\":1}]}}}}]}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"priority\":2}]}}}}]}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.PriorityChanged, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("l1", diff.ExperimentLayer);
+        Assert.Equal("v1", diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].priority", diff.Path);
+    }
+
+    [Fact]
     public void DiffModules_ShouldReportWithChanged_WhenModuleWithChangesDeeply()
     {
         var oldPatchJson =
@@ -542,5 +582,99 @@ public sealed class ConfigDiffTests
     public void DiffParams_ShouldThrowNotSupported_WhenOldSchemaUnsupported_EvenIfNewJsonIsInvalid()
     {
         Assert.Throws<NotSupportedException>(() => PatchDiffV1.DiffParams("{\"schemaVersion\":\"v999\",\"flows\":{}}", "{"));
+    }
+
+    [Fact]
+    public void DiffFanoutMax_ShouldReportAdded_WhenStageFanoutMaxIsAdded()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":2}}}}}";
+
+        var report = PatchDiffV1.DiffFanoutMax(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchFanoutMaxDiffKind.Added, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.fanoutMax", diff.Path);
+    }
+
+    [Fact]
+    public void DiffFanoutMax_ShouldReportRemoved_WhenStageFanoutMaxIsRemoved()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":2}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{}}}}}";
+
+        var report = PatchDiffV1.DiffFanoutMax(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchFanoutMaxDiffKind.Removed, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.fanoutMax", diff.Path);
+    }
+
+    [Fact]
+    public void DiffFanoutMax_ShouldReportChanged_WhenStageFanoutMaxChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":2}}}}}";
+
+        var report = PatchDiffV1.DiffFanoutMax(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchFanoutMaxDiffKind.Changed, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.fanoutMax", diff.Path);
+    }
+
+    [Fact]
+    public void DiffFanoutMax_ShouldReportChanged_WhenExperimentPatchStageFanoutMaxChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1}}}}]}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":2}}}}]}}}";
+
+        var report = PatchDiffV1.DiffFanoutMax(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchFanoutMaxDiffKind.Changed, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("l1", diff.ExperimentLayer);
+        Assert.Equal("v1", diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.fanoutMax", diff.Path);
+    }
+
+    [Fact]
+    public void DiffFanoutMax_ShouldBeEmpty_WhenOnlyExperimentOrderChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1}}}},{\"layer\":\"l2\",\"variant\":\"v2\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":2}}}}]}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l2\",\"variant\":\"v2\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":2}}}},{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1}}}}]}}}";
+
+        var report = PatchDiffV1.DiffFanoutMax(oldPatchJson, newPatchJson);
+
+        Assert.Empty(report.Diffs);
     }
 }
