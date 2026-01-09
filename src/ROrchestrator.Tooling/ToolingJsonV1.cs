@@ -48,6 +48,49 @@ public static class ToolingJsonV1
         return new ToolingCommandResult(exitCode, json);
     }
 
+    public static ToolingCommandResult ExplainFlowJson(
+        string flowName,
+        FlowRegistry registry,
+        ModuleCatalog catalog,
+        bool includeMermaid = false)
+    {
+        if (flowName is null)
+        {
+            throw new ArgumentNullException(nameof(flowName));
+        }
+
+        if (registry is null)
+        {
+            throw new ArgumentNullException(nameof(registry));
+        }
+
+        if (catalog is null)
+        {
+            throw new ArgumentNullException(nameof(catalog));
+        }
+
+        try
+        {
+            var explain = registry.Explain(flowName, catalog);
+            var json = BuildExplainJson(explain, includeMermaid);
+            return new ToolingCommandResult(exitCode: 0, json);
+        }
+        catch (Exception ex) when (IsExplainInputException(ex))
+        {
+            var json = BuildExplainErrorJson(
+                code: "EXPLAIN_INPUT_INVALID",
+                message: ex.Message);
+            return new ToolingCommandResult(exitCode: 2, json);
+        }
+        catch (Exception ex) when (ToolingExceptionGuard.ShouldHandle(ex))
+        {
+            var json = BuildExplainErrorJson(
+                code: "EXPLAIN_INTERNAL_ERROR",
+                message: string.IsNullOrEmpty(ex.Message) ? "Internal error." : ex.Message);
+            return new ToolingCommandResult(exitCode: 1, json);
+        }
+    }
+
     public static ToolingCommandResult DiffPatchJson(string oldPatchJson, string newPatchJson)
     {
         if (oldPatchJson is null)
@@ -84,6 +127,163 @@ public static class ToolingJsonV1
                 message: string.IsNullOrEmpty(ex.Message) ? "Internal error." : ex.Message);
             return new ToolingCommandResult(exitCode: 1, json);
         }
+    }
+
+    private static string BuildExplainJson(PlanExplain explain, bool includeMermaid)
+    {
+        var output = new ArrayBufferWriter<byte>(256);
+        using var writer = new Utf8JsonWriter(
+            output,
+            new JsonWriterOptions
+            {
+                Indented = false,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            });
+
+        writer.WriteStartObject();
+        writer.WriteString("kind", "explain");
+        writer.WriteString("flow_name", explain.FlowName);
+        writer.WriteString("plan_template_hash", explain.PlanTemplateHash.ToString("X16"));
+
+        writer.WritePropertyName("nodes");
+        writer.WriteStartArray();
+
+        var nodes = explain.Nodes;
+        for (var i = 0; i < nodes.Count; i++)
+        {
+            WriteExplainNode(writer, nodes[i]);
+        }
+
+        writer.WriteEndArray();
+
+        if (includeMermaid)
+        {
+            writer.WriteString("mermaid", BuildExplainMermaid(explain));
+        }
+
+        writer.WriteEndObject();
+        writer.Flush();
+
+        return Encoding.UTF8.GetString(output.WrittenSpan);
+    }
+
+    private static void WriteExplainNode(Utf8JsonWriter writer, PlanExplainNode node)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("kind", GetNodeKindString(node.Kind));
+        writer.WriteString("name", node.Name);
+
+        if (node.StageName is null)
+        {
+            writer.WriteNull("stage_name");
+        }
+        else
+        {
+            writer.WriteString("stage_name", node.StageName);
+        }
+
+        if (node.ModuleType is null)
+        {
+            writer.WriteNull("module_type");
+        }
+        else
+        {
+            writer.WriteString("module_type", node.ModuleType);
+        }
+
+        writer.WriteString("output_type", FormatTypeName(node.OutputType));
+        writer.WriteEndObject();
+    }
+
+    private static string BuildExplainMermaid(PlanExplain explain)
+    {
+        var nodes = explain.Nodes;
+        var nodeCount = nodes.Count;
+
+        var builder = new StringBuilder(256);
+        builder.Append("flowchart TD\n");
+
+        if (nodeCount > 1)
+        {
+            for (var i = 0; i < nodeCount - 1; i++)
+            {
+                builder.Append("  n");
+                builder.Append(i);
+                builder.Append("[\"");
+                AppendMermaidNodeLabel(builder, nodes[i]);
+                builder.Append("\"] --> n");
+                builder.Append(i + 1);
+                builder.Append("[\"");
+                AppendMermaidNodeLabel(builder, nodes[i + 1]);
+                builder.Append("\"]\n");
+            }
+        }
+        else if (nodeCount == 1)
+        {
+            builder.Append("  n0[\"");
+            AppendMermaidNodeLabel(builder, nodes[0]);
+            builder.Append("\"]\n");
+        }
+
+        return builder.ToString();
+    }
+
+    private static void AppendMermaidNodeLabel(StringBuilder builder, PlanExplainNode node)
+    {
+        AppendMermaidEscaped(builder, node.Name);
+        builder.Append("\\n");
+        builder.Append(GetNodeKindString(node.Kind));
+
+        if (node.Kind == ROrchestrator.Core.Blueprint.BlueprintNodeKind.Step)
+        {
+            builder.Append("\\n(");
+            AppendMermaidEscaped(builder, node.ModuleType!);
+            builder.Append(')');
+        }
+
+        builder.Append("\\n");
+        AppendMermaidEscaped(builder, FormatTypeName(node.OutputType));
+    }
+
+    private static void AppendMermaidEscaped(StringBuilder builder, string value)
+    {
+        for (var i = 0; i < value.Length; i++)
+        {
+            var c = value[i];
+
+            if (c == '\\' || c == '"')
+            {
+                builder.Append('\\');
+            }
+
+            builder.Append(c);
+        }
+    }
+
+    private static string BuildExplainErrorJson(string code, string message)
+    {
+        var output = new ArrayBufferWriter<byte>(256);
+        using var writer = new Utf8JsonWriter(
+            output,
+            new JsonWriterOptions
+            {
+                Indented = false,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+            });
+
+        writer.WriteStartObject();
+        writer.WriteString("kind", "explain");
+
+        writer.WritePropertyName("error");
+        writer.WriteStartObject();
+        writer.WriteString("code", code);
+        writer.WriteString("message", message);
+        writer.WriteEndObject();
+
+        writer.WriteEndObject();
+        writer.Flush();
+
+        return Encoding.UTF8.GetString(output.WrittenSpan);
     }
 
     private static string BuildValidateJson(ValidationReport report)
@@ -578,6 +778,105 @@ public static class ToolingJsonV1
 
             return string.CompareOrdinal(x.Path, y.Path);
         }
+    }
+
+    private static bool IsExplainInputException(Exception ex)
+    {
+        return ex is ArgumentException
+            || ex is InvalidOperationException
+            || ex is NotSupportedException;
+    }
+
+    private static string GetNodeKindString(ROrchestrator.Core.Blueprint.BlueprintNodeKind kind)
+    {
+        return kind switch
+        {
+            ROrchestrator.Core.Blueprint.BlueprintNodeKind.Step => "step",
+            ROrchestrator.Core.Blueprint.BlueprintNodeKind.Join => "join",
+            _ => throw new InvalidOperationException($"Unsupported node kind: '{kind}'."),
+        };
+    }
+
+    private static string FormatTypeName(Type type)
+    {
+        if (type is null)
+        {
+            throw new ArgumentNullException(nameof(type));
+        }
+
+        if (type.IsArray)
+        {
+            var element = type.GetElementType()!;
+            var rank = type.GetArrayRank();
+
+            if (rank == 1)
+            {
+                return string.Concat(FormatTypeName(element), "[]");
+            }
+
+            var commas = new string(',', rank - 1);
+            return string.Concat(FormatTypeName(element), "[", commas, "]");
+        }
+
+        if (type.IsGenericType)
+        {
+            var definition = type.GetGenericTypeDefinition();
+            var name = definition.FullName ?? definition.Name;
+            name = TrimGenericTypeArity(name);
+
+            var args = type.GetGenericArguments();
+
+            var builder = new StringBuilder(name.Length + 16);
+            builder.Append(name);
+            builder.Append('<');
+
+            for (var i = 0; i < args.Length; i++)
+            {
+                if (i != 0)
+                {
+                    builder.Append(',');
+                }
+
+                builder.Append(FormatTypeName(args[i]));
+            }
+
+            builder.Append('>');
+            return builder.ToString();
+        }
+
+        return type.FullName ?? type.Name;
+    }
+
+    private static string TrimGenericTypeArity(string typeName)
+    {
+        var tickIndex = typeName.IndexOf('`', StringComparison.Ordinal);
+        if (tickIndex < 0)
+        {
+            return typeName;
+        }
+
+        var builder = new StringBuilder(typeName.Length);
+
+        for (var i = 0; i < typeName.Length; i++)
+        {
+            var c = typeName[i];
+            if (c == '`')
+            {
+                i++;
+
+                while (i < typeName.Length && (uint)(typeName[i] - '0') <= 9)
+                {
+                    i++;
+                }
+
+                i--;
+                continue;
+            }
+
+            builder.Append(c);
+        }
+
+        return builder.ToString();
     }
 
     private static int CompareNullableString(string? x, string? y)

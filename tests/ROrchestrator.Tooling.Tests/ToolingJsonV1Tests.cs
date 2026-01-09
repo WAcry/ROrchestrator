@@ -25,6 +25,56 @@ public sealed class ToolingJsonV1Tests
     }
 
     [Fact]
+    public void ExplainFlowJson_ShouldProduceStableJson()
+    {
+        var registry = CreateRegistry();
+        var catalog = CreateCatalog();
+
+        var result = ToolingJsonV1.ExplainFlowJson("HomeFeed", registry, catalog);
+
+        Assert.Equal(0, result.ExitCode);
+
+        Assert.Equal(
+            "{\"kind\":\"explain\",\"flow_name\":\"HomeFeed\",\"plan_template_hash\":\"EB1FEB02AEE93B82\",\"nodes\":[{\"kind\":\"step\",\"name\":\"n1\",\"stage_name\":\"s1\",\"module_type\":\"test.module\",\"output_type\":\"System.Int32\"},{\"kind\":\"join\",\"name\":\"join\",\"stage_name\":\"s1\",\"module_type\":null,\"output_type\":\"System.Int32\"}]}",
+            result.Json);
+    }
+
+    [Fact]
+    public void ExplainFlowJson_ShouldIncludeMermaid_WhenRequested()
+    {
+        var registry = CreateRegistry();
+        var catalog = CreateCatalog();
+
+        var result = ToolingJsonV1.ExplainFlowJson("HomeFeed", registry, catalog, includeMermaid: true);
+
+        Assert.Equal(0, result.ExitCode);
+
+        Assert.Equal(
+            "{\"kind\":\"explain\",\"flow_name\":\"HomeFeed\",\"plan_template_hash\":\"EB1FEB02AEE93B82\",\"nodes\":[{\"kind\":\"step\",\"name\":\"n1\",\"stage_name\":\"s1\",\"module_type\":\"test.module\",\"output_type\":\"System.Int32\"},{\"kind\":\"join\",\"name\":\"join\",\"stage_name\":\"s1\",\"module_type\":null,\"output_type\":\"System.Int32\"}],\"mermaid\":\"flowchart TD\\n  n0[\\\"n1\\\\nstep\\\\n(test.module)\\\\nSystem.Int32\\\"] --> n1[\\\"join\\\\njoin\\\\nSystem.Int32\\\"]\\n\"}",
+            result.Json);
+    }
+
+    [Fact]
+    public void ExplainFlowJson_ShouldFormatNestedGenericTypes()
+    {
+        var registry = new FlowRegistry();
+        registry.Register(
+            "NestedFlow",
+            CreateBlueprintWithStage<NestedArgs, Outer<int>.Inner<string>>(
+                "NestedFlow",
+                stageName: "s1",
+                okValue: new Outer<int>.Inner<string>()));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<NestedArgs, Outer<int>.Inner<string>>("test.module", _ => new NestedModule());
+
+        var result = ToolingJsonV1.ExplainFlowJson("NestedFlow", registry, catalog);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("Outer+Inner<System.Int32,System.String>", result.Json, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DiffPatchJson_ShouldProduceStableJson()
     {
         var result = ToolingJsonV1.DiffPatchJson(
@@ -55,7 +105,7 @@ public sealed class ToolingJsonV1Tests
     private static FlowRegistry CreateRegistry()
     {
         var registry = new FlowRegistry();
-        registry.Register("HomeFeed", CreateBlueprintWithStage<int, int>("TestFlow", stageName: "s1", okValue: 0));
+        registry.Register("HomeFeed", CreateBlueprintWithStage<TestArgs, int>("HomeFeed", stageName: "s1", okValue: 0));
         return registry;
     }
 
@@ -94,5 +144,24 @@ public sealed class ToolingJsonV1Tests
             return new ValueTask<Outcome<int>>(Outcome<int>.Ok(0));
         }
     }
-}
 
+    private sealed class NestedArgs
+    {
+    }
+
+    private sealed class Outer<T>
+    {
+        public sealed class Inner<U>
+        {
+        }
+    }
+
+    private sealed class NestedModule : IModule<NestedArgs, Outer<int>.Inner<string>>
+    {
+        public ValueTask<Outcome<Outer<int>.Inner<string>>> ExecuteAsync(ModuleContext<NestedArgs> context)
+        {
+            return new ValueTask<Outcome<Outer<int>.Inner<string>>>(
+                Outcome<Outer<int>.Inner<string>>.Ok(new Outer<int>.Inner<string>()));
+        }
+    }
+}

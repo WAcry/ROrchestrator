@@ -2,8 +2,15 @@ namespace ROrchestrator.Core;
 
 public sealed class FlowContext
 {
+    private static readonly IReadOnlyDictionary<string, string> EmptyStringDictionary =
+        new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(new Dictionary<string, string>(0));
+
     private readonly Lock _configSnapshotGate;
     private readonly Lock _nodeOutcomeGate;
+    private readonly IReadOnlyDictionary<string, string> _variants;
+    private readonly string? _userId;
+    private readonly IReadOnlyDictionary<string, string> _requestAttributes;
+    private readonly IExplainSink _explainSink;
     private ExecExplainCollectorV1? _execExplainCollector;
     private ConfigSnapshot _configSnapshot;
     private Task<ConfigSnapshot>? _configSnapshotTask;
@@ -24,7 +31,15 @@ public sealed class FlowContext
 
     public DateTimeOffset Deadline { get; }
 
-    public FlowContext(IServiceProvider services, CancellationToken cancellationToken, DateTimeOffset deadline)
+    public IReadOnlyDictionary<string, string> Variants => _variants;
+
+    public string? UserId => _userId;
+
+    public IReadOnlyDictionary<string, string> RequestAttributes => _requestAttributes;
+
+    public IExplainSink ExplainSink => _explainSink;
+
+    public FlowContext(IServiceProvider services, CancellationToken cancellationToken, DateTimeOffset deadline, IExplainSink? explainSink = null)
     {
         Services = services ?? throw new ArgumentNullException(nameof(services));
 
@@ -35,6 +50,34 @@ public sealed class FlowContext
 
         _configSnapshotGate = new();
         _nodeOutcomeGate = new();
+        _variants = EmptyStringDictionary;
+        _userId = null;
+        _requestAttributes = EmptyStringDictionary;
+        _explainSink = explainSink ?? NullExplainSink.Instance;
+        CancellationToken = cancellationToken;
+        Deadline = deadline;
+    }
+
+    public FlowContext(
+        IServiceProvider services,
+        CancellationToken cancellationToken,
+        DateTimeOffset deadline,
+        FlowRequestOptions requestOptions,
+        IExplainSink? explainSink = null)
+    {
+        Services = services ?? throw new ArgumentNullException(nameof(services));
+
+        if (deadline == default)
+        {
+            throw new ArgumentException("Deadline must be non-default.", nameof(deadline));
+        }
+
+        _configSnapshotGate = new();
+        _nodeOutcomeGate = new();
+        _variants = requestOptions.Variants ?? EmptyStringDictionary;
+        _userId = requestOptions.UserId;
+        _requestAttributes = requestOptions.RequestAttributes ?? EmptyStringDictionary;
+        _explainSink = explainSink ?? NullExplainSink.Instance;
         CancellationToken = cancellationToken;
         Deadline = deadline;
     }
@@ -460,6 +503,19 @@ public sealed class FlowContext
                 OutcomeKind.Canceled => Outcome<T>.Canceled(Code),
                 _ => throw new InvalidOperationException($"Unsupported outcome kind: '{Kind}'."),
             };
+        }
+    }
+
+    private sealed class NullExplainSink : IExplainSink
+    {
+        public static readonly NullExplainSink Instance = new();
+
+        private NullExplainSink()
+        {
+        }
+
+        public void Add(string key, string value)
+        {
         }
     }
 }

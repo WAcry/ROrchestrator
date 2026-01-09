@@ -1,3 +1,5 @@
+using ROrchestrator.Core.Selectors;
+
 namespace ROrchestrator.Core.Gates;
 
 public static class GateEvaluator
@@ -43,6 +45,59 @@ public static class GateEvaluator
         }
 
         return EvaluateAllowed(gate, in context)
+            ? GateDecision.AllowedDecision
+            : GateDecision.DeniedDecision;
+    }
+
+    public static GateDecision Evaluate(Gate gate, FlowContext flowContext)
+    {
+        if (gate is null)
+        {
+            throw new ArgumentNullException(nameof(gate));
+        }
+
+        if (flowContext is null)
+        {
+            throw new ArgumentNullException(nameof(flowContext));
+        }
+
+        var evalContext = new GateEvaluationContext(
+            variants: new VariantSet(flowContext.Variants),
+            userId: flowContext.UserId,
+            requestAttributes: flowContext.RequestAttributes,
+            selectorRegistry: null,
+            flowContext: flowContext);
+
+        return EvaluateAllowed(gate, in evalContext)
+            ? GateDecision.AllowedDecision
+            : GateDecision.DeniedDecision;
+    }
+
+    public static GateDecision Evaluate(Gate gate, FlowContext flowContext, SelectorRegistry selectorRegistry)
+    {
+        if (gate is null)
+        {
+            throw new ArgumentNullException(nameof(gate));
+        }
+
+        if (flowContext is null)
+        {
+            throw new ArgumentNullException(nameof(flowContext));
+        }
+
+        if (selectorRegistry is null)
+        {
+            throw new ArgumentNullException(nameof(selectorRegistry));
+        }
+
+        var evalContext = new GateEvaluationContext(
+            variants: new VariantSet(flowContext.Variants),
+            userId: flowContext.UserId,
+            requestAttributes: flowContext.RequestAttributes,
+            selectorRegistry: selectorRegistry,
+            flowContext: flowContext);
+
+        return EvaluateAllowed(gate, in evalContext)
             ? GateDecision.AllowedDecision
             : GateDecision.DeniedDecision;
     }

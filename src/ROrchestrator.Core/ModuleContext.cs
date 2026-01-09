@@ -16,6 +16,8 @@ public readonly struct ModuleContext<TArgs>
 
     public DateTimeOffset Deadline => FlowContext.Deadline;
 
+    public IExplainSink ExplainSink => FlowContext.ExplainSink;
+
     public ModuleContext(string moduleId, string typeName, TArgs args, FlowContext flowContext)
     {
         if (string.IsNullOrEmpty(moduleId))
@@ -40,4 +42,3 @@ public readonly struct ModuleContext<TArgs>
         Args = args;
     }
 }
-

@@ -100,7 +100,15 @@ public sealed class FlowRegistry
 
         var stageNameSet = BuildStageNameSet(blueprint);
 
-        if (!_flows.TryAdd(flowName, new Entry(typeof(TReq), typeof(TResp), blueprint, stageNameSet, experimentLayerOwnershipContract)))
+        if (!_flows.TryAdd(
+            flowName,
+            new Entry(
+                requestType: typeof(TReq),
+                responseType: typeof(TResp),
+                blueprint: blueprint,
+                stageNameSet: stageNameSet,
+                experimentLayerOwnershipContract: experimentLayerOwnershipContract,
+                explainCompiler: CompilePlanExplain<TReq, TResp>)))
         {
             throw new ArgumentException($"FlowName '{flowName}' is already registered.", nameof(flowName));
         }
@@ -140,7 +148,8 @@ public sealed class FlowRegistry
                 blueprint: blueprint,
                 defaultParams: defaultParams,
                 stageNameSet: stageNameSet,
-                experimentLayerOwnershipContract: experimentLayerOwnershipContract)))
+                experimentLayerOwnershipContract: experimentLayerOwnershipContract,
+                explainCompiler: CompilePlanExplain<TReq, TResp>)))
         {
             throw new ArgumentException($"FlowName '{flowName}' is already registered.", nameof(flowName));
         }
@@ -248,6 +257,33 @@ public sealed class FlowRegistry
         return false;
     }
 
+    public PlanExplain Explain(string flowName, ModuleCatalog catalog)
+    {
+        if (string.IsNullOrEmpty(flowName))
+        {
+            throw new ArgumentException("FlowName must be non-empty.", nameof(flowName));
+        }
+
+        if (catalog is null)
+        {
+            throw new ArgumentNullException(nameof(catalog));
+        }
+
+        if (!_flows.TryGetValue(flowName, out var entry))
+        {
+            throw new InvalidOperationException($"Flow '{flowName}' is not registered.");
+        }
+
+        return entry.ExplainCompiler(entry.Blueprint, catalog);
+    }
+
+    private static PlanExplain CompilePlanExplain<TReq, TResp>(object blueprint, ModuleCatalog catalog)
+    {
+        var typedBlueprint = (FlowBlueprint<TReq, TResp>)blueprint;
+        var result = PlanCompiler.CompileWithExplain(typedBlueprint, catalog);
+        return result.Explain;
+    }
+
     private readonly struct Entry
     {
         public Type RequestType { get; }
@@ -266,12 +302,15 @@ public sealed class FlowRegistry
 
         public ExperimentLayerOwnershipContract? ExperimentLayerOwnershipContract { get; }
 
+        public Func<object, ModuleCatalog, PlanExplain> ExplainCompiler { get; }
+
         public Entry(
             Type requestType,
             Type responseType,
             object blueprint,
             string[] stageNameSet,
-            ExperimentLayerOwnershipContract? experimentLayerOwnershipContract)
+            ExperimentLayerOwnershipContract? experimentLayerOwnershipContract,
+            Func<object, ModuleCatalog, PlanExplain> explainCompiler)
         {
             RequestType = requestType;
             ResponseType = responseType;
@@ -281,6 +320,7 @@ public sealed class FlowRegistry
             DefaultParams = null;
             StageNameSet = stageNameSet;
             ExperimentLayerOwnershipContract = experimentLayerOwnershipContract;
+            ExplainCompiler = explainCompiler;
         }
 
         public Entry(
@@ -291,7 +331,8 @@ public sealed class FlowRegistry
             object blueprint,
             object defaultParams,
             string[] stageNameSet,
-            ExperimentLayerOwnershipContract? experimentLayerOwnershipContract)
+            ExperimentLayerOwnershipContract? experimentLayerOwnershipContract,
+            Func<object, ModuleCatalog, PlanExplain> explainCompiler)
         {
             RequestType = requestType;
             ResponseType = responseType;
@@ -301,6 +342,7 @@ public sealed class FlowRegistry
             DefaultParams = defaultParams;
             StageNameSet = stageNameSet;
             ExperimentLayerOwnershipContract = experimentLayerOwnershipContract;
+            ExplainCompiler = explainCompiler;
         }
     }
 
