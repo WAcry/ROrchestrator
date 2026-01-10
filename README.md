@@ -1,4 +1,4 @@
-# Rockestra
+# ![Logo](.assets/icon.png)  Rockestra
 
 Rockestra is a high-performance, in-process request orchestration library for .NET.
 
