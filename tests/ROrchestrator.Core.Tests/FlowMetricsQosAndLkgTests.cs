@@ -46,6 +46,40 @@ public sealed class FlowMetricsQosAndLkgTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_WhenQosProviderThrows_ShouldFallbackToFull_AndEmitMetric()
+    {
+        const string flowName = "qos_metric_flow_provider_throws";
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<int, int>("m.ok", _ => new OkModule());
+
+        var registry = new FlowRegistry();
+        registry.Register<int, int>(flowName, CreateBlueprint(flowName));
+
+        var services = new DummyServiceProvider();
+        var context = new FlowContext(services, CancellationToken.None, FutureDeadline);
+
+        var samples = new List<MetricSample>();
+        using var listener = CreateListener(
+            samples,
+            instrumentName: QosTierSelectedInstrumentName,
+            expectedFlowName: flowName);
+        listener.Start();
+
+        var host = new FlowHost(registry, catalog, new ThrowingQosTierProvider());
+        var outcome = await host.ExecuteAsync<int, int>(flowName, request: 0, context);
+        Assert.True(outcome.IsOk);
+
+        Assert.Contains(
+            samples,
+            sample =>
+                sample.InstrumentName == QosTierSelectedInstrumentName
+                && sample.Measurement == 1
+                && HasTag(sample.Tags, "flow_name", flowName)
+                && HasTag(sample.Tags, "qos_tier", "full"));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ShouldEmitLkgFallbackMetric_WithExpectedTags()
     {
         const string flowName = "lkg_metric_flow";
@@ -228,6 +262,16 @@ public sealed class FlowMetricsQosAndLkgTests
         }
     }
 
+    private sealed class ThrowingQosTierProvider : IQosTierProvider
+    {
+        public QosTier SelectTier(string flowName, FlowContext context)
+        {
+            _ = flowName;
+            _ = context;
+            throw new InvalidOperationException("boom");
+        }
+    }
+
     private sealed class SequenceConfigProvider : IConfigProvider
     {
         private readonly ConfigSnapshot[] _snapshots;
@@ -252,4 +296,3 @@ public sealed class FlowMetricsQosAndLkgTests
         }
     }
 }
-

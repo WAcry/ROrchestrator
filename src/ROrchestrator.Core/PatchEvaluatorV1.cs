@@ -514,6 +514,8 @@ public static class PatchEvaluatorV1
 
         public string? LimitKey { get; }
 
+        public string? MemoKey { get; }
+
         public JsonElement Args { get; }
 
         public bool Enabled { get; }
@@ -534,6 +536,7 @@ public static class PatchEvaluatorV1
             string moduleId,
             string moduleType,
             string? limitKey,
+            string? memoKey,
             JsonElement args,
             bool enabled,
             int priority,
@@ -546,6 +549,7 @@ public static class PatchEvaluatorV1
             ModuleId = moduleId;
             ModuleType = moduleType;
             LimitKey = limitKey;
+            MemoKey = memoKey;
             Args = args;
             Enabled = enabled;
             Priority = priority;
@@ -957,6 +961,8 @@ public static class PatchEvaluatorV1
 
         public string? LimitKey { get; private set; }
 
+        public string? MemoKey { get; private set; }
+
         public ModuleBuilder(string moduleId)
         {
             ModuleId = moduleId;
@@ -968,6 +974,7 @@ public static class PatchEvaluatorV1
             IsShadow = false;
             ShadowSampleBps = 0;
             LimitKey = null;
+            MemoKey = null;
         }
 
         public void ApplyFullModulePatch(string flowName, string stageName, JsonElement modulePatch)
@@ -985,6 +992,8 @@ public static class PatchEvaluatorV1
             ushort shadowSampleBps = 0;
             var hasLimitKey = false;
             string? limitKey = null;
+            var hasMemoKey = false;
+            string? memoKey = null;
 
             foreach (var moduleField in modulePatch.EnumerateObject())
             {
@@ -1041,6 +1050,13 @@ public static class PatchEvaluatorV1
                     limitKey = moduleField.Value.ValueKind == JsonValueKind.String ? moduleField.Value.GetString() : null;
                     continue;
                 }
+
+                if (moduleField.NameEquals("memoKey"))
+                {
+                    hasMemoKey = true;
+                    memoKey = moduleField.Value.ValueKind == JsonValueKind.String ? moduleField.Value.GetString() : null;
+                    continue;
+                }
             }
 
             if (string.IsNullOrEmpty(use))
@@ -1083,6 +1099,11 @@ public static class PatchEvaluatorV1
             if (hasLimitKey)
             {
                 LimitKey = string.IsNullOrEmpty(limitKey) ? null : limitKey;
+            }
+
+            if (hasMemoKey)
+            {
+                MemoKey = string.IsNullOrEmpty(memoKey) ? null : memoKey;
             }
         }
 
@@ -1139,6 +1160,7 @@ public static class PatchEvaluatorV1
                 ModuleId,
                 ModuleType,
                 LimitKey,
+                MemoKey,
                 _args,
                 Enabled,
                 Priority,

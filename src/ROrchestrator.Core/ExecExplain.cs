@@ -15,6 +15,8 @@ public sealed class ExecExplain
     private readonly ulong _configVersion;
     private readonly bool _hasConfigVersion;
     private readonly QosTier _qosSelectedTier;
+    private readonly string? _qosReasonCode;
+    private readonly IReadOnlyDictionary<string, string>? _qosSignals;
 
     public string FlowName { get; }
 
@@ -38,6 +40,10 @@ public sealed class ExecExplain
 
     public QosTier QosSelectedTier => _qosSelectedTier;
 
+    public string? QosReasonCode => _qosReasonCode;
+
+    public IReadOnlyDictionary<string, string>? QosSignals => _qosSignals;
+
     internal ExecExplain(
         string flowName,
         ExplainLevel level,
@@ -45,6 +51,8 @@ public sealed class ExecExplain
         bool hasConfigVersion,
         ulong configVersion,
         QosTier qosSelectedTier,
+        string? qosReasonCode,
+        IReadOnlyDictionary<string, string>? qosSignals,
         PatchEvaluatorV1.PatchOverlayAppliedV1[]? overlaysApplied,
         IReadOnlyDictionary<string, string>? variants,
         long startTimestamp,
@@ -87,6 +95,8 @@ public sealed class ExecExplain
         _hasConfigVersion = hasConfigVersion;
         _configVersion = configVersion;
         _qosSelectedTier = qosSelectedTier;
+        _qosReasonCode = qosReasonCode;
+        _qosSignals = qosSignals;
         StartTimestamp = startTimestamp;
         EndTimestamp = endTimestamp;
         _nodes = nodes;
@@ -140,6 +150,8 @@ public readonly struct ExecExplainStageModule
 
     public bool IsOverride { get; }
 
+    public bool MemoHit { get; }
+
     internal ExecExplainStageModule(
         string stageName,
         string moduleId,
@@ -153,7 +165,8 @@ public readonly struct ExecExplainStageModule
         string gateSelectorName,
         bool isShadow,
         ushort shadowSampleBps,
-        bool isOverride)
+        bool isOverride,
+        bool memoHit)
     {
         StageName = stageName;
         ModuleId = moduleId;
@@ -168,6 +181,7 @@ public readonly struct ExecExplainStageModule
         IsShadow = isShadow;
         ShadowSampleBps = shadowSampleBps;
         IsOverride = isOverride;
+        MemoHit = memoHit;
     }
 
     public TimeSpan GetDuration()

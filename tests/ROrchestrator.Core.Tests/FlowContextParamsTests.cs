@@ -28,7 +28,7 @@ public sealed class FlowContextParamsTests
                     { "l1", "B" },
                 }));
 
-        flowContext.SetQosSelectedTier(QosTier.Emergency);
+        flowContext.SetQosDecision(QosTier.Emergency, reasonCode: null, signals: null);
 
         flowContext.ConfigureFlowBinding(
             flowName: "HomeFeed",

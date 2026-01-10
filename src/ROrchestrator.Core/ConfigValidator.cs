@@ -18,6 +18,7 @@ public sealed class ConfigValidator
     private const string CodeLimitMaxInFlightNotObject = "CFG_LIMIT_MAX_IN_FLIGHT_NOT_OBJECT";
     private const string CodeLimitMaxInFlightInvalid = "CFG_LIMIT_MAX_IN_FLIGHT_INVALID";
     private const string CodeLimitKeyInvalid = "CFG_LIMIT_KEY_INVALID";
+    private const string CodeMemoKeyInvalid = "CFG_MEMO_KEY_INVALID";
     private const string CodeQosNotObject = "CFG_QOS_NOT_OBJECT";
     private const string CodeQosTiersNotObject = "CFG_QOS_TIERS_NOT_OBJECT";
     private const string CodeQosTierUnknown = "CFG_QOS_TIER_UNKNOWN";
@@ -442,6 +443,11 @@ public sealed class ConfigValidator
         }
 
         return true;
+    }
+
+    private static bool IsValidMemoKey(string? key)
+    {
+        return IsValidLimitKey(key);
     }
 
     private static void ValidateFlowPatchTopLevelFields(
@@ -2989,6 +2995,8 @@ public sealed class ConfigValidator
             JsonElement moduleShadow = default;
             var hasModuleLimitKey = false;
             string? moduleLimitKey = null;
+            var hasModuleMemoKey = false;
+            string? moduleMemoKey = null;
 
             foreach (var moduleField in modulePatch.EnumerateObject())
             {
@@ -3072,6 +3080,13 @@ public sealed class ConfigValidator
                     continue;
                 }
 
+                if (moduleField.NameEquals("memoKey"))
+                {
+                    hasModuleMemoKey = true;
+                    moduleMemoKey = moduleField.Value.ValueKind == JsonValueKind.String ? moduleField.Value.GetString() : null;
+                    continue;
+                }
+
                 var fieldName = moduleField.Name;
                 findings.Add(
                     new ValidationFinding(
@@ -3094,6 +3109,16 @@ public sealed class ConfigValidator
                         code: CodeLimitKeyInvalid,
                         path: string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].limitKey"),
                         message: "modules[].limitKey must be a non-empty string with no whitespace."));
+            }
+
+            if (hasModuleMemoKey && !IsValidMemoKey(moduleMemoKey))
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeMemoKeyInvalid,
+                        path: string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].memoKey"),
+                        message: "modules[].memoKey must be a non-empty string with no whitespace."));
             }
 
             if (hasModulePriority)

@@ -45,6 +45,17 @@ public static class ExecExplainJsonV1
         writer.WritePropertyName("qos");
         writer.WriteStartObject();
         writer.WriteString("selected_tier", GetQosTierString(explain.QosSelectedTier));
+
+        if (string.IsNullOrEmpty(explain.QosReasonCode))
+        {
+            writer.WriteNull("reason_code");
+        }
+        else
+        {
+            writer.WriteString("reason_code", explain.QosReasonCode);
+        }
+
+        WriteSortedStringDictionaryOrNull(writer, "signals", explain.QosSignals);
         writer.WriteEndObject();
 
         WriteSortedStringDictionaryOrNull(writer, "variants", explain.Variants);
@@ -201,20 +212,16 @@ public static class ExecExplainJsonV1
         }
 
         writer.WriteBoolean("is_override", stageModule.IsOverride);
+        writer.WriteBoolean("memo_hit", stageModule.MemoHit);
         writer.WriteEndObject();
     }
 
     private static void WriteSortedStringDictionaryOrNull(
         Utf8JsonWriter writer,
         string propertyName,
-        IReadOnlyDictionary<string, string> dictionary)
+        IReadOnlyDictionary<string, string>? dictionary)
     {
-        if (dictionary is null)
-        {
-            throw new ArgumentNullException(nameof(dictionary));
-        }
-
-        if (dictionary.Count == 0)
+        if (dictionary is null || dictionary.Count == 0)
         {
             writer.WriteNull(propertyName);
             return;

@@ -157,7 +157,8 @@ internal sealed class ExecExplainCollectorV1
         string gateSelectorName,
         bool isShadow,
         ushort shadowSampleBps,
-        bool isOverride)
+        bool isOverride,
+        bool memoHit)
     {
         if (!_active)
         {
@@ -179,7 +180,8 @@ internal sealed class ExecExplainCollectorV1
                 gateSelectorName,
                 isShadow,
                 shadowSampleBps,
-                isOverride));
+                isOverride,
+                memoHit));
     }
 
     public void RecordNode(PlanNodeTemplate node, long startTimestamp, long endTimestamp, OutcomeKind outcomeKind, string outcomeCode)
@@ -215,6 +217,8 @@ internal sealed class ExecExplainCollectorV1
         _flowEndTimestamp = Stopwatch.GetTimestamp();
         var hasConfigVersion = context.TryGetConfigVersion(out var configVersion);
         var qosSelectedTier = context.QosSelectedTier;
+        var qosReasonCode = context.QosReasonCode;
+        var qosSignals = context.QosSignals;
         var nodes = _nodes;
         if (nodes is null)
         {
@@ -233,6 +237,8 @@ internal sealed class ExecExplainCollectorV1
             hasConfigVersion,
             configVersion,
             qosSelectedTier,
+            qosReasonCode,
+            qosSignals,
             _overlaysApplied,
             _variants,
             _flowStartTimestamp,

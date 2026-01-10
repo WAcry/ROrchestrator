@@ -6,7 +6,8 @@ internal static class ExceptionGuard
     {
         if (exception is OutOfMemoryException
             || exception is StackOverflowException
-            || exception is AccessViolationException)
+            || exception is AccessViolationException
+            || exception is ModuleConcurrencyViolationException)
         {
             return false;
         }

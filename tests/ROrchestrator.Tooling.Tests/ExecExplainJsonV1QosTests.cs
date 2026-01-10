@@ -54,6 +54,12 @@ public sealed class ExecExplainJsonV1QosTests
         Assert.True(root.TryGetProperty("qos", out var qos));
         Assert.True(qos.TryGetProperty("selected_tier", out var selectedTier));
         Assert.Equal("emergency", selectedTier.GetString());
+
+        Assert.True(qos.TryGetProperty("reason_code", out var reasonCode));
+        Assert.Equal(JsonValueKind.Null, reasonCode.ValueKind);
+
+        Assert.True(qos.TryGetProperty("signals", out var signals));
+        Assert.Equal(JsonValueKind.Null, signals.ValueKind);
     }
 
     private sealed class ComputeModule : IModule<int, int>
@@ -96,4 +102,3 @@ public sealed class ExecExplainJsonV1QosTests
         }
     }
 }
-

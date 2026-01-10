@@ -247,6 +247,8 @@ public static class ToolingJsonV1
         writer.WritePropertyName("qos");
         writer.WriteStartObject();
         writer.WriteString("selected_tier", GetQosTierString(qosTier));
+        writer.WriteNull("reason_code");
+        writer.WriteNull("signals");
         writer.WriteEndObject();
 
         WriteSortedVariants(writer, requestOptions.Variants);
@@ -313,6 +315,8 @@ public static class ToolingJsonV1
         writer.WritePropertyName("qos");
         writer.WriteStartObject();
         writer.WriteString("selected_tier", GetQosTierString(qosTier));
+        writer.WriteNull("reason_code");
+        writer.WriteNull("signals");
         writer.WriteEndObject();
 
         writer.WritePropertyName("previews");

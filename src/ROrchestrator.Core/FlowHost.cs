@@ -9,7 +9,7 @@ public sealed class FlowHost
     private readonly ModuleCatalog _catalog;
     private readonly ExecutionEngine _engine;
     private readonly IConfigProvider _configProvider;
-    private readonly IQosTierProvider? _qosTierProvider;
+    private readonly IQosProvider? _qosProvider;
     private readonly IPlanCompiler _planCompiler;
 
     private readonly Lock _cacheGate;
@@ -25,37 +25,37 @@ public sealed class FlowHost
     }
 
     public FlowHost(FlowRegistry registry, ModuleCatalog catalog)
-        : this(registry, catalog, SelectorRegistry.Empty, EmptyConfigProvider.Instance, DefaultPlanCompiler.Instance, qosTierProvider: null)
+        : this(registry, catalog, SelectorRegistry.Empty, EmptyConfigProvider.Instance, DefaultPlanCompiler.Instance, qosProvider: null)
     {
     }
 
     public FlowHost(FlowRegistry registry, ModuleCatalog catalog, IConfigProvider configProvider)
-        : this(registry, catalog, SelectorRegistry.Empty, configProvider, DefaultPlanCompiler.Instance, qosTierProvider: null)
+        : this(registry, catalog, SelectorRegistry.Empty, configProvider, DefaultPlanCompiler.Instance, qosProvider: null)
     {
     }
 
     public FlowHost(FlowRegistry registry, ModuleCatalog catalog, SelectorRegistry selectorRegistry)
-        : this(registry, catalog, selectorRegistry, EmptyConfigProvider.Instance, DefaultPlanCompiler.Instance, qosTierProvider: null)
+        : this(registry, catalog, selectorRegistry, EmptyConfigProvider.Instance, DefaultPlanCompiler.Instance, qosProvider: null)
     {
     }
 
     public FlowHost(FlowRegistry registry, ModuleCatalog catalog, SelectorRegistry selectorRegistry, IConfigProvider configProvider)
-        : this(registry, catalog, selectorRegistry, configProvider, DefaultPlanCompiler.Instance, qosTierProvider: null)
+        : this(registry, catalog, selectorRegistry, configProvider, DefaultPlanCompiler.Instance, qosProvider: null)
     {
     }
 
     public FlowHost(FlowRegistry registry, ModuleCatalog catalog, IQosTierProvider qosTierProvider)
-        : this(registry, catalog, SelectorRegistry.Empty, EmptyConfigProvider.Instance, DefaultPlanCompiler.Instance, qosTierProvider)
+        : this(registry, catalog, SelectorRegistry.Empty, EmptyConfigProvider.Instance, DefaultPlanCompiler.Instance, new QosTierProviderAdapter(qosTierProvider))
     {
     }
 
     public FlowHost(FlowRegistry registry, ModuleCatalog catalog, IConfigProvider configProvider, IQosTierProvider qosTierProvider)
-        : this(registry, catalog, SelectorRegistry.Empty, configProvider, DefaultPlanCompiler.Instance, qosTierProvider)
+        : this(registry, catalog, SelectorRegistry.Empty, configProvider, DefaultPlanCompiler.Instance, new QosTierProviderAdapter(qosTierProvider))
     {
     }
 
     public FlowHost(FlowRegistry registry, ModuleCatalog catalog, SelectorRegistry selectorRegistry, IQosTierProvider qosTierProvider)
-        : this(registry, catalog, selectorRegistry, EmptyConfigProvider.Instance, DefaultPlanCompiler.Instance, qosTierProvider)
+        : this(registry, catalog, selectorRegistry, EmptyConfigProvider.Instance, DefaultPlanCompiler.Instance, new QosTierProviderAdapter(qosTierProvider))
     {
     }
 
@@ -65,7 +65,32 @@ public sealed class FlowHost
         SelectorRegistry selectorRegistry,
         IConfigProvider configProvider,
         IQosTierProvider qosTierProvider)
-        : this(registry, catalog, selectorRegistry, configProvider, DefaultPlanCompiler.Instance, qosTierProvider)
+        : this(registry, catalog, selectorRegistry, configProvider, DefaultPlanCompiler.Instance, new QosTierProviderAdapter(qosTierProvider))
+    {
+    }
+
+    public FlowHost(FlowRegistry registry, ModuleCatalog catalog, IQosProvider qosProvider)
+        : this(registry, catalog, SelectorRegistry.Empty, EmptyConfigProvider.Instance, DefaultPlanCompiler.Instance, qosProvider)
+    {
+    }
+
+    public FlowHost(FlowRegistry registry, ModuleCatalog catalog, IConfigProvider configProvider, IQosProvider qosProvider)
+        : this(registry, catalog, SelectorRegistry.Empty, configProvider, DefaultPlanCompiler.Instance, qosProvider)
+    {
+    }
+
+    public FlowHost(FlowRegistry registry, ModuleCatalog catalog, SelectorRegistry selectorRegistry, IQosProvider qosProvider)
+        : this(registry, catalog, selectorRegistry, EmptyConfigProvider.Instance, DefaultPlanCompiler.Instance, qosProvider)
+    {
+    }
+
+    public FlowHost(
+        FlowRegistry registry,
+        ModuleCatalog catalog,
+        SelectorRegistry selectorRegistry,
+        IConfigProvider configProvider,
+        IQosProvider qosProvider)
+        : this(registry, catalog, selectorRegistry, configProvider, DefaultPlanCompiler.Instance, qosProvider)
     {
     }
 
@@ -74,7 +99,7 @@ public sealed class FlowHost
         ModuleCatalog catalog,
         IConfigProvider configProvider,
         IPlanCompiler planCompiler)
-        : this(registry, catalog, SelectorRegistry.Empty, configProvider, planCompiler, qosTierProvider: null)
+        : this(registry, catalog, SelectorRegistry.Empty, configProvider, planCompiler, qosProvider: null)
     {
     }
 
@@ -84,7 +109,7 @@ public sealed class FlowHost
         SelectorRegistry selectorRegistry,
         IConfigProvider configProvider,
         IPlanCompiler planCompiler)
-        : this(registry, catalog, selectorRegistry, configProvider, planCompiler, qosTierProvider: null)
+        : this(registry, catalog, selectorRegistry, configProvider, planCompiler, qosProvider: null)
     {
     }
 
@@ -94,13 +119,13 @@ public sealed class FlowHost
         SelectorRegistry selectorRegistry,
         IConfigProvider configProvider,
         IPlanCompiler planCompiler,
-        IQosTierProvider? qosTierProvider)
+        IQosProvider? qosProvider)
     {
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _engine = new ExecutionEngine(catalog, selectorRegistry ?? throw new ArgumentNullException(nameof(selectorRegistry)));
         _configProvider = WrapConfigProvider(configProvider ?? throw new ArgumentNullException(nameof(configProvider)), _registry, _catalog, selectorRegistry);
-        _qosTierProvider = qosTierProvider;
+        _qosProvider = qosProvider;
         _planCompiler = planCompiler ?? throw new ArgumentNullException(nameof(planCompiler));
 
         _cacheGate = new();
@@ -165,7 +190,7 @@ public sealed class FlowHost
         TReq request,
         FlowContext flowContext)
     {
-        SetQosSelectedTier(flowName, flowContext);
+        SetQosDecision(flowName, flowContext);
 
         var cache = Volatile.Read(ref _templateCache);
 
@@ -237,33 +262,78 @@ public sealed class FlowHost
         return _engine.ExecuteAsync(flowName, template, request, flowContext);
     }
 
-    private void SetQosSelectedTier(string flowName, FlowContext context)
+    private const int MaxQosReasonCodeLength = 64;
+
+    private void SetQosDecision(string flowName, FlowContext context)
     {
-        var provider = _qosTierProvider;
+        var provider = _qosProvider;
 
         QosTier selectedTier;
+        string? reasonCode;
+        IReadOnlyDictionary<string, string>? signals;
 
         if (provider is null)
         {
             selectedTier = QosTier.Full;
+            reasonCode = null;
+            signals = null;
         }
         else
         {
+            var collectSignals = context.ShouldCollectQosSignals();
+            var selectContext = new QosSelectContext(collectSignals);
+
             try
             {
-                selectedTier = provider.SelectTier(flowName, context);
+                var decision = provider.Select(flowName, context, selectContext);
+                selectedTier = decision.SelectedTier;
+                reasonCode = NormalizeReasonCode(decision.ReasonCode);
+                signals = collectSignals ? NormalizeSignals(decision.Signals) : null;
             }
             catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
             {
                 _ = ex;
                 selectedTier = QosTier.Full;
+                reasonCode = "PROVIDER_ERROR";
+                signals = null;
             }
 
             selectedTier = NormalizeQosTier(selectedTier);
         }
 
-        context.SetQosSelectedTier(selectedTier);
+        context.SetQosDecision(selectedTier, reasonCode, signals);
         Observability.FlowMetricsV1.RecordQosTierSelected(flowName, selectedTier);
+    }
+
+    private static string? NormalizeReasonCode(string? reasonCode)
+    {
+        if (string.IsNullOrWhiteSpace(reasonCode))
+        {
+            return null;
+        }
+
+        if (reasonCode.Length <= MaxQosReasonCodeLength)
+        {
+            return reasonCode;
+        }
+
+        return reasonCode.Substring(0, MaxQosReasonCodeLength);
+    }
+
+    private static IReadOnlyDictionary<string, string>? NormalizeSignals(IReadOnlyDictionary<string, string>? signals)
+    {
+        if (signals is null || signals.Count == 0)
+        {
+            return null;
+        }
+
+        var copy = new Dictionary<string, string>(capacity: signals.Count);
+        foreach (var pair in signals)
+        {
+            copy.Add(pair.Key, pair.Value);
+        }
+
+        return new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(copy);
     }
 
     private static QosTier NormalizeQosTier(QosTier tier)
@@ -276,6 +346,22 @@ public sealed class FlowHost
             QosTier.Fallback => QosTier.Fallback,
             _ => QosTier.Full,
         };
+    }
+
+    private sealed class QosTierProviderAdapter : IQosProvider
+    {
+        private readonly IQosTierProvider _inner;
+
+        public QosTierProviderAdapter(IQosTierProvider inner)
+        {
+            _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+        }
+
+        public QosDecision Select(string flowName, FlowContext context, QosSelectContext selectContext)
+        {
+            _ = selectContext;
+            return new QosDecision(_inner.SelectTier(flowName, context), reasonCode: null, signals: null);
+        }
     }
 
     private sealed class EmptyConfigProvider : IConfigProvider

@@ -15,6 +15,9 @@ public sealed class FlowContext
     private readonly string? _userId;
     private readonly IReadOnlyDictionary<string, string> _requestAttributes;
     private QosTier _qosSelectedTier;
+    private string? _qosReasonCode;
+    private IReadOnlyDictionary<string, string>? _qosSignals;
+    private int _qosSignalsEnabled;
     private readonly IExplainSink _explainSink;
     private ExecExplainCollectorV1? _execExplainCollector;
     private PatchEvaluatorV1.FlowPatchEvaluationV1? _activePatchEvaluation;
@@ -42,6 +45,8 @@ public sealed class FlowContext
     private object? _paramsCacheValue;
     private int _paramsCacheState;
     private Dictionary<string, StageFanoutSnapshot>? _stageFanoutSnapshots;
+    private RequestMemo? _requestMemo;
+    private int _requestMemoEnabled;
 
     public IServiceProvider Services { get; }
 
@@ -56,6 +61,10 @@ public sealed class FlowContext
     public IReadOnlyDictionary<string, string> RequestAttributes => _requestAttributes;
 
     internal QosTier QosSelectedTier => _qosSelectedTier;
+
+    internal string? QosReasonCode => _qosReasonCode;
+
+    internal IReadOnlyDictionary<string, string>? QosSignals => _qosSignals;
 
     public IExplainSink ExplainSink => _explainSink;
 
@@ -76,9 +85,14 @@ public sealed class FlowContext
         _userId = null;
         _requestAttributes = EmptyStringDictionary;
         _qosSelectedTier = QosTier.Full;
+        _qosReasonCode = null;
+        _qosSignals = null;
+        _qosSignalsEnabled = 0;
         _explainSink = explainSink ?? NullExplainSink.Instance;
         CancellationToken = cancellationToken;
         Deadline = deadline;
+        _requestMemo = null;
+        _requestMemoEnabled = 0;
     }
 
     public FlowContext(
@@ -103,14 +117,63 @@ public sealed class FlowContext
         _userId = requestOptions.UserId;
         _requestAttributes = requestOptions.RequestAttributes ?? EmptyStringDictionary;
         _qosSelectedTier = QosTier.Full;
+        _qosReasonCode = null;
+        _qosSignals = null;
+        _qosSignalsEnabled = 0;
         _explainSink = explainSink ?? NullExplainSink.Instance;
         CancellationToken = cancellationToken;
         Deadline = deadline;
+        _requestMemo = null;
+        _requestMemoEnabled = 0;
     }
 
-    internal void SetQosSelectedTier(QosTier tier)
+    public void EnableQosSignals()
+    {
+        Volatile.Write(ref _qosSignalsEnabled, 1);
+    }
+
+    internal bool ShouldCollectQosSignals()
+    {
+        if (Volatile.Read(ref _qosSignalsEnabled) != 0)
+        {
+            return true;
+        }
+
+        var collector = _execExplainCollector;
+        return collector is not null && collector.Level == ExplainLevel.Full;
+    }
+
+    public void EnableRequestMemo()
+    {
+        Volatile.Write(ref _requestMemoEnabled, 1);
+    }
+
+    internal bool TryGetOrCreateRequestMemo(out RequestMemo memo)
+    {
+        if (Volatile.Read(ref _requestMemoEnabled) == 0)
+        {
+            memo = null!;
+            return false;
+        }
+
+        var existing = Volatile.Read(ref _requestMemo);
+        if (existing is not null)
+        {
+            memo = existing;
+            return true;
+        }
+
+        var created = new RequestMemo();
+        var prior = Interlocked.CompareExchange(ref _requestMemo, created, null);
+        memo = prior ?? created;
+        return true;
+    }
+
+    internal void SetQosDecision(QosTier tier, string? reasonCode, IReadOnlyDictionary<string, string>? signals)
     {
         _qosSelectedTier = tier;
+        _qosReasonCode = reasonCode;
+        _qosSignals = signals;
     }
 
     public void EnableExecExplain(ExplainLevel level = ExplainLevel.Minimal)
