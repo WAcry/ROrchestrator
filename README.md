@@ -7,5 +7,3 @@ Rockestra is a high-performance, in-process request orchestration library for .N
 - `rock`: CLI (.NET tool, package id: `rockestra`)
 
 Status: beta.
-
-
