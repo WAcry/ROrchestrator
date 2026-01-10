@@ -839,12 +839,14 @@ public sealed class ExecutionEngine
             {
                 var module = modules[i];
                 var meta = results[i];
+                var limitKey = module.LimitKey ?? module.ModuleType;
                 var gateDecisionCode = gateDecisionCodes is null ? string.Empty : gateDecisionCodes[i] ?? string.Empty;
                 var gateSelectorName = gateSelectorNames is null ? string.Empty : gateSelectorNames[i] ?? string.Empty;
                 execExplainCollector.RecordStageModule(
                     stageName,
                     module.ModuleId,
                     module.ModuleType,
+                    limitKey,
                     module.Priority,
                     meta.StartTimestamp,
                     meta.EndTimestamp,
@@ -968,6 +970,7 @@ public sealed class ExecutionEngine
             {
                 var module = shadowModules[i];
                 var meta = results[i];
+                var limitKey = module.LimitKey ?? module.ModuleType;
                 var gateDecisionCode = gateDecisionCodes is null ? string.Empty : gateDecisionCodes[i] ?? string.Empty;
                 var gateSelectorName = gateSelectorNames is null ? string.Empty : gateSelectorNames[i] ?? string.Empty;
 
@@ -975,6 +978,7 @@ public sealed class ExecutionEngine
                     stageName,
                     module.ModuleId,
                     module.ModuleType,
+                    limitKey,
                     module.Priority,
                     meta.StartTimestamp,
                     meta.EndTimestamp,

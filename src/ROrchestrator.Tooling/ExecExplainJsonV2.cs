@@ -6,9 +6,9 @@ using ROrchestrator.Core.Blueprint;
 
 namespace ROrchestrator.Tooling;
 
-public static class ExecExplainJsonV1
+public static class ExecExplainJsonV2
 {
-    private const string ToolingJsonVersion = "v1";
+    private const string ToolingJsonVersion = "v2";
 
     public static string ExportJson(ExecExplain explain)
     {
@@ -41,6 +41,8 @@ public static class ExecExplainJsonV1
         {
             writer.WriteNull("config_version");
         }
+
+        WriteTiming(writer, explain.DurationStopwatchTicks, explain.GetDuration().TotalMilliseconds);
 
         writer.WritePropertyName("qos");
         writer.WriteStartObject();
@@ -99,6 +101,15 @@ public static class ExecExplainJsonV1
         return Encoding.UTF8.GetString(output.WrittenSpan);
     }
 
+    private static void WriteTiming(Utf8JsonWriter writer, long durationStopwatchTicks, double durationMs)
+    {
+        writer.WritePropertyName("timing");
+        writer.WriteStartObject();
+        writer.WriteNumber("duration_ticks", durationStopwatchTicks);
+        writer.WriteNumber("duration_ms", durationMs);
+        writer.WriteEndObject();
+    }
+
     private static void WriteOverlay(Utf8JsonWriter writer, PatchEvaluatorV1.PatchOverlayAppliedV1 overlay)
     {
         writer.WriteStartObject();
@@ -149,6 +160,8 @@ public static class ExecExplainJsonV1
             writer.WriteString("module_type", node.ModuleType);
         }
 
+        WriteTiming(writer, node.DurationStopwatchTicks, node.GetDuration().TotalMilliseconds);
+
         writer.WriteString("outcome_kind", GetOutcomeKindString(node.OutcomeKind));
 
         if (string.IsNullOrEmpty(node.OutcomeCode))
@@ -180,6 +193,8 @@ public static class ExecExplainJsonV1
         }
 
         writer.WriteNumber("priority", stageModule.Priority);
+
+        WriteTiming(writer, stageModule.DurationStopwatchTicks, stageModule.GetDuration().TotalMilliseconds);
 
         writer.WriteString("outcome_kind", GetOutcomeKindString(stageModule.OutcomeKind));
 
@@ -330,3 +345,4 @@ public static class ExecExplainJsonV1
         }
     }
 }
+

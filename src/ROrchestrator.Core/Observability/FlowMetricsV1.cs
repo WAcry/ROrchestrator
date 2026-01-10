@@ -73,6 +73,16 @@ internal static class FlowMetricsV1
         unit: CountUnit,
         description: "Last-known-good config fallback count for plan-template execution.");
 
+    private static readonly Counter<long> ConfigLkgSnapshotLoadFailures = Meter.CreateCounter<long>(
+        name: "rorchestrator.config.lkg.snapshot.load_failures",
+        unit: CountUnit,
+        description: "Last-known-good config snapshot load failures count.");
+
+    private static readonly Counter<long> ConfigLkgSnapshotPersistFailures = Meter.CreateCounter<long>(
+        name: "rorchestrator.config.lkg.snapshot.persist_failures",
+        unit: CountUnit,
+        description: "Last-known-good config snapshot persist failures count.");
+
     internal static bool IsFlowEnabled => FlowLatencyMs.Enabled || FlowOutcomes.Enabled;
 
     internal static bool IsStepEnabled => StepLatencyMs.Enabled || StepOutcomes.Enabled;
@@ -156,6 +166,26 @@ internal static class FlowMetricsV1
         tags.Add("flow_name", flowName);
 
         ConfigLkgFallbacks.Add(1, tags);
+    }
+
+    internal static void RecordConfigLkgSnapshotLoadFailure()
+    {
+        if (!ConfigLkgSnapshotLoadFailures.Enabled)
+        {
+            return;
+        }
+
+        ConfigLkgSnapshotLoadFailures.Add(1);
+    }
+
+    internal static void RecordConfigLkgSnapshotPersistFailure()
+    {
+        if (!ConfigLkgSnapshotPersistFailures.Enabled)
+        {
+            return;
+        }
+
+        ConfigLkgSnapshotPersistFailures.Add(1);
     }
 
     internal static void RecordStep(long startTimestamp, string flowName, string moduleType, OutcomeKind outcomeKind)

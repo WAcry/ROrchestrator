@@ -137,7 +137,7 @@ public sealed class FlowHost
         ModuleCatalog catalog,
         SelectorRegistry selectorRegistry)
     {
-        if (provider is EmptyConfigProvider || provider is LkgConfigProvider)
+        if (provider is EmptyConfigProvider || provider is LkgConfigProvider || provider is PersistedLkgConfigProvider)
         {
             return provider;
         }

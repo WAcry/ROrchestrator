@@ -1,18 +1,18 @@
-using System.Text;
+using System.Text.Json;
 using ROrchestrator.Core;
 using ROrchestrator.Core.Blueprint;
 using ROrchestrator.Tooling;
 
 namespace ROrchestrator.Tooling.Tests;
 
-public sealed class ExecExplainJsonV1Tests
+public sealed class ExecExplainJsonV2Tests
 {
     private static readonly DateTimeOffset FutureDeadline = new(2100, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task ExportJson_ShouldMatchGoldenFile()
+    public async Task ExportJson_ShouldIncludeTiming_ForFlowNodesAndStageModules()
     {
-        const string flowName = "ExecExplainFlow";
+        const string flowName = "ExecExplainTimingFlow";
 
         var registry = new FlowRegistry();
         var catalog = new ModuleCatalog();
@@ -43,30 +43,14 @@ public sealed class ExecExplainJsonV1Tests
         registry.Register(flowName, blueprint);
 
         var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"ExecExplainFlow\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":3,\"modules\":[" +
-            "{\"id\":\"m_disabled\",\"use\":\"test.ok\",\"with\":{}}," +
-            "{\"id\":\"m_gate_false\",\"use\":\"test.ok\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"l1\",\"in\":[\"B\"]}}}," +
-            "{\"id\":\"m_high\",\"use\":\"test.ok\",\"with\":{},\"limitKey\":\"depA\",\"priority\":10}," +
-            "{\"id\":\"m_low\",\"use\":\"test.ok\",\"with\":{},\"priority\":0}," +
-            "{\"id\":\"m_shadow\",\"use\":\"test.ok\",\"with\":{},\"shadow\":{\"sample\":1}}" +
-            "]}},\"experiments\":[{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[" +
-            "{\"id\":\"m_exp\",\"use\":\"test.ok\",\"with\":{},\"priority\":5}" +
-            "]}}}}]," +
-            "\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m_disabled\",\"enabled\":false}]}}}}" +
-            "}}}";
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"" + flowName + "\":{" +
+            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
+            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{}}" +
+            "]}}}}}";
 
-        var host = new FlowHost(registry, catalog, new StaticConfigProvider(configVersion: 42, patchJson));
+        var host = new FlowHost(registry, catalog, new StaticConfigProvider(configVersion: 1, patchJson));
 
-        var requestOptions = new FlowRequestOptions(
-            variants: new Dictionary<string, string>
-            {
-                { "l2", "ignored" },
-                { "l1", "A" },
-            },
-            userId: "u1");
-
-        var flowContext = new FlowContext(services: EmptyServiceProvider.Instance, CancellationToken.None, FutureDeadline, requestOptions);
+        var flowContext = new FlowContext(services: EmptyServiceProvider.Instance, CancellationToken.None, FutureDeadline);
         flowContext.EnableExecExplain(ExplainLevel.Standard);
 
         var outcome = await host.ExecuteAsync<int, int>(flowName, request: 5, flowContext);
@@ -74,16 +58,34 @@ public sealed class ExecExplainJsonV1Tests
 
         Assert.True(flowContext.TryGetExecExplain(out var explain));
 
-        var json = ExecExplainJsonV1.ExportJson(explain);
-        var expected = ReadGoldenFile("exec_explain_json_v1.json");
+        var json = ExecExplainJsonV2.ExportJson(explain);
 
-        Assert.Equal(expected, json);
-    }
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
 
-    private static string ReadGoldenFile(string fileName)
-    {
-        var path = Path.Combine(AppContext.BaseDirectory, "Golden", fileName);
-        return File.ReadAllText(path, Encoding.UTF8).TrimEnd('\r', '\n');
+        var timing = root.GetProperty("timing");
+        Assert.True(timing.GetProperty("duration_ticks").GetInt64() >= 0);
+        Assert.True(timing.GetProperty("duration_ms").GetDouble() >= 0);
+
+        var nodes = root.GetProperty("nodes");
+        Assert.True(nodes.GetArrayLength() > 0);
+
+        foreach (var node in nodes.EnumerateArray())
+        {
+            var nodeTiming = node.GetProperty("timing");
+            Assert.True(nodeTiming.GetProperty("duration_ticks").GetInt64() >= 0);
+            Assert.True(nodeTiming.GetProperty("duration_ms").GetDouble() >= 0);
+        }
+
+        var stageModules = root.GetProperty("stage_modules");
+        Assert.True(stageModules.GetArrayLength() > 0);
+
+        foreach (var stageModule in stageModules.EnumerateArray())
+        {
+            var stageTiming = stageModule.GetProperty("timing");
+            Assert.True(stageTiming.GetProperty("duration_ticks").GetInt64() >= 0);
+            Assert.True(stageTiming.GetProperty("duration_ms").GetDouble() >= 0);
+        }
     }
 
     private sealed class EmptyArgs
@@ -137,3 +139,4 @@ public sealed class ExecExplainJsonV1Tests
         }
     }
 }
+

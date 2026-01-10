@@ -128,6 +128,8 @@ public readonly struct ExecExplainStageModule
 
     public string ModuleType { get; }
 
+    public string? LimitKey { get; }
+
     public int Priority { get; }
 
     public long StartTimestamp { get; }
@@ -156,6 +158,7 @@ public readonly struct ExecExplainStageModule
         string stageName,
         string moduleId,
         string moduleType,
+        string? limitKey,
         int priority,
         long startTimestamp,
         long endTimestamp,
@@ -171,6 +174,7 @@ public readonly struct ExecExplainStageModule
         StageName = stageName;
         ModuleId = moduleId;
         ModuleType = moduleType;
+        LimitKey = limitKey;
         Priority = priority;
         StartTimestamp = startTimestamp;
         EndTimestamp = endTimestamp;
