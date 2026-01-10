@@ -583,6 +583,12 @@ public static class ROrchestratorCliApp
             if (!string.IsNullOrEmpty(assemblyPath))
             {
                 var fullPath = Path.GetFullPath(assemblyPath);
+                if (!File.Exists(fullPath))
+                {
+                    error = $"Bootstrapper assembly not found: '{fullPath}'.";
+                    return false;
+                }
+
                 var assembly = AssemblyLoadContext.Default.LoadFromAssemblyPath(fullPath);
                 type = assembly.GetType(typeName, throwOnError: false, ignoreCase: false);
             }

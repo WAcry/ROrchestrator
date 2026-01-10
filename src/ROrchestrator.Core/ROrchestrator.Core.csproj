@@ -4,6 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Description>ROrchestrator core runtime primitives and execution engine.</Description>
   </PropertyGroup>
 
 </Project>

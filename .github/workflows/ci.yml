@@ -30,3 +30,13 @@ jobs:
       - name: Test (Release)
         run: dotnet test ROrchestrator.sln -c Release --no-build
 
+      - name: Pack (Release)
+        run: dotnet pack ROrchestrator.sln -c Release -o artifacts/packages
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.os }}
+          path: |
+            artifacts/packages/*.nupkg
+            artifacts/packages/*.snupkg

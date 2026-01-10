@@ -6,6 +6,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>rorchestrator</AssemblyName>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>rorchestrator</ToolCommandName>
+    <PackageId>rorchestrator</PackageId>
+    <Description>ROrchestrator command-line tool.</Description>
   </PropertyGroup>
 
   <ItemGroup>

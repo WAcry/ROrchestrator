@@ -22,6 +22,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\ROrchestrator.Cli\ROrchestrator.Cli.csproj" />
     <ProjectReference Include="..\..\src\ROrchestrator.Core\ROrchestrator.Core.csproj" />
+    <ProjectReference Include="..\ROrchestrator.BootstrapperFixture\ROrchestrator.BootstrapperFixture.csproj" />
   </ItemGroup>
 
 </Project>

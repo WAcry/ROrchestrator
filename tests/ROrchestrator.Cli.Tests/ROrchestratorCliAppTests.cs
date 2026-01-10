@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ROrchestrator.BootstrapperFixture;
 using ROrchestrator.Core;
 using ROrchestrator.Core.Blueprint;
 using ROrchestrator.Core.Selectors;
@@ -141,6 +142,151 @@ public sealed class ROrchestratorCliAppTests
     }
 
     [Fact]
+    public void Validate_ShouldSupportBootstrapperAssemblyPath()
+    {
+        const string patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"fixture.module\",\"with\":{},\"gate\":{\"selector\":\"is_allowed\"}}]}}}}}";
+
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+
+        var assemblyPath = GetFixtureAssemblyPath();
+
+        var exitCode = ROrchestratorCliApp.Run(
+            new[]
+            {
+                "validate",
+                "--bootstrapper",
+                assemblyPath,
+                "--bootstrapper-type",
+                typeof(FixtureBootstrapper).FullName!,
+                "--patch-json",
+                patchJson,
+            },
+            stdout,
+            stderr);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(string.Empty, stderr.ToString());
+
+        using var doc = JsonDocument.Parse(stdout.ToString());
+        Assert.Equal("validate", doc.RootElement.GetProperty("kind").GetString());
+        Assert.Equal("v1", doc.RootElement.GetProperty("tooling_json_version").GetString());
+        Assert.True(doc.RootElement.GetProperty("is_valid").GetBoolean());
+    }
+
+    [Fact]
+    public void Validate_ShouldReturnJsonErrorAndExitCode2_WhenBootstrapperAssemblyMissing()
+    {
+        const string patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"fixture.module\",\"with\":{},\"gate\":{\"selector\":\"is_allowed\"}}]}}}}}";
+
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+
+        var assemblyPath = GetFixtureAssemblyPath();
+        var missingAssemblyPath = Path.Combine(Path.GetDirectoryName(assemblyPath)!, $"missing_{Guid.NewGuid():N}.dll");
+
+        var exitCode = ROrchestratorCliApp.Run(
+            new[]
+            {
+                "validate",
+                "--bootstrapper",
+                missingAssemblyPath,
+                "--bootstrapper-type",
+                typeof(FixtureBootstrapper).FullName!,
+                "--patch-json",
+                patchJson,
+            },
+            stdout,
+            stderr);
+
+        Assert.Equal(2, exitCode);
+        Assert.NotEqual(string.Empty, stderr.ToString());
+
+        using var doc = JsonDocument.Parse(stdout.ToString());
+        Assert.Equal("cli_error", doc.RootElement.GetProperty("kind").GetString());
+        Assert.Equal("CLI_BOOTSTRAP_FAILED", doc.RootElement.GetProperty("code").GetString());
+
+        var message = doc.RootElement.GetProperty("message").GetString();
+        Assert.NotNull(message);
+        Assert.Contains("Bootstrapper assembly not found", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Validate_ShouldReturnJsonErrorAndExitCode2_WhenBootstrapperTypeNotFound()
+    {
+        const string patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"fixture.module\",\"with\":{},\"gate\":{\"selector\":\"is_allowed\"}}]}}}}}";
+
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+
+        var assemblyPath = GetFixtureAssemblyPath();
+
+        var exitCode = ROrchestratorCliApp.Run(
+            new[]
+            {
+                "validate",
+                "--bootstrapper",
+                assemblyPath,
+                "--bootstrapper-type",
+                "ROrchestrator.BootstrapperFixture.TypeDoesNotExist",
+                "--patch-json",
+                patchJson,
+            },
+            stdout,
+            stderr);
+
+        Assert.Equal(2, exitCode);
+        Assert.NotEqual(string.Empty, stderr.ToString());
+
+        using var doc = JsonDocument.Parse(stdout.ToString());
+        Assert.Equal("cli_error", doc.RootElement.GetProperty("kind").GetString());
+        Assert.Equal("CLI_BOOTSTRAP_FAILED", doc.RootElement.GetProperty("code").GetString());
+        Assert.Equal(
+            "Bootstrapper type not found: 'ROrchestrator.BootstrapperFixture.TypeDoesNotExist'.",
+            doc.RootElement.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public void Validate_ShouldReturnJsonErrorAndExitCode2_WhenBootstrapperSignatureMismatch()
+    {
+        const string patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"fixture.module\",\"with\":{},\"gate\":{\"selector\":\"is_allowed\"}}]}}}}}";
+
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+
+        var assemblyPath = GetFixtureAssemblyPath();
+
+        var exitCode = ROrchestratorCliApp.Run(
+            new[]
+            {
+                "validate",
+                "--bootstrapper",
+                assemblyPath,
+                "--bootstrapper-type",
+                typeof(SignatureMismatchBootstrapper).FullName!,
+                "--patch-json",
+                patchJson,
+            },
+            stdout,
+            stderr);
+
+        Assert.Equal(2, exitCode);
+        Assert.NotEqual(string.Empty, stderr.ToString());
+
+        using var doc = JsonDocument.Parse(stdout.ToString());
+        Assert.Equal("cli_error", doc.RootElement.GetProperty("kind").GetString());
+        Assert.Equal("CLI_BOOTSTRAP_FAILED", doc.RootElement.GetProperty("code").GetString());
+
+        var message = doc.RootElement.GetProperty("message").GetString();
+        Assert.NotNull(message);
+        Assert.Contains("must define a public static method", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExplainFlow_ShouldReturnJsonAndExitCode0()
     {
         using var stdout = new StringWriter();
@@ -163,6 +309,48 @@ public sealed class ROrchestratorCliAppTests
 
         using var doc = JsonDocument.Parse(stdout.ToString());
         Assert.Equal("explain", doc.RootElement.GetProperty("kind").GetString());
+    }
+
+    [Fact]
+    public void ExplainPatch_ShouldSupportBootstrapperAssemblyPath()
+    {
+        const string patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"fixture.module\",\"with\":{},\"gate\":{\"selector\":\"is_allowed\"}}]}}}}}";
+
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+
+        var assemblyPath = GetFixtureAssemblyPath();
+
+        var exitCode = ROrchestratorCliApp.Run(
+            new[]
+            {
+                "explain-patch",
+                "--flow",
+                "HomeFeed",
+                "--bootstrapper",
+                assemblyPath,
+                "--bootstrapper-type",
+                typeof(FixtureBootstrapper).FullName!,
+                "--patch-json",
+                patchJson,
+            },
+            stdout,
+            stderr);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(string.Empty, stderr.ToString());
+
+        using var doc = JsonDocument.Parse(stdout.ToString());
+        var root = doc.RootElement;
+        Assert.Equal("explain_patch", root.GetProperty("kind").GetString());
+        Assert.Equal("v1", root.GetProperty("tooling_json_version").GetString());
+        Assert.Equal("HomeFeed", root.GetProperty("flow_name").GetString());
+        Assert.True(root.GetProperty("stages").GetArrayLength() > 0);
+
+        var stage = root.GetProperty("stages")[0];
+        var module = stage.GetProperty("modules")[0];
+        Assert.Equal("GATE_TRUE", module.GetProperty("gate_decision_code").GetString());
     }
 
     [Fact]
@@ -380,6 +568,52 @@ public sealed class ROrchestratorCliAppTests
     }
 
     [Fact]
+    public void PreviewMatrix_ShouldSupportBootstrapperAssemblyPath()
+    {
+        const string patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"fixture.module\",\"with\":{},\"priority\":0,\"gate\":{\"selector\":\"is_allowed\"}}]}}}}}";
+
+        const string matrixJson = "[{}]";
+
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+
+        var assemblyPath = GetFixtureAssemblyPath();
+
+        var exitCode = ROrchestratorCliApp.Run(
+            new[]
+            {
+                "preview-matrix",
+                "--flow",
+                "HomeFeed",
+                "--bootstrapper",
+                assemblyPath,
+                "--bootstrapper-type",
+                typeof(FixtureBootstrapper).FullName!,
+                "--patch-json",
+                patchJson,
+                "--matrix-json",
+                matrixJson,
+            },
+            stdout,
+            stderr);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(string.Empty, stderr.ToString());
+
+        using var doc = JsonDocument.Parse(stdout.ToString());
+        var root = doc.RootElement;
+        Assert.Equal("preview_matrix", root.GetProperty("kind").GetString());
+        Assert.Equal("v1", root.GetProperty("tooling_json_version").GetString());
+        Assert.Equal("HomeFeed", root.GetProperty("flow_name").GetString());
+
+        var preview = root.GetProperty("previews")[0];
+        var stage = preview.GetProperty("stages")[0];
+        var selected = stage.GetProperty("selected_modules")[0];
+        Assert.Equal("m1", selected.GetProperty("module_id").GetString());
+    }
+
+    [Fact]
     public void PreviewMatrix_ShouldUseUserIdRequestAttributesAndQosTier()
     {
         const string patchJson =
@@ -507,5 +741,13 @@ public sealed class ROrchestratorCliAppTests
             _ = context;
             return new ValueTask<Outcome<int>>(Outcome<int>.Ok(0));
         }
+    }
+
+    private static string GetFixtureAssemblyPath()
+    {
+        var assemblyPath = typeof(FixtureBootstrapper).Assembly.Location;
+        Assert.NotEqual(string.Empty, assemblyPath);
+        Assert.True(File.Exists(assemblyPath), $"Fixture assembly not found: '{assemblyPath}'.");
+        return assemblyPath;
     }
 }

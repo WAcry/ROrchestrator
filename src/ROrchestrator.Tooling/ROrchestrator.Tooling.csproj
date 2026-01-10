@@ -8,6 +8,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Description>ROrchestrator tooling utilities (JSON validate/explain/diff/preview).</Description>
   </PropertyGroup>
 
 </Project>

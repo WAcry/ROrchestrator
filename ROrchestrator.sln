@@ -29,6 +29,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ROrchestrator.Cli", "src\RO
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ROrchestrator.Cli.Tests", "tests\ROrchestrator.Cli.Tests\ROrchestrator.Cli.Tests.csproj", "{D1700E3D-4F4D-46E4-A739-B263654BF930}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ROrchestrator.BootstrapperFixture", "tests\ROrchestrator.BootstrapperFixture\ROrchestrator.BootstrapperFixture.csproj", "{52CD0275-D2E4-4A16-9F47-44A6951312FB}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -147,6 +149,18 @@ Global
 		{D1700E3D-4F4D-46E4-A739-B263654BF930}.Release|x64.Build.0 = Release|Any CPU
 		{D1700E3D-4F4D-46E4-A739-B263654BF930}.Release|x86.ActiveCfg = Release|Any CPU
 		{D1700E3D-4F4D-46E4-A739-B263654BF930}.Release|x86.Build.0 = Release|Any CPU
+		{52CD0275-D2E4-4A16-9F47-44A6951312FB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{52CD0275-D2E4-4A16-9F47-44A6951312FB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{52CD0275-D2E4-4A16-9F47-44A6951312FB}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{52CD0275-D2E4-4A16-9F47-44A6951312FB}.Debug|x64.Build.0 = Debug|Any CPU
+		{52CD0275-D2E4-4A16-9F47-44A6951312FB}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{52CD0275-D2E4-4A16-9F47-44A6951312FB}.Debug|x86.Build.0 = Debug|Any CPU
+		{52CD0275-D2E4-4A16-9F47-44A6951312FB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{52CD0275-D2E4-4A16-9F47-44A6951312FB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{52CD0275-D2E4-4A16-9F47-44A6951312FB}.Release|x64.ActiveCfg = Release|Any CPU
+		{52CD0275-D2E4-4A16-9F47-44A6951312FB}.Release|x64.Build.0 = Release|Any CPU
+		{52CD0275-D2E4-4A16-9F47-44A6951312FB}.Release|x86.ActiveCfg = Release|Any CPU
+		{52CD0275-D2E4-4A16-9F47-44A6951312FB}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -161,5 +175,6 @@ Global
 		{15E7046A-5827-4504-B9FE-78427BEDA5BF} = {66320409-64EC-F7C5-3DEF-65E7510DAAD1}
 		{E5DC75D1-0B52-4AA0-AD86-D54084950EB6} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{D1700E3D-4F4D-46E4-A739-B263654BF930} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{52CD0275-D2E4-4A16-9F47-44A6951312FB} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal
