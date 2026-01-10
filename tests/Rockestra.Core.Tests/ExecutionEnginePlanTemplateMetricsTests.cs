@@ -214,7 +214,7 @@ public sealed class ExecutionEnginePlanTemplateMetricsTests
         var services = new DummyServiceProvider();
 
         var blueprint = FlowBlueprint.Define<int, int>("MetricsTestFlow.Join.Canceled")
-            .Join<int>("final", _ => throw new OperationCanceledException())
+            .Join<int>("final", (Func<FlowContext, ValueTask<Outcome<int>>>)(_ => throw new OperationCanceledException()))
             .Build();
 
         var template = PlanCompiler.Compile(blueprint, new ModuleCatalog());
@@ -241,7 +241,7 @@ public sealed class ExecutionEnginePlanTemplateMetricsTests
         var services = new DummyServiceProvider();
 
         var blueprint = FlowBlueprint.Define<int, int>("MetricsTestFlow.Join.Error")
-            .Join<int>("final", _ => throw new InvalidOperationException("boom"))
+            .Join<int>("final", (Func<FlowContext, ValueTask<Outcome<int>>>)(_ => throw new InvalidOperationException("boom")))
             .Build();
 
         var template = PlanCompiler.Compile(blueprint, new ModuleCatalog());

@@ -112,7 +112,10 @@ public sealed class FlowBlueprintDslTests
                 .Join<string>("", _ => new ValueTask<Outcome<string>>(Outcome<string>.Ok("ok"))));
 
         Assert.Throws<ArgumentNullException>(
-            () => FlowBlueprint.Define<int, string>("TestFlow").Join<string>("j1", null!));
+            () => FlowBlueprint.Define<int, string>("TestFlow").Join<string>("j1", (Func<FlowContext, ValueTask<Outcome<string>>>)null!));
+
+        Assert.Throws<ArgumentNullException>(
+            () => FlowBlueprint.Define<int, string>("TestFlow").Join<string>("j1", (Func<FlowContext, Outcome<string>>)null!));
     }
 
     [Fact]

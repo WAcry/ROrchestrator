@@ -242,7 +242,7 @@ public sealed class ExecutionEngineTests
         var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
 
         var blueprint = FlowBlueprint.Define<int, int>("TestFlow")
-            .Join<int>("final", _ => throw new OperationCanceledException())
+            .Join<int>("final", (Func<FlowContext, ValueTask<Outcome<int>>>)(_ => throw new OperationCanceledException()))
             .Build();
 
         var engine = new ExecutionEngine(new ModuleCatalog());

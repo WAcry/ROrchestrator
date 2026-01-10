@@ -309,7 +309,7 @@ public sealed class ExecutionEngineTracingTests
         var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
 
         var blueprint = FlowBlueprint.Define<int, int>("TracingTestFlow.Canceled")
-            .Join<int>("final", _ => throw new OperationCanceledException())
+            .Join<int>("final", (Func<FlowContext, ValueTask<Outcome<int>>>)(_ => throw new OperationCanceledException()))
             .Build();
 
         var template = PlanCompiler.Compile(blueprint, new ModuleCatalog());

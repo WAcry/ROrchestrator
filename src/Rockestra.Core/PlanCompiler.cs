@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using Rockestra.Core.Blueprint;
 
 namespace Rockestra.Core;
@@ -140,7 +141,8 @@ public static class PlanCompiler
             explain = new PlanExplain(blueprint.Name, planTemplateHash: hash, explainNodes);
         }
 
-        return new PlanTemplate<TReq, TResp>(blueprint.Name, planHash: hash, planNodes, nodeNameToIndex);
+        var frozenNodeNameToIndex = nodeNameToIndex.ToFrozenDictionary();
+        return new PlanTemplate<TReq, TResp>(blueprint.Name, planHash: hash, planNodes, frozenNodeNameToIndex);
     }
 
     private static void EnsureFinalOutputType<TResp>(string flowName, PlanNodeTemplate lastNode)

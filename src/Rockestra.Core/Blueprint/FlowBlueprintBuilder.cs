@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using Rockestra.Core;
 
 namespace Rockestra.Core.Blueprint;
@@ -81,6 +82,22 @@ public sealed class FlowBlueprintBuilder<TReq, TResp>
         return this;
     }
 
+    public FlowBlueprintBuilder<TReq, TResp> Join<TOut>(
+        string name,
+        Func<FlowContext, Outcome<TOut>> join)
+    {
+        if (join is null)
+        {
+            throw new ArgumentNullException(nameof(join));
+        }
+
+        AddJoin(
+            name,
+            stageName: null,
+            ctx => new ValueTask<Outcome<TOut>>(join(ctx)));
+        return this;
+    }
+
     public FlowBlueprint<TReq, TResp> Build()
     {
         if (_nodes.Count == 0)
@@ -96,7 +113,8 @@ public sealed class FlowBlueprintBuilder<TReq, TResp>
             nameToIndex.Add(nodes[i].Name, i);
         }
 
-        return new FlowBlueprint<TReq, TResp>(_name, nodes, nameToIndex);
+        var frozenNameToIndex = nameToIndex.ToFrozenDictionary();
+        return new FlowBlueprint<TReq, TResp>(_name, nodes, frozenNameToIndex);
     }
 
     internal void AddStep(string name, string? stageName, string moduleType)
@@ -166,6 +184,22 @@ public sealed class FlowBlueprintBuilder<TReq, TResp>
             Func<FlowContext, ValueTask<Outcome<TOut>>> join)
         {
             _owner.AddJoin(name, _stageName, join);
+            return this;
+        }
+
+        public StageBuilder Join<TOut>(
+            string name,
+            Func<FlowContext, Outcome<TOut>> join)
+        {
+            if (join is null)
+            {
+                throw new ArgumentNullException(nameof(join));
+            }
+
+            _owner.AddJoin(
+                name,
+                _stageName,
+                ctx => new ValueTask<Outcome<TOut>>(join(ctx)));
             return this;
         }
     }
