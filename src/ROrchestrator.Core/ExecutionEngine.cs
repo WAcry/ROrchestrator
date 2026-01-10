@@ -735,6 +735,7 @@ public sealed class ExecutionEngine
         var results = new StageModuleOutcomeMetadata[moduleCount];
         var recordStageModuleExplain = execExplainCollector is not null && execExplainCollector.IsActive;
         var gateDecisionCodes = recordStageModuleExplain ? new string[moduleCount] : null;
+        var gateReasonCodes = recordStageModuleExplain ? new string[moduleCount] : null;
         var gateSelectorNames = recordStageModuleExplain ? new string[moduleCount] : null;
         var candidates = new StageModuleCandidate[moduleCount];
         var candidateCount = 0;
@@ -758,6 +759,11 @@ public sealed class ExecutionEngine
                 if (gateDecisionCodes is not null)
                 {
                     gateDecisionCodes[i] = gateDecision.Code;
+                }
+
+                if (gateReasonCodes is not null)
+                {
+                    gateReasonCodes[i] = gateDecision.ReasonCode;
                 }
 
                 if (gateSelectorNames is not null)
@@ -841,6 +847,7 @@ public sealed class ExecutionEngine
                 var meta = results[i];
                 var limitKey = module.LimitKey ?? module.ModuleType;
                 var gateDecisionCode = gateDecisionCodes is null ? string.Empty : gateDecisionCodes[i] ?? string.Empty;
+                var gateReasonCode = gateReasonCodes is null ? string.Empty : gateReasonCodes[i] ?? string.Empty;
                 var gateSelectorName = gateSelectorNames is null ? string.Empty : gateSelectorNames[i] ?? string.Empty;
                 execExplainCollector.RecordStageModule(
                     stageName,
@@ -853,6 +860,7 @@ public sealed class ExecutionEngine
                     meta.Kind,
                     meta.Code,
                     gateDecisionCode,
+                    gateReasonCode,
                     gateSelectorName,
                     isShadow: false,
                     shadowSampleBps: 0,
@@ -915,6 +923,7 @@ public sealed class ExecutionEngine
         var results = new StageModuleOutcomeMetadata[moduleCount];
         var recordStageModuleExplain = execExplainCollector is not null && execExplainCollector.IsActive;
         var gateDecisionCodes = recordStageModuleExplain ? new string[moduleCount] : null;
+        var gateReasonCodes = recordStageModuleExplain ? new string[moduleCount] : null;
         var gateSelectorNames = recordStageModuleExplain ? new string[moduleCount] : null;
         var userId = context.UserId;
 
@@ -936,6 +945,11 @@ public sealed class ExecutionEngine
                 if (gateDecisionCodes is not null)
                 {
                     gateDecisionCodes[i] = gateDecision.Code;
+                }
+
+                if (gateReasonCodes is not null)
+                {
+                    gateReasonCodes[i] = gateDecision.ReasonCode;
                 }
 
                 if (gateSelectorNames is not null)
@@ -972,6 +986,7 @@ public sealed class ExecutionEngine
                 var meta = results[i];
                 var limitKey = module.LimitKey ?? module.ModuleType;
                 var gateDecisionCode = gateDecisionCodes is null ? string.Empty : gateDecisionCodes[i] ?? string.Empty;
+                var gateReasonCode = gateReasonCodes is null ? string.Empty : gateReasonCodes[i] ?? string.Empty;
                 var gateSelectorName = gateSelectorNames is null ? string.Empty : gateSelectorNames[i] ?? string.Empty;
 
                 execExplainCollector.RecordStageModule(
@@ -985,6 +1000,7 @@ public sealed class ExecutionEngine
                     meta.Kind,
                     meta.Code,
                     gateDecisionCode,
+                    gateReasonCode,
                     gateSelectorName,
                     isShadow: true,
                     shadowSampleBps: module.ShadowSampleBps,

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ROrchestrator.Core;
 using ROrchestrator.Core.Blueprint;
+using ROrchestrator.Core.Selectors;
 
 namespace ROrchestrator.Cli.Tests;
 
@@ -71,6 +72,75 @@ public sealed class ROrchestratorCliAppTests
     }
 
     [Fact]
+    public void Validate_ShouldReturnJsonAndExitCode0_WhenSelectorGateIsValid()
+    {
+        const string patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"selector\":\"is_allowed\"}}]}}}}}";
+
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+
+        var exitCode = ROrchestratorCliApp.Run(
+            new[]
+            {
+                "validate",
+                "--bootstrapper-type",
+                typeof(SelectorTestBootstrapper).FullName!,
+                "--patch-json",
+                patchJson,
+            },
+            stdout,
+            stderr);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(string.Empty, stderr.ToString());
+
+        using var doc = JsonDocument.Parse(stdout.ToString());
+        Assert.Equal("validate", doc.RootElement.GetProperty("kind").GetString());
+        Assert.True(doc.RootElement.GetProperty("is_valid").GetBoolean());
+    }
+
+    [Fact]
+    public void Validate_ShouldReturnJsonErrorAndNonZeroExitCode_WhenSelectorNotRegistered()
+    {
+        const string patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"selector\":\"is_allowed\"}}]}}}}}";
+
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+
+        var exitCode = ROrchestratorCliApp.Run(
+            new[]
+            {
+                "validate",
+                "--bootstrapper-type",
+                typeof(TestBootstrapper).FullName!,
+                "--patch-json",
+                patchJson,
+            },
+            stdout,
+            stderr);
+
+        Assert.NotEqual(0, exitCode);
+        Assert.NotEqual(string.Empty, stderr.ToString());
+
+        using var doc = JsonDocument.Parse(stdout.ToString());
+        Assert.Equal("validate", doc.RootElement.GetProperty("kind").GetString());
+        Assert.False(doc.RootElement.GetProperty("is_valid").GetBoolean());
+
+        var findings = doc.RootElement.GetProperty("findings");
+        var enumerator = findings.EnumerateArray();
+        Assert.True(enumerator.MoveNext());
+
+        var finding = enumerator.Current;
+        Assert.Equal("CFG_SELECTOR_NOT_REGISTERED", finding.GetProperty("code").GetString());
+
+        var message = finding.GetProperty("message").GetString();
+        Assert.NotNull(message);
+        Assert.Contains("selector is not registered", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExplainFlow_ShouldReturnJsonAndExitCode0()
     {
         using var stdout = new StringWriter();
@@ -121,6 +191,128 @@ public sealed class ROrchestratorCliAppTests
 
         using var doc = JsonDocument.Parse(stdout.ToString());
         Assert.Equal("explain_patch", doc.RootElement.GetProperty("kind").GetString());
+    }
+
+    [Fact]
+    public void ExplainPatch_ShouldUseUserIdRequestAttributesAndQosTier()
+    {
+        const string patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
+            "\"stages\":{\"s1\":{\"fanoutMax\":10,\"modules\":[" +
+            "{\"id\":\"m_rollout\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"rollout\":{\"percent\":100,\"salt\":\"m_rollout\"}}}," +
+            "{\"id\":\"m_region\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"request\":{\"field\":\"region\",\"in\":[\"US\"]}}}" +
+            "]}},\"qos\":{\"tiers\":{\"emergency\":{\"patch\":{\"stages\":{\"s1\":{\"modules\":[" +
+            "{\"id\":\"m_region\",\"enabled\":false}" +
+            "]}}}}}}" +
+            "}}}";
+
+        using var stdoutFull = new StringWriter();
+        using var stderrFull = new StringWriter();
+
+        var exitCodeFull = ROrchestratorCliApp.Run(
+            new[]
+            {
+                "explain-patch",
+                "--flow",
+                "HomeFeed",
+                "--patch-json",
+                patchJson,
+                "--user-id",
+                "u1",
+                "--request-attr",
+                "region=US",
+                "--qos-tier",
+                "full",
+                "--include-mermaid",
+            },
+            stdoutFull,
+            stderrFull);
+
+        Assert.Equal(0, exitCodeFull);
+        Assert.Equal(string.Empty, stderrFull.ToString());
+
+        using var docFull = JsonDocument.Parse(stdoutFull.ToString());
+        var rootFull = docFull.RootElement;
+        Assert.True(rootFull.TryGetProperty("mermaid", out var mermaid));
+        Assert.Equal(JsonValueKind.String, mermaid.ValueKind);
+        Assert.NotEqual(string.Empty, mermaid.GetString());
+
+        Assert.Equal("GATE_TRUE", FindModule(rootFull, "m_rollout").GetProperty("gate_decision_code").GetString());
+        Assert.Equal("GATE_TRUE", FindModule(rootFull, "m_region").GetProperty("gate_decision_code").GetString());
+        Assert.Equal("full", rootFull.GetProperty("qos").GetProperty("selected_tier").GetString());
+
+        using var stdoutNoUser = new StringWriter();
+        using var stderrNoUser = new StringWriter();
+
+        var exitCodeNoUser = ROrchestratorCliApp.Run(
+            new[]
+            {
+                "explain-patch",
+                "--flow",
+                "HomeFeed",
+                "--patch-json",
+                patchJson,
+                "--request-attr",
+                "region=US",
+                "--qos-tier",
+                "full",
+            },
+            stdoutNoUser,
+            stderrNoUser);
+
+        Assert.Equal(0, exitCodeNoUser);
+        Assert.Equal(string.Empty, stderrNoUser.ToString());
+
+        using var docNoUser = JsonDocument.Parse(stdoutNoUser.ToString());
+        var rootNoUser = docNoUser.RootElement;
+        Assert.Equal("GATE_FALSE", FindModule(rootNoUser, "m_rollout").GetProperty("gate_decision_code").GetString());
+
+        using var stdoutEmergency = new StringWriter();
+        using var stderrEmergency = new StringWriter();
+
+        var exitCodeEmergency = ROrchestratorCliApp.Run(
+            new[]
+            {
+                "explain-patch",
+                "--flow",
+                "HomeFeed",
+                "--patch-json",
+                patchJson,
+                "--user-id",
+                "u1",
+                "--request-attr",
+                "region=US",
+                "--qos-tier",
+                "emergency",
+            },
+            stdoutEmergency,
+            stderrEmergency);
+
+        Assert.Equal(0, exitCodeEmergency);
+        Assert.Equal(string.Empty, stderrEmergency.ToString());
+
+        using var docEmergency = JsonDocument.Parse(stdoutEmergency.ToString());
+        var rootEmergency = docEmergency.RootElement;
+        Assert.Equal("emergency", rootEmergency.GetProperty("qos").GetProperty("selected_tier").GetString());
+        var emergencyModule = FindModule(rootEmergency, "m_region");
+        Assert.False(emergencyModule.GetProperty("enabled").GetBoolean());
+        Assert.Equal("DISABLED", emergencyModule.GetProperty("decision_code").GetString());
+
+        static JsonElement FindModule(JsonElement root, string moduleId)
+        {
+            foreach (var stage in root.GetProperty("stages").EnumerateArray())
+            {
+                foreach (var module in stage.GetProperty("modules").EnumerateArray())
+                {
+                    if (string.Equals(module.GetProperty("module_id").GetString(), moduleId, StringComparison.Ordinal))
+                    {
+                        return module;
+                    }
+                }
+            }
+
+            throw new InvalidOperationException($"Module not found: '{moduleId}'.");
+        }
     }
 
     [Fact]
@@ -188,6 +380,75 @@ public sealed class ROrchestratorCliAppTests
     }
 
     [Fact]
+    public void PreviewMatrix_ShouldUseUserIdRequestAttributesAndQosTier()
+    {
+        const string patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
+            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
+            "{\"id\":\"m_default\",\"use\":\"test.module\",\"with\":{},\"priority\":0}," +
+            "{\"id\":\"m_user\",\"use\":\"test.module\",\"with\":{},\"priority\":10,\"gate\":{\"rollout\":{\"percent\":100,\"salt\":\"m_user\"}}}," +
+            "{\"id\":\"m_region\",\"use\":\"test.module\",\"with\":{},\"priority\":20,\"gate\":{\"request\":{\"field\":\"region\",\"in\":[\"US\"]}}}" +
+            "]}},\"qos\":{\"tiers\":{\"emergency\":{\"patch\":{\"stages\":{\"s1\":{\"modules\":[" +
+            "{\"id\":\"m_region\",\"enabled\":false}" +
+            "]}}}}}}" +
+            "}}}";
+
+        const string matrixJson = "[{}]";
+
+        Assert.Equal("m_default", PreviewSelectedModuleId(patchJson, matrixJson));
+        Assert.Equal("m_user", PreviewSelectedModuleId(patchJson, matrixJson, userId: "u1"));
+        Assert.Equal("m_region", PreviewSelectedModuleId(patchJson, matrixJson, userId: "u1", requestAttr: "region=US"));
+        Assert.Equal("m_user", PreviewSelectedModuleId(patchJson, matrixJson, userId: "u1", requestAttr: "region=US", qosTier: "emergency"));
+
+        static string PreviewSelectedModuleId(
+            string patchJson,
+            string matrixJson,
+            string? userId = null,
+            string? requestAttr = null,
+            string qosTier = "full")
+        {
+            using var stdout = new StringWriter();
+            using var stderr = new StringWriter();
+
+            var args = new List<string>(capacity: 16)
+            {
+                "preview-matrix",
+                "--flow",
+                "HomeFeed",
+                "--patch-json",
+                patchJson,
+                "--matrix-json",
+                matrixJson,
+                "--qos-tier",
+                qosTier,
+            };
+
+            if (!string.IsNullOrEmpty(userId))
+            {
+                args.Add("--user-id");
+                args.Add(userId);
+            }
+
+            if (!string.IsNullOrEmpty(requestAttr))
+            {
+                args.Add("--request-attr");
+                args.Add(requestAttr);
+            }
+
+            var exitCode = ROrchestratorCliApp.Run(args.ToArray(), stdout, stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Equal(string.Empty, stderr.ToString());
+
+            using var doc = JsonDocument.Parse(stdout.ToString());
+            var preview = doc.RootElement.GetProperty("previews")[0];
+            var stage = preview.GetProperty("stages")[0];
+            var selected = stage.GetProperty("selected_modules")[0];
+            return selected.GetProperty("module_id").GetString() ?? string.Empty;
+        }
+    }
+
+    [Fact]
     public void UnknownCommand_ShouldReturnJsonErrorAndExitCode2()
     {
         using var stdout = new StringWriter();
@@ -223,6 +484,15 @@ public sealed class ROrchestratorCliAppTests
                     .Build());
 
             catalog.Register<TestArgs, int>("test.module", _ => new DummyModule());
+        }
+    }
+
+    public static class SelectorTestBootstrapper
+    {
+        public static void Configure(FlowRegistry registry, ModuleCatalog catalog, SelectorRegistry selectors)
+        {
+            TestBootstrapper.Configure(registry, catalog);
+            selectors.Register("is_allowed", _ => true);
         }
     }
 

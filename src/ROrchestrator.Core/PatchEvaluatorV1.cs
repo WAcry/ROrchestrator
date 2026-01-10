@@ -635,7 +635,7 @@ public static class PatchEvaluatorV1
             cachedDocument?.ReleaseLease();
         }
 
-        internal bool TryGetFlowPatch(out JsonElement flowPatch)
+        public bool TryGetFlowPatch(out JsonElement flowPatch)
         {
             if (_document is null || _flowPatch.ValueKind != JsonValueKind.Object)
             {

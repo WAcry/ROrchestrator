@@ -20,6 +20,7 @@ public sealed class GateEvaluatorTests
 
         Assert.True(decision.Allowed);
         Assert.Equal(GateDecision.AllowedCode, decision.Code);
+        Assert.Equal("VARIANT_MATCH", decision.ReasonCode);
     }
 
     [Fact]
@@ -32,6 +33,7 @@ public sealed class GateEvaluatorTests
 
         Assert.False(decision.Allowed);
         Assert.Equal(GateDecision.DeniedCode, decision.Code);
+        Assert.Equal("MISSING_VARIANT", decision.ReasonCode);
     }
 
     [Fact]
@@ -47,6 +49,7 @@ public sealed class GateEvaluatorTests
 
         Assert.False(decision.Allowed);
         Assert.Equal(GateDecision.DeniedCode, decision.Code);
+        Assert.Equal("VARIANT_MISMATCH", decision.ReasonCode);
     }
 
     [Fact]
@@ -173,6 +176,21 @@ public sealed class GateEvaluatorTests
         var bucket = ComputeRolloutBucket("user_1", "m1");
         Assert.Equal(bucket < 50, decision.Allowed);
         Assert.Equal(decision.Allowed ? GateDecision.AllowedCode : GateDecision.DeniedCode, decision.Code);
+        Assert.Equal(decision.Allowed ? "ROLLOUT_TRUE" : "ROLLOUT_FALSE", decision.ReasonCode);
+    }
+
+    [Fact]
+    public void RolloutGate_ShouldDeny_WhenUserIdIsMissing()
+    {
+        var variants = new Dictionary<string, string>(0);
+        var gate = new RolloutGate(percent: 100, salt: "m1");
+
+        var context = new GateEvaluationContext(new VariantSet(variants), userId: null);
+        var decision = GateEvaluator.Evaluate(gate, in context);
+
+        Assert.False(decision.Allowed);
+        Assert.Equal(GateDecision.DeniedCode, decision.Code);
+        Assert.Equal("MISSING_USER_ID", decision.ReasonCode);
     }
 
     [Fact]
@@ -191,6 +209,23 @@ public sealed class GateEvaluatorTests
 
         Assert.True(decision.Allowed);
         Assert.Equal(GateDecision.AllowedCode, decision.Code);
+        Assert.Equal("REQUEST_ATTR_MATCH", decision.ReasonCode);
+    }
+
+    [Fact]
+    public void RequestAttrGate_ShouldDeny_WhenFieldIsMissing()
+    {
+        var variants = new Dictionary<string, string>(0);
+        var requestAttrs = new Dictionary<string, string>(0);
+
+        var gate = new RequestAttrGate("region", ["US"]);
+        var context = new GateEvaluationContext(new VariantSet(variants), requestAttributes: requestAttrs);
+
+        var decision = GateEvaluator.Evaluate(gate, in context);
+
+        Assert.False(decision.Allowed);
+        Assert.Equal(GateDecision.DeniedCode, decision.Code);
+        Assert.Equal("MISSING_REQUEST_ATTR", decision.ReasonCode);
     }
 
     [Fact]
@@ -209,6 +244,7 @@ public sealed class GateEvaluatorTests
 
         Assert.False(decision.Allowed);
         Assert.Equal(GateDecision.DeniedCode, decision.Code);
+        Assert.Equal("REQUEST_ATTR_MISMATCH", decision.ReasonCode);
     }
 
     [Fact]
@@ -227,6 +263,7 @@ public sealed class GateEvaluatorTests
 
         Assert.True(decision.Allowed);
         Assert.Equal(GateDecision.AllowedCode, decision.Code);
+        Assert.Equal("SELECTOR_TRUE", decision.ReasonCode);
     }
 
     [Fact]
@@ -245,6 +282,7 @@ public sealed class GateEvaluatorTests
 
         Assert.False(decision.Allowed);
         Assert.Equal(GateDecision.DeniedCode, decision.Code);
+        Assert.Equal("SELECTOR_FALSE", decision.ReasonCode);
     }
 
     private static int ComputeRolloutBucket(string userId, string salt)

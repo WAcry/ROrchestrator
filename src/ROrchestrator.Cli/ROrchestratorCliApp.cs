@@ -1,9 +1,11 @@
 using System.Buffers;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Text;
 using System.Text.Json;
 using ROrchestrator.Core;
+using ROrchestrator.Core.Selectors;
 using ROrchestrator.Tooling;
 
 namespace ROrchestrator.Cli;
@@ -123,13 +125,14 @@ public static class ROrchestratorCliApp
 
         var registry = new FlowRegistry();
         var catalog = new ModuleCatalog();
+        var selectors = new SelectorRegistry();
 
-        if (!TryInvokeBootstrapper(bootstrapperAssemblyPath, bootstrapperTypeName, registry, catalog, out var bootstrapError))
+        if (!TryInvokeBootstrapper(bootstrapperAssemblyPath, bootstrapperTypeName, registry, catalog, selectors, out var bootstrapError))
         {
             return CreateCliErrorResult("CLI_BOOTSTRAP_FAILED", bootstrapError);
         }
 
-        return ToolingJsonV1.ValidatePatchJson(resolvedPatchJson, registry, catalog);
+        return ToolingJsonV1.ValidatePatchJson(resolvedPatchJson, registry, catalog, selectors);
     }
 
     private static ToolingCommandResult RunExplainFlow(string[] args)
@@ -189,8 +192,9 @@ public static class ROrchestratorCliApp
 
         var registry = new FlowRegistry();
         var catalog = new ModuleCatalog();
+        var selectors = new SelectorRegistry();
 
-        if (!TryInvokeBootstrapper(bootstrapperAssemblyPath, bootstrapperTypeName, registry, catalog, out var bootstrapError))
+        if (!TryInvokeBootstrapper(bootstrapperAssemblyPath, bootstrapperTypeName, registry, catalog, selectors, out var bootstrapError))
         {
             return CreateCliErrorResult("CLI_BOOTSTRAP_FAILED", bootstrapError);
         }
@@ -203,7 +207,13 @@ public static class ROrchestratorCliApp
         string? flowName = null;
         string? patchPath = null;
         string? patchJson = null;
+        string? userId = null;
+        var requestAttributes = new Dictionary<string, string>();
         var variants = new Dictionary<string, string>();
+        string? bootstrapperAssemblyPath = null;
+        string? bootstrapperTypeName = null;
+        var includeMermaid = false;
+        var qosTier = QosTier.Full;
 
         for (var i = 1; i < args.Length; i++)
         {
@@ -217,6 +227,18 @@ public static class ROrchestratorCliApp
             if (TryReadOption(args, ref i, "--flow", out var v))
             {
                 flowName = v;
+                continue;
+            }
+
+            if (TryReadOption(args, ref i, "--bootstrapper", out v))
+            {
+                bootstrapperAssemblyPath = v;
+                continue;
+            }
+
+            if (TryReadOption(args, ref i, "--bootstrapper-type", out v))
+            {
+                bootstrapperTypeName = v;
                 continue;
             }
 
@@ -243,6 +265,39 @@ public static class ROrchestratorCliApp
                 continue;
             }
 
+            if (TryReadOption(args, ref i, "--user-id", out v))
+            {
+                userId = v;
+                continue;
+            }
+
+            if (TryReadOption(args, ref i, "--request-attr", out v))
+            {
+                if (!TryParseKeyValuePair(v, out var key, out var value))
+                {
+                    return CreateCliErrorResult("CLI_USAGE_INVALID", $"Invalid --request-attr value: '{v}'. Expected '<key>=<value>'.");
+                }
+
+                requestAttributes[key] = value;
+                continue;
+            }
+
+            if (TryReadOption(args, ref i, "--qos-tier", out v))
+            {
+                if (!TryParseQosTier(v, out qosTier))
+                {
+                    return CreateCliErrorResult("CLI_USAGE_INVALID", $"Invalid --qos-tier value: '{v}'. Expected: full|conserve|emergency|fallback.");
+                }
+
+                continue;
+            }
+
+            if (a == "--include-mermaid")
+            {
+                includeMermaid = true;
+                continue;
+            }
+
             return CreateCliErrorResult("CLI_USAGE_INVALID", $"Unknown argument: '{a}'.");
         }
 
@@ -257,16 +312,30 @@ public static class ROrchestratorCliApp
         }
 
         FlowRequestOptions options;
-        if (variants.Count == 0)
+        options = new FlowRequestOptions(
+            variants: variants.Count == 0 ? null : variants,
+            userId: userId,
+            requestAttributes: requestAttributes.Count == 0 ? null : requestAttributes);
+
+        SelectorRegistry? selectors = null;
+
+        if (!string.IsNullOrEmpty(bootstrapperTypeName))
         {
-            options = default;
+            var registry = new FlowRegistry();
+            var catalog = new ModuleCatalog();
+            selectors = new SelectorRegistry();
+
+            if (!TryInvokeBootstrapper(bootstrapperAssemblyPath, bootstrapperTypeName, registry, catalog, selectors, out var bootstrapError))
+            {
+                return CreateCliErrorResult("CLI_BOOTSTRAP_FAILED", bootstrapError);
+            }
         }
         else
         {
-            options = new FlowRequestOptions(variants: variants);
+            selectors = SelectorRegistry.Empty;
         }
 
-        return ToolingJsonV1.ExplainPatchJson(flowName, resolvedPatchJson, options);
+        return ToolingJsonV1.ExplainPatchJson(flowName, resolvedPatchJson, options, includeMermaid, selectors, qosTier);
     }
 
     private static ToolingCommandResult RunDiffPatch(string[] args)
@@ -332,6 +401,12 @@ public static class ROrchestratorCliApp
         string? patchJson = null;
         string? matrixPath = null;
         string? matrixJson = null;
+        string? userId = null;
+        var requestAttributes = new Dictionary<string, string>();
+        string? bootstrapperAssemblyPath = null;
+        string? bootstrapperTypeName = null;
+        var includeMermaid = false;
+        var qosTier = QosTier.Full;
 
         for (var i = 1; i < args.Length; i++)
         {
@@ -345,6 +420,18 @@ public static class ROrchestratorCliApp
             if (TryReadOption(args, ref i, "--flow", out var v))
             {
                 flowName = v;
+                continue;
+            }
+
+            if (TryReadOption(args, ref i, "--bootstrapper", out v))
+            {
+                bootstrapperAssemblyPath = v;
+                continue;
+            }
+
+            if (TryReadOption(args, ref i, "--bootstrapper-type", out v))
+            {
+                bootstrapperTypeName = v;
                 continue;
             }
 
@@ -372,6 +459,39 @@ public static class ROrchestratorCliApp
                 continue;
             }
 
+            if (TryReadOption(args, ref i, "--user-id", out v))
+            {
+                userId = v;
+                continue;
+            }
+
+            if (TryReadOption(args, ref i, "--request-attr", out v))
+            {
+                if (!TryParseKeyValuePair(v, out var key, out var value))
+                {
+                    return CreateCliErrorResult("CLI_USAGE_INVALID", $"Invalid --request-attr value: '{v}'. Expected '<key>=<value>'.");
+                }
+
+                requestAttributes[key] = value;
+                continue;
+            }
+
+            if (TryReadOption(args, ref i, "--qos-tier", out v))
+            {
+                if (!TryParseQosTier(v, out qosTier))
+                {
+                    return CreateCliErrorResult("CLI_USAGE_INVALID", $"Invalid --qos-tier value: '{v}'. Expected: full|conserve|emergency|fallback.");
+                }
+
+                continue;
+            }
+
+            if (a == "--include-mermaid")
+            {
+                includeMermaid = true;
+                continue;
+            }
+
             return CreateCliErrorResult("CLI_USAGE_INVALID", $"Unknown argument: '{a}'.");
         }
 
@@ -395,7 +515,30 @@ public static class ROrchestratorCliApp
             return CreateCliErrorResult("CLI_USAGE_INVALID", parseError);
         }
 
-        return ToolingJsonV1.PreviewMatrixJson(flowName, resolvedPatchJson, matrix);
+        var options = new FlowRequestOptions(
+            variants: null,
+            userId: userId,
+            requestAttributes: requestAttributes.Count == 0 ? null : requestAttributes);
+
+        SelectorRegistry? selectors;
+
+        if (!string.IsNullOrEmpty(bootstrapperTypeName))
+        {
+            var registry = new FlowRegistry();
+            var catalog = new ModuleCatalog();
+            selectors = new SelectorRegistry();
+
+            if (!TryInvokeBootstrapper(bootstrapperAssemblyPath, bootstrapperTypeName, registry, catalog, selectors, out var bootstrapError))
+            {
+                return CreateCliErrorResult("CLI_BOOTSTRAP_FAILED", bootstrapError);
+            }
+        }
+        else
+        {
+            selectors = SelectorRegistry.Empty;
+        }
+
+        return ToolingJsonV1.PreviewMatrixJson(flowName, resolvedPatchJson, matrix, selectors, qosTier, options, includeMermaid);
     }
 
     private static bool TryParseVariantsMatrix(
@@ -430,6 +573,7 @@ public static class ROrchestratorCliApp
         string typeName,
         FlowRegistry registry,
         ModuleCatalog catalog,
+        SelectorRegistry selectors,
         out string error)
     {
         try
@@ -465,13 +609,27 @@ public static class ROrchestratorCliApp
                 name: "Configure",
                 bindingAttr: BindingFlags.Public | BindingFlags.Static,
                 binder: null,
+                types: new[] { typeof(FlowRegistry), typeof(ModuleCatalog), typeof(SelectorRegistry) },
+                modifiers: null);
+
+            if (method is not null)
+            {
+                method.Invoke(obj: null, parameters: new object[] { registry, catalog, selectors });
+                error = string.Empty;
+                return true;
+            }
+
+            method = type.GetMethod(
+                name: "Configure",
+                bindingAttr: BindingFlags.Public | BindingFlags.Static,
+                binder: null,
                 types: new[] { typeof(FlowRegistry), typeof(ModuleCatalog) },
                 modifiers: null);
 
             if (method is null)
             {
                 error =
-                    $"Bootstrapper type '{typeName}' must define a public static method: Configure(FlowRegistry, ModuleCatalog).";
+                    $"Bootstrapper type '{typeName}' must define a public static method: Configure(FlowRegistry, ModuleCatalog) or Configure(FlowRegistry, ModuleCatalog, SelectorRegistry).";
                 return false;
             }
 
@@ -569,6 +727,36 @@ public static class ROrchestratorCliApp
         }
 
         value = string.Empty;
+        return false;
+    }
+
+    private static bool TryParseQosTier(string value, out QosTier tier)
+    {
+        if (string.Equals(value, "full", StringComparison.OrdinalIgnoreCase))
+        {
+            tier = QosTier.Full;
+            return true;
+        }
+
+        if (string.Equals(value, "conserve", StringComparison.OrdinalIgnoreCase))
+        {
+            tier = QosTier.Conserve;
+            return true;
+        }
+
+        if (string.Equals(value, "emergency", StringComparison.OrdinalIgnoreCase))
+        {
+            tier = QosTier.Emergency;
+            return true;
+        }
+
+        if (string.Equals(value, "fallback", StringComparison.OrdinalIgnoreCase))
+        {
+            tier = QosTier.Fallback;
+            return true;
+        }
+
+        tier = QosTier.Full;
         return false;
     }
 
@@ -680,11 +868,11 @@ public static class ROrchestratorCliApp
                 "explain-flow" =>
                     "rorchestrator explain-flow --bootstrapper <path> --bootstrapper-type <type> --flow <name> [--include-mermaid]",
                 "explain-patch" =>
-                    "rorchestrator explain-patch --flow <name> (--patch <path> | --patch-json <json>) [--variant <k=v> ...]",
+                    "rorchestrator explain-patch --flow <name> (--patch <path> | --patch-json <json>) [--variant <k=v> ...] [--user-id <value>] [--request-attr <k=v> ...] [--qos-tier <tier>] [--include-mermaid] [--bootstrapper <path>] [--bootstrapper-type <type>]",
                 "diff-patch" =>
                     "rorchestrator diff-patch (--old <path> | --old-json <json>) (--new <path> | --new-json <json>)",
                 "preview-matrix" =>
-                    "rorchestrator preview-matrix --flow <name> (--patch <path> | --patch-json <json>) (--matrix <path> | --matrix-json <json>)",
+                    "rorchestrator preview-matrix --flow <name> (--patch <path> | --patch-json <json>) (--matrix <path> | --matrix-json <json>) [--user-id <value>] [--request-attr <k=v> ...] [--qos-tier <tier>] [--include-mermaid] [--bootstrapper <path>] [--bootstrapper-type <type>]",
                 _ => "rorchestrator <command> [options]",
             });
 

@@ -140,7 +140,9 @@ public static class ToolingJsonV1
         string patchJson,
         IReadOnlyList<Dictionary<string, string>> variantsMatrix,
         SelectorRegistry? selectorRegistry = null,
-        QosTier qosTier = QosTier.Full)
+        QosTier qosTier = QosTier.Full,
+        FlowRequestOptions requestOptions = default,
+        bool includeMermaid = false)
     {
         if (flowName is null)
         {
@@ -159,7 +161,7 @@ public static class ToolingJsonV1
 
         try
         {
-            var json = BuildPreviewMatrixJson(flowName, patchJson, variantsMatrix, selectorRegistry, qosTier);
+            var json = BuildPreviewMatrixJson(flowName, patchJson, variantsMatrix, requestOptions, includeMermaid, selectorRegistry, qosTier);
             return new ToolingCommandResult(exitCode: 0, json);
         }
         catch (Exception ex) when (IsExplainPatchInputException(ex))
@@ -264,6 +266,8 @@ public static class ToolingJsonV1
 
         writer.WriteEndArray();
 
+        WriteExplainPatchParams(writer, evaluation, requestOptions, qosTier);
+
         writer.WritePropertyName("stages");
         writer.WriteStartArray();
 
@@ -293,6 +297,8 @@ public static class ToolingJsonV1
         string flowName,
         string patchJson,
         IReadOnlyList<Dictionary<string, string>> variantsMatrix,
+        FlowRequestOptions requestOptions,
+        bool includeMermaid,
         SelectorRegistry? selectorRegistry,
         QosTier qosTier)
     {
@@ -343,13 +349,16 @@ public static class ToolingJsonV1
             for (var i = 0; i < entries.Length; i++)
             {
                 var variants = variantsMatrix[entries[i].Index];
-                var requestOptions = new FlowRequestOptions(variants: variants, userId: "preview");
+                var mergedRequestOptions = new FlowRequestOptions(
+                    variants: variants,
+                    userId: requestOptions.UserId,
+                    requestAttributes: requestOptions.RequestAttributes);
 
-                using var evaluation = PatchEvaluatorV1.Evaluate(flowName, patchJson, requestOptions, qosTier: qosTier, configVersion: 1);
+                using var evaluation = PatchEvaluatorV1.Evaluate(flowName, patchJson, mergedRequestOptions, qosTier: qosTier, configVersion: 1);
 
                 writer.WriteStartObject();
 
-                WriteSortedVariants(writer, requestOptions.Variants);
+                WriteSortedVariants(writer, mergedRequestOptions.Variants);
 
                 writer.WritePropertyName("overlays_applied");
                 writer.WriteStartArray();
@@ -362,12 +371,19 @@ public static class ToolingJsonV1
 
                 writer.WriteEndArray();
 
+                WriteExplainPatchParams(writer, evaluation, mergedRequestOptions, qosTier);
+
                 writer.WritePropertyName("stages");
                 writer.WriteStartArray();
 
-                WritePreviewMatrixStages(writer, evaluation.Stages, requestOptions, selectorRegistry, maxInFlight, ref selectorFlowContext);
+                WritePreviewMatrixStages(writer, evaluation.Stages, mergedRequestOptions, selectorRegistry, maxInFlight, ref selectorFlowContext);
 
                 writer.WriteEndArray();
+
+                if (includeMermaid)
+                {
+                    writer.WriteString("mermaid", BuildExplainPatchMermaid(evaluation, mergedRequestOptions, selectorRegistry));
+                }
 
                 writer.WriteEndObject();
             }
@@ -780,6 +796,547 @@ public static class ToolingJsonV1
         writer.WriteEndObject();
     }
 
+    private static void WriteExplainPatchParams(
+        Utf8JsonWriter writer,
+        PatchEvaluatorV1.FlowPatchEvaluationV1 evaluation,
+        FlowRequestOptions requestOptions,
+        QosTier qosTier)
+    {
+        writer.WritePropertyName("params");
+        writer.WriteStartObject();
+
+        if (!evaluation.TryGetFlowPatch(out var flowPatch) || flowPatch.ValueKind != JsonValueKind.Object)
+        {
+            writer.WriteNull("effective");
+            writer.WriteNull("sources");
+            writer.WriteEndObject();
+            return;
+        }
+
+        if (!TryCollectParamsMergeInputs(flowPatch, requestOptions, qosTier, out var hasBase, out var baseParams, out var overlays, out var overlayCount))
+        {
+            writer.WriteNull("effective");
+            writer.WriteNull("sources");
+            writer.WriteEndObject();
+            return;
+        }
+
+        var sources = new List<ParamsSourceEntry>(capacity: 8);
+
+        writer.WritePropertyName("effective");
+        WriteMergedParamsObject(writer, hasBase, baseParams, overlays, overlayCount, pathPrefix: null, sources);
+
+        if (sources.Count > 1)
+        {
+            sources.Sort(ParamsSourceEntryByPathComparer.Instance);
+        }
+
+        writer.WritePropertyName("sources");
+        writer.WriteStartArray();
+
+        for (var i = 0; i < sources.Count; i++)
+        {
+            WriteParamsSourceEntry(writer, sources[i]);
+        }
+
+        writer.WriteEndArray();
+        writer.WriteEndObject();
+    }
+
+    private static void WriteParamsSourceEntry(Utf8JsonWriter writer, ParamsSourceEntry entry)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("path", entry.Path);
+        writer.WriteString("layer", entry.Layer);
+
+        if (entry.ExperimentLayer is null)
+        {
+            writer.WriteNull("experiment_layer");
+        }
+        else
+        {
+            writer.WriteString("experiment_layer", entry.ExperimentLayer);
+        }
+
+        if (entry.ExperimentVariant is null)
+        {
+            writer.WriteNull("experiment_variant");
+        }
+        else
+        {
+            writer.WriteString("experiment_variant", entry.ExperimentVariant);
+        }
+
+        if (entry.QosTier is null)
+        {
+            writer.WriteNull("qos_tier");
+        }
+        else
+        {
+            writer.WriteString("qos_tier", entry.QosTier);
+        }
+
+        writer.WriteEndObject();
+    }
+
+    private static void WriteMergedParamsObject(
+        Utf8JsonWriter writer,
+        bool hasBase,
+        JsonElement baseObject,
+        ParamsOverlay[] overlays,
+        int overlayCount,
+        string? pathPrefix,
+        List<ParamsSourceEntry> sources)
+    {
+        writer.WriteStartObject();
+
+        var names = new PropertyNameBuffer(initialCapacity: 16);
+
+        if (hasBase)
+        {
+            foreach (var property in baseObject.EnumerateObject())
+            {
+                names.Add(property.Name);
+            }
+        }
+
+        for (var i = 0; i < overlayCount; i++)
+        {
+            foreach (var property in overlays[i].Object.EnumerateObject())
+            {
+                names.Add(property.Name);
+            }
+        }
+
+        var nameArray = names.Items;
+
+        if (names.Count > 1)
+        {
+            Array.Sort(nameArray, 0, names.Count, StringComparer.Ordinal);
+        }
+
+        for (var nameIndex = 0; nameIndex < names.Count; nameIndex++)
+        {
+            var name = nameArray[nameIndex];
+
+            var baseValue = default(JsonElement);
+            var hasBaseValue = hasBase && baseObject.TryGetProperty(name, out baseValue);
+
+            var lastOverlayIndex = -1;
+            JsonElement lastOverlayValue = default;
+            ParamsSourceDescriptor lastOverlaySource = default;
+
+            for (var i = overlayCount - 1; i >= 0; i--)
+            {
+                if (!overlays[i].Object.TryGetProperty(name, out var overlayValue))
+                {
+                    continue;
+                }
+
+                lastOverlayIndex = i;
+                lastOverlayValue = overlayValue;
+                lastOverlaySource = overlays[i].Source;
+                break;
+            }
+
+            if (lastOverlayIndex < 0)
+            {
+                if (!hasBaseValue)
+                {
+                    continue;
+                }
+
+                writer.WritePropertyName(name);
+
+                if (baseValue.ValueKind == JsonValueKind.Object)
+                {
+                    WriteMergedParamsObject(writer, true, baseValue, Array.Empty<ParamsOverlay>(), 0, CombinePath(pathPrefix, name), sources);
+                }
+                else
+                {
+                    baseValue.WriteTo(writer);
+                    sources.Add(new ParamsSourceEntry(CombinePath(pathPrefix, name), ParamsSourceDescriptor.Base));
+                }
+
+                continue;
+            }
+
+            if (lastOverlayValue.ValueKind != JsonValueKind.Object)
+            {
+                writer.WritePropertyName(name);
+                lastOverlayValue.WriteTo(writer);
+                sources.Add(new ParamsSourceEntry(CombinePath(pathPrefix, name), lastOverlaySource));
+                continue;
+            }
+
+            var resetIndex = -1;
+
+            for (var i = 0; i <= lastOverlayIndex; i++)
+            {
+                if (!overlays[i].Object.TryGetProperty(name, out var overlayValue))
+                {
+                    continue;
+                }
+
+                if (overlayValue.ValueKind != JsonValueKind.Object)
+                {
+                    resetIndex = i;
+                }
+            }
+
+            var nestedHasBase = hasBaseValue && baseValue.ValueKind == JsonValueKind.Object && resetIndex < 0;
+            var nestedBase = nestedHasBase ? baseValue : default;
+
+            var maxNestedCount = lastOverlayIndex - resetIndex;
+            var rented = ArrayPool<ParamsOverlay>.Shared.Rent(maxNestedCount);
+            var nestedCount = 0;
+
+            try
+            {
+                for (var i = resetIndex + 1; i <= lastOverlayIndex; i++)
+                {
+                    if (!overlays[i].Object.TryGetProperty(name, out var overlayValue))
+                    {
+                        continue;
+                    }
+
+                    if (overlayValue.ValueKind != JsonValueKind.Object)
+                    {
+                        continue;
+                    }
+
+                    rented[nestedCount] = new ParamsOverlay(overlayValue, overlays[i].Source);
+                    nestedCount++;
+                }
+
+                writer.WritePropertyName(name);
+                WriteMergedParamsObject(writer, nestedHasBase, nestedBase, rented, nestedCount, CombinePath(pathPrefix, name), sources);
+            }
+            finally
+            {
+                Array.Clear(rented, 0, nestedCount);
+                ArrayPool<ParamsOverlay>.Shared.Return(rented);
+            }
+        }
+
+        writer.WriteEndObject();
+    }
+
+    private static string CombinePath(string? prefix, string name)
+    {
+        if (string.IsNullOrEmpty(prefix))
+        {
+            return name;
+        }
+
+        return string.Concat(prefix, ".", name);
+    }
+
+    private static bool TryCollectParamsMergeInputs(
+        JsonElement flowPatch,
+        FlowRequestOptions requestOptions,
+        QosTier qosTier,
+        out bool hasBase,
+        out JsonElement baseParams,
+        out ParamsOverlay[] overlays,
+        out int overlayCount)
+    {
+        hasBase = false;
+        baseParams = default;
+
+        var buffer = new ParamsOverlayBuffer(initialCapacity: 4);
+
+        if (flowPatch.TryGetProperty("params", out var baseParamsPatch))
+        {
+            if (baseParamsPatch.ValueKind == JsonValueKind.Object)
+            {
+                hasBase = true;
+                baseParams = baseParamsPatch;
+            }
+            else if (baseParamsPatch.ValueKind != JsonValueKind.Undefined)
+            {
+                throw new FormatException("params must be a JSON object.");
+            }
+        }
+
+        var variants = requestOptions.Variants;
+
+        if (variants is not null
+            && variants.Count != 0
+            && flowPatch.TryGetProperty("experiments", out var experimentsPatch)
+            && experimentsPatch.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var experimentMapping in experimentsPatch.EnumerateArray())
+            {
+                if (experimentMapping.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                string? layer = null;
+                string? variant = null;
+                JsonElement patch = default;
+                var hasPatch = false;
+
+                foreach (var field in experimentMapping.EnumerateObject())
+                {
+                    if (field.NameEquals("layer"))
+                    {
+                        layer = field.Value.ValueKind == JsonValueKind.String ? field.Value.GetString() : null;
+                        continue;
+                    }
+
+                    if (field.NameEquals("variant"))
+                    {
+                        variant = field.Value.ValueKind == JsonValueKind.String ? field.Value.GetString() : null;
+                        continue;
+                    }
+
+                    if (field.NameEquals("patch"))
+                    {
+                        hasPatch = true;
+                        patch = field.Value;
+                    }
+                }
+
+                if (string.IsNullOrEmpty(layer) || variant is null || !hasPatch || patch.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                if (!variants.TryGetValue(layer!, out var currentVariant)
+                    || !string.Equals(currentVariant, variant, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (!patch.TryGetProperty("params", out var experimentParamsPatch))
+                {
+                    continue;
+                }
+
+                if (experimentParamsPatch.ValueKind == JsonValueKind.Object)
+                {
+                    buffer.Add(
+                        new ParamsOverlay(
+                            experimentParamsPatch,
+                            new ParamsSourceDescriptor(
+                                layer: "experiment",
+                                experimentLayer: layer,
+                                experimentVariant: variant,
+                                qosTier: null)));
+                }
+                else if (experimentParamsPatch.ValueKind != JsonValueKind.Undefined)
+                {
+                    throw new FormatException("experiments[].patch.params must be a JSON object.");
+                }
+            }
+        }
+
+        var qosTierName = GetQosTierString(qosTier);
+
+        if (flowPatch.TryGetProperty("qos", out var qosElement)
+            && qosElement.ValueKind == JsonValueKind.Object
+            && qosElement.TryGetProperty("tiers", out var tiersElement)
+            && tiersElement.ValueKind == JsonValueKind.Object
+            && tiersElement.TryGetProperty(qosTierName, out var tierElement)
+            && tierElement.ValueKind == JsonValueKind.Object
+            && tierElement.TryGetProperty("patch", out var tierPatch)
+            && tierPatch.ValueKind == JsonValueKind.Object
+            && tierPatch.TryGetProperty("params", out var qosParamsPatch))
+        {
+            if (qosParamsPatch.ValueKind == JsonValueKind.Object)
+            {
+                buffer.Add(
+                    new ParamsOverlay(
+                        qosParamsPatch,
+                        new ParamsSourceDescriptor(
+                            layer: "qos",
+                            experimentLayer: null,
+                            experimentVariant: null,
+                            qosTier: qosTierName)));
+            }
+            else if (qosParamsPatch.ValueKind != JsonValueKind.Undefined)
+            {
+                throw new FormatException("qos.tiers[].patch.params must be a JSON object.");
+            }
+        }
+
+        if (flowPatch.TryGetProperty("emergency", out var emergencyPatch)
+            && emergencyPatch.ValueKind == JsonValueKind.Object
+            && emergencyPatch.TryGetProperty("patch", out var emergencyPatchBody)
+            && emergencyPatchBody.ValueKind == JsonValueKind.Object
+            && emergencyPatchBody.TryGetProperty("params", out var emergencyParamsPatch))
+        {
+            if (emergencyParamsPatch.ValueKind == JsonValueKind.Object)
+            {
+                buffer.Add(
+                    new ParamsOverlay(
+                        emergencyParamsPatch,
+                        new ParamsSourceDescriptor(
+                            layer: "emergency",
+                            experimentLayer: null,
+                            experimentVariant: null,
+                            qosTier: null)));
+            }
+            else if (emergencyParamsPatch.ValueKind != JsonValueKind.Undefined)
+            {
+                throw new FormatException("emergency.patch.params must be a JSON object.");
+            }
+        }
+
+        overlays = buffer.Items;
+        overlayCount = buffer.Count;
+        return hasBase || overlayCount != 0;
+    }
+
+    private readonly struct ParamsOverlay
+    {
+        public JsonElement Object { get; }
+
+        public ParamsSourceDescriptor Source { get; }
+
+        public ParamsOverlay(JsonElement @object, ParamsSourceDescriptor source)
+        {
+            Object = @object;
+            Source = source;
+        }
+    }
+
+    private readonly struct ParamsSourceDescriptor
+    {
+        public static readonly ParamsSourceDescriptor Base = new(layer: "base", experimentLayer: null, experimentVariant: null, qosTier: null);
+
+        public string Layer { get; }
+
+        public string? ExperimentLayer { get; }
+
+        public string? ExperimentVariant { get; }
+
+        public string? QosTier { get; }
+
+        public ParamsSourceDescriptor(string layer, string? experimentLayer, string? experimentVariant, string? qosTier)
+        {
+            Layer = layer;
+            ExperimentLayer = experimentLayer;
+            ExperimentVariant = experimentVariant;
+            QosTier = qosTier;
+        }
+    }
+
+    private readonly struct ParamsSourceEntry
+    {
+        public string Path { get; }
+
+        public string Layer { get; }
+
+        public string? ExperimentLayer { get; }
+
+        public string? ExperimentVariant { get; }
+
+        public string? QosTier { get; }
+
+        public ParamsSourceEntry(string path, ParamsSourceDescriptor source)
+        {
+            Path = path;
+            Layer = source.Layer;
+            ExperimentLayer = source.ExperimentLayer;
+            ExperimentVariant = source.ExperimentVariant;
+            QosTier = source.QosTier;
+        }
+    }
+
+    private sealed class ParamsSourceEntryByPathComparer : IComparer<ParamsSourceEntry>
+    {
+        public static readonly ParamsSourceEntryByPathComparer Instance = new();
+
+        public int Compare(ParamsSourceEntry x, ParamsSourceEntry y)
+        {
+            return string.CompareOrdinal(x.Path, y.Path);
+        }
+    }
+
+    private struct ParamsOverlayBuffer
+    {
+        private ParamsOverlay[]? _items;
+        private int _count;
+
+        public int Count => _count;
+
+        public ParamsOverlay[] Items => _items ?? Array.Empty<ParamsOverlay>();
+
+        public ParamsOverlayBuffer(int initialCapacity)
+        {
+            _items = initialCapacity <= 0 ? null : new ParamsOverlay[initialCapacity];
+            _count = 0;
+        }
+
+        public void Add(ParamsOverlay item)
+        {
+            if (_items is null)
+            {
+                _items = new ParamsOverlay[4];
+            }
+            else if ((uint)_count >= (uint)_items.Length)
+            {
+                var newItems = new ParamsOverlay[_items.Length * 2];
+                Array.Copy(_items, 0, newItems, 0, _items.Length);
+                _items = newItems;
+            }
+
+            _items[_count] = item;
+            _count++;
+        }
+    }
+
+    private struct PropertyNameBuffer
+    {
+        private string[]? _items;
+        private int _count;
+
+        public int Count => _count;
+
+        public string[] Items => _items ?? Array.Empty<string>();
+
+        public PropertyNameBuffer(int initialCapacity)
+        {
+            _items = initialCapacity <= 0 ? null : new string[initialCapacity];
+            _count = 0;
+        }
+
+        public void Add(string name)
+        {
+            if (_count != 0)
+            {
+                var items = _items;
+                if (items is not null)
+                {
+                    for (var i = 0; i < _count; i++)
+                    {
+                        if (string.Equals(items[i], name, StringComparison.Ordinal))
+                        {
+                            return;
+                        }
+                    }
+                }
+            }
+
+            if (_items is null)
+            {
+                _items = new string[4];
+            }
+            else if ((uint)_count >= (uint)_items.Length)
+            {
+                var newItems = new string[_items.Length * 2];
+                Array.Copy(_items, 0, newItems, 0, _items.Length);
+                _items = newItems;
+            }
+
+            _items[_count] = name;
+            _count++;
+        }
+    }
+
     private static void WriteSortedVariants(Utf8JsonWriter writer, IReadOnlyDictionary<string, string>? variants)
     {
         if (variants is null)
@@ -850,6 +1407,7 @@ public static class ToolingJsonV1
         var decisionKinds = moduleCount == 0 ? Array.Empty<byte>() : new byte[moduleCount];
         var decisionCodes = moduleCount == 0 ? Array.Empty<string>() : new string[moduleCount];
         var gateDecisionCodes = moduleCount == 0 ? Array.Empty<string?>() : new string?[moduleCount];
+        var gateReasonCodes = moduleCount == 0 ? Array.Empty<string?>() : new string?[moduleCount];
         var gateSelectorNames = moduleCount == 0 ? Array.Empty<string?>() : new string?[moduleCount];
 
         var candidates = moduleCount == 0 ? Array.Empty<StageModuleCandidate>() : new StageModuleCandidate[moduleCount];
@@ -872,6 +1430,7 @@ public static class ToolingJsonV1
             {
                 var gateDecision = EvaluateGateDecision(module.Gate, requestOptions, selectorRegistry, ref selectorFlowContext, out var gateSelectorName);
                 gateDecisionCodes[i] = gateDecision.Code;
+                gateReasonCodes[i] = gateDecision.ReasonCode;
                 gateSelectorNames[i] = gateSelectorName;
 
                 if (!gateDecision.Allowed)
@@ -973,6 +1532,15 @@ public static class ToolingJsonV1
                 writer.WriteString("gate_decision_code", gateDecisionCodes[i]);
             }
 
+            if (string.IsNullOrEmpty(gateReasonCodes[i]))
+            {
+                writer.WriteNull("gate_reason_code");
+            }
+            else
+            {
+                writer.WriteString("gate_reason_code", gateReasonCodes[i]);
+            }
+
             if (gateSelectorNames[i] is null)
             {
                 writer.WriteNull("gate_selector_name");
@@ -1000,6 +1568,7 @@ public static class ToolingJsonV1
             var module = shadowModules[i];
 
             string? shadowGateDecisionCode = null;
+            string? shadowGateReasonCode = null;
             string? shadowGateSelectorName = null;
 
             string kind;
@@ -1016,6 +1585,7 @@ public static class ToolingJsonV1
                 {
                     var gateDecision = EvaluateGateDecision(module.Gate, requestOptions, selectorRegistry, ref selectorFlowContext, out var gateSelectorName);
                     shadowGateDecisionCode = gateDecision.Code;
+                    shadowGateReasonCode = gateDecision.ReasonCode;
                     shadowGateSelectorName = gateSelectorName;
 
                     if (!gateDecision.Allowed)
@@ -1069,6 +1639,15 @@ public static class ToolingJsonV1
                 writer.WriteString("gate_decision_code", shadowGateDecisionCode);
             }
 
+            if (string.IsNullOrEmpty(shadowGateReasonCode))
+            {
+                writer.WriteNull("gate_reason_code");
+            }
+            else
+            {
+                writer.WriteString("gate_reason_code", shadowGateReasonCode);
+            }
+
             if (shadowGateSelectorName is null)
             {
                 writer.WriteNull("gate_selector_name");
@@ -1094,9 +1673,11 @@ public static class ToolingJsonV1
         ref FlowContext? selectorFlowContext,
         out string? gateSelectorName)
     {
+        Gate? gate;
+
         if (selectorRegistry is not null)
         {
-            if (!GateJsonV1.TryParseOptional(gateElement, "$.gate", selectorRegistry, out var gate, out var finding))
+            if (!GateJsonV1.TryParseOptional(gateElement, "$.gate", selectorRegistry, out gate, out var finding))
             {
                 throw new FormatException(finding.Message);
             }
@@ -1107,10 +1688,10 @@ public static class ToolingJsonV1
                 return GateDecision.AllowedDecision;
             }
 
-            if (gate is SelectorGate selectorGate)
-            {
-                gateSelectorName = selectorGate.SelectorName;
+            gateSelectorName = gate is SelectorGate selectorGate ? selectorGate.SelectorName : null;
 
+            if (GateContainsSelectorGate(gate))
+            {
                 selectorFlowContext ??= new FlowContext(
                     services: EmptyServiceProvider.Instance,
                     cancellationToken: System.Threading.CancellationToken.None,
@@ -1120,28 +1701,28 @@ public static class ToolingJsonV1
                 return GateEvaluator.Evaluate(gate, selectorFlowContext, selectorRegistry);
             }
 
-            gateSelectorName = null;
             return EvaluateNonSelectorGateDecision(gate, requestOptions);
         }
 
-        if (!GateJsonV1.TryParseOptional(gateElement, "$.gate", out var gateWithoutRegistry, out var findingWithoutRegistry))
+        if (!GateJsonV1.TryParseOptional(gateElement, "$.gate", out gate, out var findingWithoutRegistry))
         {
             throw new FormatException(findingWithoutRegistry.Message);
         }
 
-        if (gateWithoutRegistry is null)
+        if (gate is null)
         {
             gateSelectorName = null;
             return GateDecision.AllowedDecision;
         }
 
-        if (gateWithoutRegistry is SelectorGate)
+        gateSelectorName = gate is SelectorGate selectorGateWithoutRegistry ? selectorGateWithoutRegistry.SelectorName : null;
+
+        if (GateContainsSelectorGate(gate))
         {
             throw new InvalidOperationException("SelectorRegistry is required to evaluate SelectorGate.");
         }
 
-        gateSelectorName = null;
-        return EvaluateNonSelectorGateDecision(gateWithoutRegistry, requestOptions);
+        return EvaluateNonSelectorGateDecision(gate, requestOptions);
     }
 
     private static GateDecision EvaluateNonSelectorGateDecision(Gate gate, FlowRequestOptions requestOptions)
@@ -1155,6 +1736,49 @@ public static class ToolingJsonV1
             flowContext: null);
 
         return GateEvaluator.Evaluate(gate, in evalContext);
+    }
+
+    private static bool GateContainsSelectorGate(Gate gate)
+    {
+        if (gate is SelectorGate)
+        {
+            return true;
+        }
+
+        if (gate is AllGate all)
+        {
+            var children = all.Children.Span;
+            for (var i = 0; i < children.Length; i++)
+            {
+                if (GateContainsSelectorGate(children[i]))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if (gate is AnyGate any)
+        {
+            var children = any.Children.Span;
+            for (var i = 0; i < children.Length; i++)
+            {
+                if (GateContainsSelectorGate(children[i]))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if (gate is NotGate not)
+        {
+            return GateContainsSelectorGate(not.Child);
+        }
+
+        return false;
     }
 
     private static readonly DateTimeOffset SelectorFlowContextDeadline =

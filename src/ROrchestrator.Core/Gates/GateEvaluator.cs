@@ -18,9 +18,7 @@ public static class GateEvaluator
 
         var context = new GateEvaluationContext(new VariantSet(variants));
 
-        return EvaluateAllowed(gate, in context)
-            ? GateDecision.AllowedDecision
-            : GateDecision.DeniedDecision;
+        return EvaluateDecision(gate, in context);
     }
 
     public static GateDecision Evaluate(Gate gate, VariantSet variants)
@@ -32,9 +30,7 @@ public static class GateEvaluator
 
         var context = new GateEvaluationContext(variants);
 
-        return EvaluateAllowed(gate, in context)
-            ? GateDecision.AllowedDecision
-            : GateDecision.DeniedDecision;
+        return EvaluateDecision(gate, in context);
     }
 
     public static GateDecision Evaluate(Gate gate, in GateEvaluationContext context)
@@ -44,9 +40,7 @@ public static class GateEvaluator
             throw new ArgumentNullException(nameof(gate));
         }
 
-        return EvaluateAllowed(gate, in context)
-            ? GateDecision.AllowedDecision
-            : GateDecision.DeniedDecision;
+        return EvaluateDecision(gate, in context);
     }
 
     public static GateDecision Evaluate(Gate gate, FlowContext flowContext)
@@ -68,9 +62,7 @@ public static class GateEvaluator
             selectorRegistry: null,
             flowContext: flowContext);
 
-        return EvaluateAllowed(gate, in evalContext)
-            ? GateDecision.AllowedDecision
-            : GateDecision.DeniedDecision;
+        return EvaluateDecision(gate, in evalContext);
     }
 
     public static GateDecision Evaluate(Gate gate, FlowContext flowContext, SelectorRegistry selectorRegistry)
@@ -97,12 +89,10 @@ public static class GateEvaluator
             selectorRegistry: selectorRegistry,
             flowContext: flowContext);
 
-        return EvaluateAllowed(gate, in evalContext)
-            ? GateDecision.AllowedDecision
-            : GateDecision.DeniedDecision;
+        return EvaluateDecision(gate, in evalContext);
     }
 
-    private static bool EvaluateAllowed(Gate gate, in GateEvaluationContext context)
+    private static GateDecision EvaluateDecision(Gate gate, in GateEvaluationContext context)
     {
         if (gate is ExperimentGate experiment)
         {
@@ -110,7 +100,7 @@ public static class GateEvaluator
 
             if (!variants.TryGetValue(experiment.Layer, out var currentVariant))
             {
-                return false;
+                return GateDecision.DeniedMissingVariantDecision;
             }
 
             var allowedVariants = experiment.Variants.Span;
@@ -118,22 +108,24 @@ public static class GateEvaluator
             {
                 if (currentVariant == allowedVariants[i])
                 {
-                    return true;
+                    return GateDecision.AllowedVariantMatchDecision;
                 }
             }
 
-            return false;
+            return GateDecision.DeniedVariantMismatchDecision;
         }
 
         if (gate is RolloutGate rollout)
         {
             if (string.IsNullOrEmpty(context.UserId))
             {
-                return false;
+                return GateDecision.DeniedMissingUserIdDecision;
             }
 
             var bucket = ComputeRolloutBucket(context.UserId, rollout.Salt);
-            return bucket < rollout.Percent;
+            return bucket < rollout.Percent
+                ? GateDecision.AllowedRolloutTrueDecision
+                : GateDecision.DeniedRolloutFalseDecision;
         }
 
         if (gate is RequestAttrGate request)
@@ -141,7 +133,7 @@ public static class GateEvaluator
             var requestAttributes = context.RequestAttributes;
             if (requestAttributes is null || !requestAttributes.TryGetValue(request.Field, out var value))
             {
-                return false;
+                return GateDecision.DeniedMissingRequestAttrDecision;
             }
 
             var allowedValues = request.Values.Span;
@@ -149,11 +141,11 @@ public static class GateEvaluator
             {
                 if (string.Equals(value, allowedValues[i], StringComparison.Ordinal))
                 {
-                    return true;
+                    return GateDecision.AllowedRequestAttrMatchDecision;
                 }
             }
 
-            return false;
+            return GateDecision.DeniedRequestAttrMismatchDecision;
         }
 
         if (gate is AllGate all)
@@ -161,13 +153,14 @@ public static class GateEvaluator
             var children = all.Children.Span;
             for (var i = 0; i < children.Length; i++)
             {
-                if (!EvaluateAllowed(children[i], in context))
+                var childDecision = EvaluateDecision(children[i], in context);
+                if (!childDecision.Allowed)
                 {
-                    return false;
+                    return childDecision;
                 }
             }
 
-            return true;
+            return GateDecision.AllowedAllDecision;
         }
 
         if (gate is AnyGate any)
@@ -175,18 +168,22 @@ public static class GateEvaluator
             var children = any.Children.Span;
             for (var i = 0; i < children.Length; i++)
             {
-                if (EvaluateAllowed(children[i], in context))
+                var childDecision = EvaluateDecision(children[i], in context);
+                if (childDecision.Allowed)
                 {
-                    return true;
+                    return childDecision;
                 }
             }
 
-            return false;
+            return GateDecision.DeniedAnyDecision;
         }
 
         if (gate is NotGate not)
         {
-            return !EvaluateAllowed(not.Child, in context);
+            var childDecision = EvaluateDecision(not.Child, in context);
+            return childDecision.Allowed
+                ? GateDecision.DeniedNotDecision
+                : GateDecision.AllowedNotDecision;
         }
 
         if (gate is SelectorGate selectorGate)
@@ -208,7 +205,9 @@ public static class GateEvaluator
                 throw new InvalidOperationException($"Selector '{selectorGate.SelectorName}' is not registered.");
             }
 
-            return selector(flowContext);
+            return selector(flowContext)
+                ? GateDecision.AllowedSelectorTrueDecision
+                : GateDecision.DeniedSelectorFalseDecision;
         }
 
         throw new InvalidOperationException($"Unsupported gate type: '{gate.GetType()}'.");

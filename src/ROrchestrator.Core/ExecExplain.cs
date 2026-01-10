@@ -144,6 +144,8 @@ public readonly struct ExecExplainStageModule
 
     public string GateDecisionCode { get; }
 
+    public string GateReasonCode { get; }
+
     public string GateSelectorName { get; }
 
     public bool IsShadow { get; }
@@ -165,6 +167,7 @@ public readonly struct ExecExplainStageModule
         OutcomeKind outcomeKind,
         string outcomeCode,
         string gateDecisionCode,
+        string gateReasonCode,
         string gateSelectorName,
         bool isShadow,
         ushort shadowSampleBps,
@@ -181,6 +184,7 @@ public readonly struct ExecExplainStageModule
         OutcomeKind = outcomeKind;
         OutcomeCode = outcomeCode;
         GateDecisionCode = gateDecisionCode;
+        GateReasonCode = gateReasonCode;
         GateSelectorName = gateSelectorName;
         IsShadow = isShadow;
         ShadowSampleBps = shadowSampleBps;

@@ -216,6 +216,15 @@ public static class ExecExplainJsonV2
             writer.WriteString("gate_decision_code", stageModule.GateDecisionCode);
         }
 
+        if (string.IsNullOrEmpty(stageModule.GateReasonCode))
+        {
+            writer.WriteNull("gate_reason_code");
+        }
+        else
+        {
+            writer.WriteString("gate_reason_code", stageModule.GateReasonCode);
+        }
+
         if (string.IsNullOrEmpty(stageModule.GateSelectorName))
         {
             writer.WriteNull("gate_selector_name");
@@ -345,4 +354,3 @@ public static class ExecExplainJsonV2
         }
     }
 }
-
