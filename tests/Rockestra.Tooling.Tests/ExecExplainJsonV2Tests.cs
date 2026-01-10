@@ -25,6 +25,7 @@ public sealed class ExecExplainJsonV2Tests
             .Define<int, int>(flowName)
             .Stage(
                 "s1",
+                contract => contract.AllowDynamicModules(),
                 stage =>
                     stage
                         .Step("compute", moduleType: "test.compute")
@@ -97,6 +98,7 @@ public sealed class ExecExplainJsonV2Tests
             .Define<int, int>(flowName)
             .Stage(
                 "s1",
+                contract => contract.AllowDynamicModules(),
                 stage =>
                     stage
                         .Step("compute", moduleType: "test.compute")

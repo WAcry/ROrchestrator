@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Reflection;
 using Rockestra.Core.Gates;
@@ -36,6 +37,10 @@ public sealed class ConfigValidator
     private const string CodeStagesNotObject = "CFG_STAGES_NOT_OBJECT";
     private const string CodeStagePatchNotObject = "CFG_STAGE_PATCH_NOT_OBJECT";
     private const string CodeStageNotInBlueprint = "CFG_STAGE_NOT_IN_BLUEPRINT";
+    private const string CodeStageDynamicModulesForbidden = "CFG_STAGE_DYNAMIC_MODULES_FORBIDDEN";
+    private const string CodeStageModuleTypeForbidden = "CFG_STAGE_MODULE_TYPE_FORBIDDEN";
+    private const string CodeStageModuleCountWarnExceeded = "CFG_STAGE_MODULE_COUNT_WARN_EXCEEDED";
+    private const string CodeStageModuleCountHardExceeded = "CFG_STAGE_MODULE_COUNT_HARD_EXCEEDED";
     private const string CodeParamsBindFailed = "CFG_PARAMS_BIND_FAILED";
     private const string CodeParamsUnknownField = "CFG_PARAMS_UNKNOWN_FIELD";
     private const string CodeModulesNotArray = "CFG_MODULES_NOT_ARRAY";
@@ -188,24 +193,26 @@ public sealed class ConfigValidator
             }
             else if (hasFlows && flowsElement.ValueKind == JsonValueKind.Object)
             {
-                foreach (var flowProperty in flowsElement.EnumerateObject())
-                {
-                    var flowName = flowProperty.Name;
-                    string[] blueprintStageNameSet = Array.Empty<string>();
-                    string[] blueprintNodeNameSet = Array.Empty<string>();
-                    var flowRegistered = false;
-                    Type? patchType = null;
-                    ExperimentLayerOwnershipContract? experimentLayerOwnershipContract = null;
-
-                    if (flowName.Length != 0)
+                    foreach (var flowProperty in flowsElement.EnumerateObject())
                     {
-                        flowRegistered = _flowRegistry.TryGetStageNameSetAndPatchType(
-                            flowName,
-                            out blueprintStageNameSet,
-                            out blueprintNodeNameSet,
-                            out patchType,
-                            out experimentLayerOwnershipContract);
-                    }
+                        var flowName = flowProperty.Name;
+                        string[] blueprintStageNameSet = Array.Empty<string>();
+                        string[] blueprintNodeNameSet = Array.Empty<string>();
+                        StageContractEntry[] blueprintStageContracts = Array.Empty<StageContractEntry>();
+                        var flowRegistered = false;
+                        Type? patchType = null;
+                        ExperimentLayerOwnershipContract? experimentLayerOwnershipContract = null;
+
+                         if (flowName.Length != 0)
+                         {
+                             flowRegistered = _flowRegistry.TryGetStageNameSetAndPatchType(
+                                 flowName,
+                                 out blueprintStageNameSet,
+                                 out blueprintNodeNameSet,
+                                 out blueprintStageContracts,
+                                 out patchType,
+                                 out experimentLayerOwnershipContract);
+                         }
 
                     if (!flowRegistered)
                     {
@@ -243,9 +250,9 @@ public sealed class ConfigValidator
                         out var hasEmergencyPatch,
                         out var emergencyPatch);
 
-                    if (flowRegistered)
+                    if (flowRegistered && hasParamsPatch)
                     {
-                        ValidateFlowParamsPatch(flowName, hasParamsPatch, paramsPatch, patchType, ref findings);
+                        ValidateParamsPatchAtPath(string.Concat("$.flows.", flowName), paramsPatch, patchType, ref findings);
                     }
 
                     if (hasStagesPatch && stagesPatch.ValueKind != JsonValueKind.Object)
@@ -259,7 +266,15 @@ public sealed class ConfigValidator
                     }
                     else if (flowRegistered && stagesPatch.ValueKind == JsonValueKind.Object)
                     {
-                        ValidateStagePatches(flowName, stagesPatch, blueprintStageNameSet, blueprintNodeNameSet, _moduleCatalog, _selectorRegistry, ref findings);
+                        ValidateStagePatches(
+                            flowName,
+                            stagesPatch,
+                            blueprintStageNameSet,
+                            blueprintStageContracts,
+                            blueprintNodeNameSet,
+                            _moduleCatalog,
+                            _selectorRegistry,
+                            ref findings);
                     }
 
                     ValidateEmergency(
@@ -268,6 +283,7 @@ public sealed class ConfigValidator
                         emergencyPatch,
                         hasStagesPatch,
                         stagesPatch,
+                        patchType,
                         blueprintStageNameSet,
                         blueprintNodeNameSet,
                         flowRegistered,
@@ -290,6 +306,7 @@ public sealed class ConfigValidator
                         experimentsPatch,
                         patchType,
                         blueprintStageNameSet,
+                        blueprintStageContracts,
                         blueprintNodeNameSet,
                         _moduleCatalog,
                         _selectorRegistry,
@@ -530,6 +547,7 @@ public sealed class ConfigValidator
         JsonElement experimentsPatch,
         Type? patchType,
         string[] blueprintStageNameSet,
+        StageContractEntry[] blueprintStageContracts,
         string[] blueprintNodeNameSet,
         ModuleCatalog moduleCatalog,
         SelectorRegistry selectorRegistry,
@@ -794,7 +812,16 @@ public sealed class ConfigValidator
 
             if (flowRegistered)
             {
-                ValidateExperimentPatch(patchFlowName, patchType, blueprintStageNameSet, blueprintNodeNameSet, moduleCatalog, selectorRegistry, patch, ref findings);
+                ValidateExperimentPatch(
+                    patchFlowName,
+                    patchType,
+                    blueprintStageNameSet,
+                    blueprintStageContracts,
+                    blueprintNodeNameSet,
+                    moduleCatalog,
+                    selectorRegistry,
+                    patch,
+                    ref findings);
             }
 
             index++;
@@ -948,6 +975,7 @@ public sealed class ConfigValidator
         JsonElement emergencyPatch,
         bool hasBaseStagesPatch,
         JsonElement baseStagesPatch,
+        Type? patchType,
         string[] blueprintStageNameSet,
         string[] blueprintNodeNameSet,
         bool flowRegistered,
@@ -1079,6 +1107,7 @@ public sealed class ConfigValidator
             patch,
             hasBaseStagesPatch,
             baseStagesPatch,
+            patchType,
             blueprintStageNameSet,
             blueprintNodeNameSet,
             flowRegistered,
@@ -1300,30 +1329,13 @@ public sealed class ConfigValidator
             return;
         }
 
-        if (paramsPatch.ValueKind == JsonValueKind.Object
-            && patchType != typeof(JsonElement)
-            && patchType != typeof(JsonDocument)
-            && !typeof(System.Collections.IDictionary).IsAssignableFrom(patchType))
-        {
-            var knownFieldNameSet = BuildJsonPropertyNameSet(patchType);
-
-            foreach (var property in paramsPatch.EnumerateObject())
-            {
-                var name = property.Name;
-
-                if (NameSetContains(knownFieldNameSet, name))
-                {
-                    continue;
-                }
-
-                findings.Add(
-                    new ValidationFinding(
-                        ValidationSeverity.Error,
-                        code: CodeParamsUnknownField,
-                        path: string.Concat(paramsPath, ".", name),
-                        message: string.Concat("Unknown params field: ", name)));
-            }
-        }
+        ValidateUnknownFieldsRecursive(
+            paramsPath,
+            paramsPatch,
+            patchType,
+            code: CodeParamsUnknownField,
+            messagePrefix: "Unknown params field: ",
+            ref findings);
 
         if (paramsPatch.ValueKind == JsonValueKind.Null)
         {
@@ -1941,6 +1953,7 @@ public sealed class ConfigValidator
         JsonElement patch,
         bool hasBaseStagesPatch,
         JsonElement baseStagesPatch,
+        Type? patchType,
         string[] blueprintStageNameSet,
         string[] blueprintNodeNameSet,
         bool flowRegistered,
@@ -1948,6 +1961,9 @@ public sealed class ConfigValidator
     {
         var hasStagesPatch = false;
         JsonElement stagesPatch = default;
+
+        var hasParamsPatch = false;
+        JsonElement paramsPatch = default;
 
         foreach (var field in patch.EnumerateObject())
         {
@@ -1958,6 +1974,13 @@ public sealed class ConfigValidator
                 continue;
             }
 
+            if (field.NameEquals("params"))
+            {
+                hasParamsPatch = true;
+                paramsPatch = field.Value;
+                continue;
+            }
+
             var fieldName = field.Name;
             findings.Add(
                 new ValidationFinding(
@@ -1965,6 +1988,11 @@ public sealed class ConfigValidator
                     code: CodeEmergencyOverrideForbidden,
                     path: string.Concat(emergencyPathPrefix, ".", fieldName),
                     message: string.Concat("emergency.patch must not override forbidden field: ", fieldName)));
+        }
+
+        if (hasParamsPatch && flowRegistered)
+        {
+            ValidateParamsPatchAtPath(emergencyPathPrefix, paramsPatch, patchType, ref findings);
         }
 
         if (!hasStagesPatch)
@@ -2553,6 +2581,7 @@ public sealed class ConfigValidator
         string patchFlowName,
         Type? patchType,
         string[] blueprintStageNameSet,
+        StageContractEntry[] blueprintStageContracts,
         string[] blueprintNodeNameSet,
         ModuleCatalog moduleCatalog,
         SelectorRegistry selectorRegistry,
@@ -2576,7 +2605,10 @@ public sealed class ConfigValidator
             out _,
             out _);
 
-        ValidateFlowParamsPatch(patchFlowName, hasParamsPatch, paramsPatch, patchType, ref patchFindings);
+        if (hasParamsPatch)
+        {
+            ValidateParamsPatchAtPath(string.Concat("$.flows.", patchFlowName), paramsPatch, patchType, ref patchFindings);
+        }
 
         if (hasStagesPatch && stagesPatch.ValueKind != JsonValueKind.Object)
         {
@@ -2589,7 +2621,7 @@ public sealed class ConfigValidator
         }
         else if (stagesPatch.ValueKind == JsonValueKind.Object)
         {
-            ValidateStagePatches(patchFlowName, stagesPatch, blueprintStageNameSet, blueprintNodeNameSet, moduleCatalog, selectorRegistry, ref patchFindings);
+            ValidateStagePatches(patchFlowName, stagesPatch, blueprintStageNameSet, blueprintStageContracts, blueprintNodeNameSet, moduleCatalog, selectorRegistry, ref patchFindings);
         }
 
         ValidateExperiments(
@@ -2598,6 +2630,7 @@ public sealed class ConfigValidator
             experimentsPatch,
             patchType,
             blueprintStageNameSet,
+            blueprintStageContracts,
             blueprintNodeNameSet,
             moduleCatalog,
             selectorRegistry,
@@ -2618,118 +2651,11 @@ public sealed class ConfigValidator
         }
     }
 
-    private static void ValidateFlowParamsPatch(
-        string flowName,
-        bool hasParamsPatch,
-        JsonElement paramsPatch,
-        Type? patchType,
-        ref FindingBuffer findings)
-    {
-        if (!hasParamsPatch)
-        {
-            return;
-        }
-
-        var paramsPath = string.Concat("$.flows.", flowName, ".params");
-
-        if (patchType is null)
-        {
-            findings.Add(
-                new ValidationFinding(
-                    ValidationSeverity.Error,
-                    code: CodeParamsBindFailed,
-                    path: paramsPath,
-                    message: "params is not allowed for this flow."));
-            return;
-        }
-
-        if (paramsPatch.ValueKind == JsonValueKind.Object
-            && patchType != typeof(JsonElement)
-            && patchType != typeof(JsonDocument)
-            && !typeof(System.Collections.IDictionary).IsAssignableFrom(patchType))
-        {
-            var knownFieldNameSet = BuildJsonPropertyNameSet(patchType);
-
-            foreach (var property in paramsPatch.EnumerateObject())
-            {
-                var name = property.Name;
-
-                if (NameSetContains(knownFieldNameSet, name))
-                {
-                    continue;
-                }
-
-                findings.Add(
-                    new ValidationFinding(
-                        ValidationSeverity.Error,
-                        code: CodeParamsUnknownField,
-                        path: string.Concat(paramsPath, ".", name),
-                        message: string.Concat("Unknown params field: ", name)));
-            }
-        }
-
-        if (paramsPatch.ValueKind == JsonValueKind.Null)
-        {
-            findings.Add(
-                new ValidationFinding(
-                    ValidationSeverity.Error,
-                    code: CodeParamsBindFailed,
-                    path: paramsPath,
-                    message: "params must not be null."));
-            return;
-        }
-
-        try
-        {
-            _ = paramsPatch.Deserialize(patchType);
-        }
-        catch (JsonException ex)
-        {
-            var path = BuildParamsBindFailedPath(paramsPath, ex.Path);
-
-            findings.Add(
-                new ValidationFinding(
-                    ValidationSeverity.Error,
-                    code: CodeParamsBindFailed,
-                    path: path,
-                    message: ex.Message));
-        }
-        catch (NotSupportedException ex)
-        {
-            var message = ex.Message;
-            if (string.IsNullOrEmpty(message))
-            {
-                message = "params binding is not supported.";
-            }
-
-            findings.Add(
-                new ValidationFinding(
-                    ValidationSeverity.Error,
-                    code: CodeParamsBindFailed,
-                    path: paramsPath,
-                    message: message));
-        }
-        catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
-        {
-            var message = ex.Message;
-            if (string.IsNullOrEmpty(message))
-            {
-                message = "params binding failed.";
-            }
-
-            findings.Add(
-                new ValidationFinding(
-                    ValidationSeverity.Error,
-                    code: CodeParamsBindFailed,
-                    path: paramsPath,
-                    message: message));
-        }
-    }
-
     private static void ValidateStagePatches(
         string flowName,
         JsonElement stagesPatch,
         string[] blueprintStageNameSet,
+        StageContractEntry[] blueprintStageContracts,
         string[] blueprintNodeNameSet,
         ModuleCatalog moduleCatalog,
         SelectorRegistry selectorRegistry,
@@ -2768,7 +2694,17 @@ public sealed class ConfigValidator
                 continue;
             }
 
-            ValidateStagePatch(flowName, stageName, stageProperty.Value, moduleCatalog, selectorRegistry, blueprintNodeNameSet, ref findings, ref moduleIdFirstOccurrenceMap);
+            var stageContract = FindStageContract(blueprintStageContracts, stageName);
+            ValidateStagePatch(
+                flowName,
+                stageName,
+                stageProperty.Value,
+                stageContract,
+                moduleCatalog,
+                selectorRegistry,
+                blueprintNodeNameSet,
+                ref findings,
+                ref moduleIdFirstOccurrenceMap);
         }
     }
 
@@ -2776,6 +2712,7 @@ public sealed class ConfigValidator
         string flowName,
         string stageName,
         JsonElement stagePatch,
+        StageContract stageContract,
         ModuleCatalog moduleCatalog,
         SelectorRegistry selectorRegistry,
         string[] blueprintNodeNameSet,
@@ -2829,6 +2766,17 @@ public sealed class ConfigValidator
 
         var modulesPathPrefix = string.Concat(stagePathPrefix, ".modules");
 
+        if (!stageContract.AllowsDynamicModules)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeStageDynamicModulesForbidden,
+                    path: modulesPathPrefix,
+                    message: string.Concat("Dynamic modules are not allowed for stage: ", stageName)));
+            return;
+        }
+
         if (modulesPatch.ValueKind != JsonValueKind.Array)
         {
             findings.Add(
@@ -2847,12 +2795,46 @@ public sealed class ConfigValidator
             stageName,
             modulesPathPrefix,
             modulesPatch,
+            stageContract,
             moduleCatalog,
             selectorRegistry,
             blueprintNodeNameSet,
             ref findings,
             ref enabledModuleCount,
             ref moduleIdFirstOccurrenceMap);
+
+        var maxModulesHard = stageContract.MaxModulesHard;
+        if (maxModulesHard != 0 && enabledModuleCount > maxModulesHard)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeStageModuleCountHardExceeded,
+                    path: modulesPathPrefix,
+                    message: string.Concat(
+                        "enabledModules=",
+                        enabledModuleCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        " exceeds stage contract hard limit=",
+                        maxModulesHard.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        ".")));
+            return;
+        }
+
+        var maxModulesWarn = stageContract.MaxModulesWarn;
+        if (maxModulesWarn != 0 && enabledModuleCount > maxModulesWarn)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Warn,
+                    code: CodeStageModuleCountWarnExceeded,
+                    path: modulesPathPrefix,
+                    message: string.Concat(
+                        "enabledModules=",
+                        enabledModuleCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        " exceeds stage contract warn limit=",
+                        maxModulesWarn.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        ".")));
+        }
 
         if (hasValidFanoutMaxValue)
         {
@@ -2956,6 +2938,7 @@ public sealed class ConfigValidator
         string stageName,
         string modulesPathPrefix,
         JsonElement modulesPatch,
+        StageContract stageContract,
         ModuleCatalog moduleCatalog,
         SelectorRegistry selectorRegistry,
         string[] blueprintNodeNameSet,
@@ -3273,6 +3256,16 @@ public sealed class ConfigValidator
             }
             else
             {
+                if (!stageContract.IsModuleTypeAllowed(moduleUse))
+                {
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Error,
+                            code: CodeStageModuleTypeForbidden,
+                            path: string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].use"),
+                            message: string.Concat("Module type is not allowed by stage contract: ", moduleUse)));
+                }
+
                 if (!moduleCatalog.TryGetSignature(moduleUse, out var argsType, out _, out var argsValidator))
                 {
                     findings.Add(
@@ -3302,27 +3295,13 @@ public sealed class ConfigValidator
             }
             else if (moduleArgsType is not null)
             {
-                if (moduleWith.ValueKind == JsonValueKind.Object && ShouldValidateUnknownFields(moduleArgsType))
-                {
-                    var knownFieldNameSet = BuildJsonPropertyNameSet(moduleArgsType);
-
-                    foreach (var property in moduleWith.EnumerateObject())
-                    {
-                        var name = property.Name;
-
-                        if (NameSetContains(knownFieldNameSet, name))
-                        {
-                            continue;
-                        }
-
-                        findings.Add(
-                            new ValidationFinding(
-                                ValidationSeverity.Error,
-                                code: CodeModuleArgsUnknownField,
-                                path: string.Concat(moduleWithPath, ".", name),
-                                message: string.Concat("Unknown module args field: ", name)));
-                    }
-                }
+                ValidateUnknownFieldsRecursive(
+                    moduleWithPath,
+                    moduleWith,
+                    moduleArgsType,
+                    code: CodeModuleArgsUnknownField,
+                    messagePrefix: "Unknown module args field: ",
+                    ref findings);
 
                 object? moduleArgs = null;
 
@@ -3509,7 +3488,7 @@ public sealed class ConfigValidator
                 }
             }
 
-            if (!hasModuleEnabled || moduleEnabled)
+            if ((!hasModuleEnabled || moduleEnabled) && !hasModuleShadow)
             {
                 enabledModuleCount++;
             }
@@ -3561,6 +3540,11 @@ public sealed class ConfigValidator
         foreach (var modulePatch in modulesPatch.EnumerateArray())
         {
             if (modulePatch.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (modulePatch.TryGetProperty("shadow", out _))
             {
                 continue;
             }
@@ -3721,76 +3705,414 @@ public sealed class ConfigValidator
         return false;
     }
 
-    private static string[] BuildJsonPropertyNameSet(Type type)
+    private static StageContract FindStageContract(StageContractEntry[] stageContracts, string stageName)
     {
-        var properties = type.GetProperties(BindingFlags.Instance | BindingFlags.Public);
-        if (properties.Length == 0)
+        if (stageContracts is null)
         {
-            return Array.Empty<string>();
+            throw new ArgumentNullException(nameof(stageContracts));
         }
 
-        var buffer = new string[properties.Length];
-        var count = 0;
-
-        for (var i = 0; i < properties.Length; i++)
+        if (string.IsNullOrEmpty(stageName))
         {
-            var property = properties[i];
+            throw new ArgumentException("StageName must be non-empty.", nameof(stageName));
+        }
 
-            if (property.GetIndexParameters().Length != 0)
+        for (var i = 0; i < stageContracts.Length; i++)
+        {
+            if (string.Equals(stageContracts[i].StageName, stageName, StringComparison.Ordinal))
             {
-                continue;
+                return stageContracts[i].Contract;
             }
+        }
 
-            var ignoreAttribute = property.GetCustomAttribute<JsonIgnoreAttribute>(inherit: true);
-            if (ignoreAttribute is not null && ignoreAttribute.Condition == JsonIgnoreCondition.Always)
+        return StageContract.Default;
+    }
+
+    private static void ValidateUnknownFieldsRecursive(
+        string pathPrefix,
+        JsonElement patch,
+        Type targetType,
+        string code,
+        string messagePrefix,
+        ref FindingBuffer findings)
+    {
+        if (string.IsNullOrEmpty(pathPrefix))
+        {
+            throw new ArgumentException("PathPrefix must be non-empty.", nameof(pathPrefix));
+        }
+
+        if (string.IsNullOrEmpty(code))
+        {
+            throw new ArgumentException("Code must be non-empty.", nameof(code));
+        }
+
+        if (targetType is null)
+        {
+            throw new ArgumentNullException(nameof(targetType));
+        }
+
+        if (patch.ValueKind != JsonValueKind.Object && patch.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        var rootType = UnwrapNullableType(targetType);
+        if (IsOpaqueType(rootType))
+        {
+            return;
+        }
+
+        var cache = new Dictionary<Type, TypeMetadata>();
+
+        ValidateUnknownFieldsRecursiveCore(
+            pathPrefix,
+            patch,
+            targetType,
+            code,
+            messagePrefix,
+            ref findings,
+            cache);
+    }
+
+    private static void ValidateUnknownFieldsRecursiveCore(
+        string currentPath,
+        JsonElement element,
+        Type targetType,
+        string code,
+        string messagePrefix,
+        ref FindingBuffer findings,
+        Dictionary<Type, TypeMetadata> typeMetadataCache)
+    {
+        var type = UnwrapNullableType(targetType);
+
+        if (IsOpaqueType(type) || IsLeafType(type))
+        {
+            return;
+        }
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var metadata = GetTypeMetadata(type, typeMetadataCache);
+
+            foreach (var property in element.EnumerateObject())
             {
-                continue;
-            }
+                var name = property.Name;
 
-            var jsonNameAttribute = property.GetCustomAttribute<JsonPropertyNameAttribute>(inherit: true);
-            var name = jsonNameAttribute is null ? property.Name : jsonNameAttribute.Name;
-
-            if (string.IsNullOrEmpty(name))
-            {
-                continue;
-            }
-
-            if (count != 0)
-            {
-                var found = false;
-
-                for (var j = 0; j < count; j++)
+                if (!TryGetPropertyType(metadata, name, out var propertyType))
                 {
-                    if (string.Equals(buffer[j], name, StringComparison.Ordinal))
+                    if (!metadata.AllowsUnmappedMembers)
                     {
-                        found = true;
-                        break;
+                        findings.Add(
+                            new ValidationFinding(
+                                ValidationSeverity.Error,
+                                code: code,
+                                path: string.Concat(currentPath, ".", name),
+                                message: string.Concat(messagePrefix, name)));
                     }
+
+                    continue;
                 }
 
-                if (found)
+                ValidateUnknownFieldsRecursiveCore(
+                    string.Concat(currentPath, ".", name),
+                    property.Value,
+                    propertyType,
+                    code,
+                    messagePrefix,
+                    ref findings,
+                    typeMetadataCache);
+            }
+
+            return;
+        }
+
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            if (!TryGetCollectionElementType(type, out var elementType))
+            {
+                return;
+            }
+
+            var index = 0;
+
+            foreach (var item in element.EnumerateArray())
+            {
+                var indexString = index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                ValidateUnknownFieldsRecursiveCore(
+                    string.Concat(currentPath, "[", indexString, "]"),
+                    item,
+                    elementType,
+                    code,
+                    messagePrefix,
+                    ref findings,
+                    typeMetadataCache);
+                index++;
+            }
+        }
+    }
+
+    private static Type UnwrapNullableType(Type type)
+    {
+        if (type is null)
+        {
+            throw new ArgumentNullException(nameof(type));
+        }
+
+        return Nullable.GetUnderlyingType(type) ?? type;
+    }
+
+    private static bool IsOpaqueType(Type type)
+    {
+        if (type == typeof(object) || type == typeof(JsonElement) || type == typeof(JsonDocument))
+        {
+            return true;
+        }
+
+        if (typeof(JsonNode).IsAssignableFrom(type))
+        {
+            return true;
+        }
+
+        if (IsDictionaryLikeType(type))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsDictionaryLikeType(Type type)
+    {
+        if (typeof(System.Collections.IDictionary).IsAssignableFrom(type))
+        {
+            return true;
+        }
+
+        if (type.IsGenericType)
+        {
+            var def = type.GetGenericTypeDefinition();
+            if (def == typeof(IDictionary<,>) || def == typeof(IReadOnlyDictionary<,>))
+            {
+                return true;
+            }
+        }
+
+        var interfaces = type.GetInterfaces();
+
+        for (var i = 0; i < interfaces.Length; i++)
+        {
+            var iface = interfaces[i];
+
+            if (!iface.IsGenericType)
+            {
+                continue;
+            }
+
+            var def = iface.GetGenericTypeDefinition();
+            if (def == typeof(IDictionary<,>) || def == typeof(IReadOnlyDictionary<,>))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsLeafType(Type type)
+    {
+        if (type.IsPrimitive || type.IsEnum)
+        {
+            return true;
+        }
+
+        if (type == typeof(string)
+            || type == typeof(decimal)
+            || type == typeof(DateTime)
+            || type == typeof(DateTimeOffset)
+            || type == typeof(Guid)
+            || type == typeof(TimeSpan))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryGetCollectionElementType(Type type, out Type elementType)
+    {
+        if (type.IsArray)
+        {
+            elementType = type.GetElementType()!;
+            return true;
+        }
+
+        if (typeof(System.Collections.IEnumerable).IsAssignableFrom(type) && type != typeof(string))
+        {
+            if (type.IsGenericType)
+            {
+                var def = type.GetGenericTypeDefinition();
+                if (def == typeof(IEnumerable<>)
+                    || def == typeof(IReadOnlyList<>)
+                    || def == typeof(IList<>)
+                    || def == typeof(IReadOnlyCollection<>)
+                    || def == typeof(ICollection<>)
+                    || def == typeof(List<>))
+                {
+                    elementType = type.GetGenericArguments()[0];
+                    return true;
+                }
+            }
+
+            var interfaces = type.GetInterfaces();
+
+            for (var i = 0; i < interfaces.Length; i++)
+            {
+                var iface = interfaces[i];
+
+                if (!iface.IsGenericType)
                 {
                     continue;
                 }
+
+                if (iface.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                {
+                    elementType = iface.GetGenericArguments()[0];
+                    return true;
+                }
+            }
+        }
+
+        elementType = null!;
+        return false;
+    }
+
+    private static TypeMetadata GetTypeMetadata(Type type, Dictionary<Type, TypeMetadata> cache)
+    {
+        if (cache.TryGetValue(type, out var cached))
+        {
+            return cached;
+        }
+
+        var metadata = TypeMetadata.Create(type);
+        cache.Add(type, metadata);
+        return metadata;
+    }
+
+    private static bool TryGetPropertyType(TypeMetadata metadata, string propertyName, out Type propertyType)
+    {
+        var names = metadata.PropertyNames;
+
+        for (var i = 0; i < names.Length; i++)
+        {
+            if (string.Equals(names[i], propertyName, StringComparison.Ordinal))
+            {
+                propertyType = metadata.PropertyTypes[i];
+                return true;
+            }
+        }
+
+        propertyType = null!;
+        return false;
+    }
+
+    private readonly struct TypeMetadata
+    {
+        public string[] PropertyNames { get; }
+
+        public Type[] PropertyTypes { get; }
+
+        public bool AllowsUnmappedMembers { get; }
+
+        private TypeMetadata(string[] propertyNames, Type[] propertyTypes, bool allowsUnmappedMembers)
+        {
+            PropertyNames = propertyNames;
+            PropertyTypes = propertyTypes;
+            AllowsUnmappedMembers = allowsUnmappedMembers;
+        }
+
+        public static TypeMetadata Create(Type type)
+        {
+            var properties = type.GetProperties(BindingFlags.Instance | BindingFlags.Public);
+
+            if (properties.Length == 0)
+            {
+                return new TypeMetadata(Array.Empty<string>(), Array.Empty<Type>(), allowsUnmappedMembers: false);
             }
 
-            buffer[count] = name;
-            count++;
-        }
+            var nameBuffer = new string[properties.Length];
+            var typeBuffer = new Type[properties.Length];
+            var count = 0;
+            var allowsUnmappedMembers = false;
 
-        if (count == 0)
-        {
-            return Array.Empty<string>();
-        }
+            for (var i = 0; i < properties.Length; i++)
+            {
+                var property = properties[i];
 
-        if (count == buffer.Length)
-        {
-            return buffer;
-        }
+                if (property.GetIndexParameters().Length != 0)
+                {
+                    continue;
+                }
 
-        var trimmed = new string[count];
-        Array.Copy(buffer, 0, trimmed, 0, count);
-        return trimmed;
+                var ignoreAttribute = property.GetCustomAttribute<JsonIgnoreAttribute>(inherit: true);
+                if (ignoreAttribute is not null && ignoreAttribute.Condition == JsonIgnoreCondition.Always)
+                {
+                    continue;
+                }
+
+                if (property.GetCustomAttribute<JsonExtensionDataAttribute>(inherit: true) is not null)
+                {
+                    allowsUnmappedMembers = true;
+                    continue;
+                }
+
+                var jsonNameAttribute = property.GetCustomAttribute<JsonPropertyNameAttribute>(inherit: true);
+                var name = jsonNameAttribute is null ? property.Name : jsonNameAttribute.Name;
+
+                if (string.IsNullOrEmpty(name))
+                {
+                    continue;
+                }
+
+                if (count != 0)
+                {
+                    var found = false;
+
+                    for (var j = 0; j < count; j++)
+                    {
+                        if (string.Equals(nameBuffer[j], name, StringComparison.Ordinal))
+                        {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (found)
+                    {
+                        continue;
+                    }
+                }
+
+                nameBuffer[count] = name;
+                typeBuffer[count] = property.PropertyType;
+                count++;
+            }
+
+            if (count == 0)
+            {
+                return new TypeMetadata(Array.Empty<string>(), Array.Empty<Type>(), allowsUnmappedMembers);
+            }
+
+            if (count == nameBuffer.Length)
+            {
+                return new TypeMetadata(nameBuffer, typeBuffer, allowsUnmappedMembers);
+            }
+
+            var finalNames = new string[count];
+            var finalTypes = new Type[count];
+            Array.Copy(nameBuffer, 0, finalNames, 0, count);
+            Array.Copy(typeBuffer, 0, finalTypes, 0, count);
+            return new TypeMetadata(finalNames, finalTypes, allowsUnmappedMembers);
+        }
     }
 
     private static string BuildParamsBindFailedPath(string paramsPath, string? exceptionPath)

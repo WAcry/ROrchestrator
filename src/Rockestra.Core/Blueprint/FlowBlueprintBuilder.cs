@@ -9,6 +9,7 @@ public sealed class FlowBlueprintBuilder<TReq, TResp>
     private readonly List<BlueprintNode> _nodes;
     private readonly HashSet<string> _nodeNames;
     private readonly HashSet<string> _stageNames;
+    private readonly List<StageContractEntry> _stageContracts;
 
     internal FlowBlueprintBuilder(string name)
     {
@@ -21,11 +22,33 @@ public sealed class FlowBlueprintBuilder<TReq, TResp>
         _nodes = new List<BlueprintNode>();
         _nodeNames = new HashSet<string>();
         _stageNames = new HashSet<string>();
+        _stageContracts = new List<StageContractEntry>();
     }
 
     public string Name => _name;
 
     public FlowBlueprintBuilder<TReq, TResp> Stage(string name, Action<StageBuilder> configure)
+    {
+        return StageCore(name, configureContract: null, configure);
+    }
+
+    public FlowBlueprintBuilder<TReq, TResp> Stage(
+        string name,
+        Action<StageContractBuilder> configureContract,
+        Action<StageBuilder> configure)
+    {
+        if (configureContract is null)
+        {
+            throw new ArgumentNullException(nameof(configureContract));
+        }
+
+        return StageCore(name, configureContract, configure);
+    }
+
+    private FlowBlueprintBuilder<TReq, TResp> StageCore(
+        string name,
+        Action<StageContractBuilder>? configureContract,
+        Action<StageBuilder> configure)
     {
         if (string.IsNullOrEmpty(name))
         {
@@ -42,11 +65,21 @@ public sealed class FlowBlueprintBuilder<TReq, TResp>
             throw new ArgumentException($"Flow '{_name}' already contains stage '{name}'.", nameof(name));
         }
 
+        var stageIndex = _stageContracts.Count;
+        _stageContracts.Add(new StageContractEntry(name, StageContract.Default));
+
         var nodesBefore = _nodes.Count;
 
         try
         {
-            configure(new StageBuilder(this, name));
+            if (configureContract is not null)
+            {
+                var contractBuilder = new StageContractBuilder();
+                configureContract(contractBuilder);
+                SetStageContract(stageIndex, contractBuilder.Build());
+            }
+
+            configure(new StageBuilder(this, name, stageIndex));
 
             if (_nodes.Count == nodesBefore)
             {
@@ -59,6 +92,11 @@ public sealed class FlowBlueprintBuilder<TReq, TResp>
             {
                 _nodeNames.Remove(_nodes[i].Name);
                 _nodes.RemoveAt(i);
+            }
+
+            if ((uint)stageIndex < (uint)_stageContracts.Count)
+            {
+                _stageContracts.RemoveAt(stageIndex);
             }
 
             _stageNames.Remove(name);
@@ -114,7 +152,8 @@ public sealed class FlowBlueprintBuilder<TReq, TResp>
         }
 
         var frozenNameToIndex = nameToIndex.ToFrozenDictionary();
-        return new FlowBlueprint<TReq, TResp>(_name, nodes, frozenNameToIndex);
+        var stageContracts = _stageContracts.Count == 0 ? Array.Empty<StageContractEntry>() : _stageContracts.ToArray();
+        return new FlowBlueprint<TReq, TResp>(_name, nodes, frozenNameToIndex, stageContracts);
     }
 
     internal void AddStep(string name, string? stageName, string moduleType)
@@ -162,15 +201,41 @@ public sealed class FlowBlueprintBuilder<TReq, TResp>
         _nodes.Add(BlueprintNode.CreateJoin(index, name, stageName, join));
     }
 
+    internal void SetStageContract(int stageIndex, StageContract contract)
+    {
+        if ((uint)stageIndex >= (uint)_stageContracts.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(stageIndex), stageIndex, "Stage index is out of range.");
+        }
+
+        var stageName = _stageContracts[stageIndex].StageName;
+        _stageContracts[stageIndex] = new StageContractEntry(stageName, contract);
+    }
+
     public readonly struct StageBuilder
     {
         private readonly FlowBlueprintBuilder<TReq, TResp> _owner;
         private readonly string _stageName;
+        private readonly int _stageIndex;
 
-        internal StageBuilder(FlowBlueprintBuilder<TReq, TResp> owner, string stageName)
+        internal StageBuilder(FlowBlueprintBuilder<TReq, TResp> owner, string stageName, int stageIndex)
         {
             _owner = owner;
             _stageName = stageName;
+            _stageIndex = stageIndex;
+        }
+
+        public StageBuilder Contract(Action<StageContractBuilder> configureContract)
+        {
+            if (configureContract is null)
+            {
+                throw new ArgumentNullException(nameof(configureContract));
+            }
+
+            var builder = new StageContractBuilder();
+            configureContract(builder);
+            _owner.SetStageContract(_stageIndex, builder.Build());
+            return this;
         }
 
         public StageBuilder Step(string name, string moduleType)

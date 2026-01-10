@@ -39,6 +39,7 @@ public sealed class ExecutionEngineSelectorGateTests
             .Define<int, int>("FanoutFlow.SelectorGate")
             .Stage(
                 "s1",
+                contract => contract.AllowDynamicModules(),
                 stage =>
                     stage.Join<int>(
                         "final",

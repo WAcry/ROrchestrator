@@ -31,6 +31,7 @@ public sealed class ExecutionEngineStageFanoutBulkheadTests
         var blueprint = FlowBlueprint.Define<int, int>("BulkheadFlow")
             .Stage(
                 "s1",
+                contract => contract.AllowDynamicModules(),
                 stage =>
                     stage.Join<int>(
                         "final",

@@ -140,6 +140,7 @@ public sealed class ExecutionEngineTracingTests
         var blueprint = FlowBlueprint.Define<int, int>("TracingTestFlow.Fanout")
             .Stage(
                 "s1",
+                contract => contract.AllowDynamicModules(),
                 stage =>
                     stage.Join<int>(
                         "final",
@@ -207,6 +208,7 @@ public sealed class ExecutionEngineTracingTests
         var blueprint = FlowBlueprint.Define<int, int>("TracingTestFlow.FanoutShadow")
             .Stage(
                 "s1",
+                contract => contract.AllowDynamicModules(),
                 stage =>
                     stage.Join<int>(
                         "final",

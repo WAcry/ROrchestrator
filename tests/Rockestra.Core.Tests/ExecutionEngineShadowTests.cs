@@ -30,6 +30,7 @@ public sealed class ExecutionEngineShadowTests
             .Define<int, int>("ShadowFlow")
             .Stage(
                 "s1",
+                contract => contract.AllowDynamicModules(),
                 stage =>
                     stage.Join<int>(
                         "final",

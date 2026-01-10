@@ -43,6 +43,7 @@ public sealed class ExecutionEngineStageFanoutTests
             .Define<int, int>("FanoutFlow")
             .Stage(
                 "s1",
+                contract => contract.AllowDynamicModules(),
                 stage =>
                     stage.Join<int>(
                         "final",
@@ -85,6 +86,115 @@ public sealed class ExecutionEngineStageFanoutTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Template_WhenStageContractForbidsModuleType_ShouldSkipWithoutExecuting_AndRecordExplain()
+    {
+        var patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"FanoutFlow\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
+            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{}}" +
+            "]}}}}}";
+
+        var services = new DummyServiceProvider();
+        var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
+        flowContext.EnableExecExplain(ExplainLevel.Standard);
+
+        var invocationCollector = new FlowTestInvocationCollector();
+        flowContext.ConfigureForTesting(overrideProvider: null, invocationCollector);
+
+        _ = await flowContext.GetConfigSnapshotAsync(new StaticConfigProvider(configVersion: 1, patchJson));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<OkArgs, int>("test.ok", _ => new OkModule());
+        catalog.Register<OkArgs, int>("test.allowed", _ => new OkModule());
+
+        var blueprint = FlowBlueprint
+            .Define<int, int>("FanoutFlow")
+            .Stage(
+                "s1",
+                contract => contract.AllowDynamicModules().AllowModuleTypes("test.allowed"),
+                stage =>
+                    stage.Join<int>(
+                        "final",
+                        _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0))))
+            .Build();
+
+        var template = PlanCompiler.Compile(blueprint, catalog);
+        var engine = new ExecutionEngine(catalog);
+
+        var result = await engine.ExecuteAsync(template, request: 0, flowContext);
+
+        Assert.True(result.IsOk);
+
+        Assert.True(flowContext.TryGetStageFanoutSnapshot("s1", out var snapshot));
+        Assert.Empty(snapshot.EnabledModuleIds);
+        Assert.Single(snapshot.SkippedModules);
+        AssertStageModuleSkip(snapshot, "m1", ExecutionEngine.StageContractModuleTypeForbiddenCode);
+
+        Assert.True(flowContext.TryGetExecExplain(out var explain));
+        Assert.Equal(ExplainLevel.Standard, explain.Level);
+        Assert.Single(explain.StageModules);
+        AssertStageModuleOutcome(explain, "m1", OutcomeKind.Skipped, ExecutionEngine.StageContractModuleTypeForbiddenCode);
+
+        Assert.Empty(invocationCollector.ToArray());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Template_WhenStageContractHardLimitIsExceeded_ShouldCullAndRecordExplain()
+    {
+        var patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"FanoutFlow\":{\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[" +
+            "{\"id\":\"m_high\",\"use\":\"test.ok\",\"with\":{},\"priority\":10}," +
+            "{\"id\":\"m_low\",\"use\":\"test.ok\",\"with\":{},\"priority\":0}" +
+            "]}}}}}";
+
+        var services = new DummyServiceProvider();
+        var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
+        flowContext.EnableExecExplain(ExplainLevel.Standard);
+
+        var invocationCollector = new FlowTestInvocationCollector();
+        flowContext.ConfigureForTesting(overrideProvider: null, invocationCollector);
+
+        _ = await flowContext.GetConfigSnapshotAsync(new StaticConfigProvider(configVersion: 1, patchJson));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<OkArgs, int>("test.ok", _ => new OkModule());
+
+        var blueprint = FlowBlueprint
+            .Define<int, int>("FanoutFlow")
+            .Stage(
+                "s1",
+                contract => contract.AllowDynamicModules().MaxModules(warn: 0, hard: 1),
+                stage =>
+                    stage.Join<int>(
+                        "final",
+                        _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0))))
+            .Build();
+
+        var template = PlanCompiler.Compile(blueprint, catalog);
+        var engine = new ExecutionEngine(catalog);
+
+        var result = await engine.ExecuteAsync(template, request: 0, flowContext);
+
+        Assert.True(result.IsOk);
+
+        Assert.True(flowContext.TryGetStageFanoutSnapshot("s1", out var snapshot));
+        Assert.Single(snapshot.EnabledModuleIds);
+        Assert.Equal("m_high", snapshot.EnabledModuleIds[0]);
+
+        Assert.Single(snapshot.SkippedModules);
+        AssertStageModuleSkip(snapshot, "m_low", ExecutionEngine.StageContractMaxModulesHardExceededCode);
+
+        Assert.True(flowContext.TryGetExecExplain(out var explain));
+        Assert.Equal(ExplainLevel.Standard, explain.Level);
+        Assert.Equal(2, explain.StageModules.Count);
+
+        AssertStageModuleOutcome(explain, "m_high", OutcomeKind.Ok, "OK");
+        AssertStageModuleOutcome(explain, "m_low", OutcomeKind.Skipped, ExecutionEngine.StageContractMaxModulesHardExceededCode);
+
+        Assert.Single(invocationCollector.ToArray());
+        Assert.Equal("m_high", invocationCollector.ToArray()[0].ModuleId);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Template_ShouldExecuteFanoutModulesConcurrently()
     {
         var patchJson =
@@ -108,6 +218,7 @@ public sealed class ExecutionEngineStageFanoutTests
             .Define<int, int>("FanoutFlow")
             .Stage(
                 "s1",
+                contract => contract.AllowDynamicModules(),
                 stage =>
                     stage.Join<int>(
                         "final",
@@ -151,6 +262,7 @@ public sealed class ExecutionEngineStageFanoutTests
             .Define<int, int>("FanoutFlow")
             .Stage(
                 "s1",
+                contract => contract.AllowDynamicModules(),
                 stage =>
                     stage.Join<int>(
                         "final",

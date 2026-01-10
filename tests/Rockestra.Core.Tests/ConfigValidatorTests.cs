@@ -1446,6 +1446,7 @@ public sealed class ConfigValidatorTests
                 .Define<int, int>("TestFlow")
                 .Stage(
                     "s1",
+                    contract => contract.AllowDynamicModules(),
                     stage =>
                     {
                         stage
@@ -1554,6 +1555,7 @@ public sealed class ConfigValidatorTests
             FlowBlueprint.Define<int, int>("TestFlow")
                 .Stage(
                     "s1",
+                    contract => contract.AllowDynamicModules(),
                     stage =>
                     {
                         stage.Join<int>(
@@ -1562,6 +1564,7 @@ public sealed class ConfigValidatorTests
                     })
                 .Stage(
                     "s2",
+                    contract => contract.AllowDynamicModules(),
                     stage =>
                     {
                         stage.Join<int>(
@@ -1608,6 +1611,7 @@ public sealed class ConfigValidatorTests
             FlowBlueprint.Define<int, int>("TestFlow")
                 .Stage(
                     "s1",
+                    contract => contract.AllowDynamicModules(),
                     stage =>
                     {
                         stage.Join<int>(
@@ -1616,6 +1620,7 @@ public sealed class ConfigValidatorTests
                     })
                 .Stage(
                     "s2",
+                    contract => contract.AllowDynamicModules(),
                     stage =>
                     {
                         stage.Join<int>(
@@ -2190,6 +2195,7 @@ public sealed class ConfigValidatorTests
         return FlowBlueprint.Define<TReq, TResp>(name)
             .Stage(
                 stageName,
+                contract => contract.AllowDynamicModules(),
                 stage =>
                 {
                     stage.Join<TResp>(

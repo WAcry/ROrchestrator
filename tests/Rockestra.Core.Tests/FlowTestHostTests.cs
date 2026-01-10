@@ -147,6 +147,7 @@ public sealed class FlowTestHostTests
             FlowBlueprint.Define<int, int>("TestFlow.PatchFanout")
                 .Stage(
                     "s1",
+                    contract => contract.AllowDynamicModules(),
                     stage =>
                         stage
                             .Step("step_a", "m.add_one")

@@ -26,6 +26,7 @@ public sealed class ExecExplainJsonV1MemoizationTests
             FlowBlueprint.Define<int, int>(flowName)
                 .Stage(
                     "s1",
+                    contract => contract.AllowDynamicModules(),
                     stage =>
                         stage.Join<int>(
                             "final",
@@ -66,6 +67,7 @@ public sealed class ExecExplainJsonV1MemoizationTests
             FlowBlueprint.Define<int, int>(flowName)
                 .Stage(
                     "s1",
+                    contract => contract.AllowDynamicModules(),
                     stage =>
                         stage.Join<int>(
                             "final",
@@ -125,6 +127,7 @@ public sealed class ExecExplainJsonV1MemoizationTests
             FlowBlueprint.Define<int, int>(flowName)
                 .Stage(
                     "s1",
+                    contract => contract.AllowDynamicModules(),
                     stage =>
                         stage.Join<int>(
                             "final",
@@ -167,6 +170,7 @@ public sealed class ExecExplainJsonV1MemoizationTests
             FlowBlueprint.Define<int, int>(flowName)
                 .Stage(
                     "s1",
+                    contract => contract.AllowDynamicModules(),
                     stage =>
                         stage.Join<int>(
                             "final",
@@ -210,6 +214,7 @@ public sealed class ExecExplainJsonV1MemoizationTests
             FlowBlueprint.Define<int, int>(flowName)
                 .Stage(
                     "s1",
+                    contract => contract.AllowDynamicModules(),
                     stage =>
                         stage.Join<int>(
                             "final",

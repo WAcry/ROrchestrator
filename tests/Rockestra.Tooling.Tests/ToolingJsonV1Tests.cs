@@ -486,6 +486,7 @@ public sealed class ToolingJsonV1Tests
             .Define<TReq, TResp>(name)
             .Stage(
                 stageName,
+                contract => contract.AllowDynamicModules(),
                 stage =>
                 {
                     stage

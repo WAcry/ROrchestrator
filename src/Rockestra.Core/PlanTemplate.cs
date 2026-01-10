@@ -6,6 +6,7 @@ public sealed class PlanTemplate<TReq, TResp>
 {
     private readonly PlanNodeTemplate[] _nodes;
     private readonly IReadOnlyDictionary<string, int> _nodeNameToIndex;
+    private readonly StageContractEntry[] _stageContracts;
 
     public string Name { get; }
 
@@ -15,7 +16,12 @@ public sealed class PlanTemplate<TReq, TResp>
 
     internal IReadOnlyDictionary<string, int> NodeNameToIndex => _nodeNameToIndex;
 
-    internal PlanTemplate(string name, ulong planHash, PlanNodeTemplate[] nodes, IReadOnlyDictionary<string, int> nodeNameToIndex)
+    internal PlanTemplate(
+        string name,
+        ulong planHash,
+        PlanNodeTemplate[] nodes,
+        IReadOnlyDictionary<string, int> nodeNameToIndex,
+        StageContractEntry[] stageContracts)
     {
         if (string.IsNullOrEmpty(name))
         {
@@ -36,6 +42,27 @@ public sealed class PlanTemplate<TReq, TResp>
         PlanHash = planHash;
         _nodes = nodes;
         _nodeNameToIndex = nodeNameToIndex;
+        _stageContracts = stageContracts ?? throw new ArgumentNullException(nameof(stageContracts));
+    }
+
+    internal bool TryGetStageContract(string stageName, out StageContract contract)
+    {
+        if (string.IsNullOrEmpty(stageName))
+        {
+            throw new ArgumentException("StageName must be non-empty.", nameof(stageName));
+        }
+
+        for (var i = 0; i < _stageContracts.Length; i++)
+        {
+            if (string.Equals(_stageContracts[i].StageName, stageName, StringComparison.Ordinal))
+            {
+                contract = _stageContracts[i].Contract;
+                return true;
+            }
+        }
+
+        contract = StageContract.Default;
+        return false;
     }
 }
 

@@ -31,6 +31,7 @@ public sealed class ExecutionEngineStageFanoutMetricsTests
         var blueprint = FlowBlueprint.Define<int, int>("MetricsTestFlow.Fanout")
             .Stage(
                 "s1",
+                contract => contract.AllowDynamicModules(),
                 stage =>
                     stage.Join<int>(
                         "final",
@@ -76,6 +77,7 @@ public sealed class ExecutionEngineStageFanoutMetricsTests
         var blueprint = FlowBlueprint.Define<int, int>("MetricsTestFlow.FanoutShadow")
             .Stage(
                 "s1",
+                contract => contract.AllowDynamicModules(),
                 stage =>
                     stage.Join<int>(
                         "final",

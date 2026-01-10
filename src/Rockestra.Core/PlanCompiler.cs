@@ -142,7 +142,7 @@ public static class PlanCompiler
         }
 
         var frozenNodeNameToIndex = nodeNameToIndex.ToFrozenDictionary();
-        return new PlanTemplate<TReq, TResp>(blueprint.Name, planHash: hash, planNodes, frozenNodeNameToIndex);
+        return new PlanTemplate<TReq, TResp>(blueprint.Name, planHash: hash, planNodes, frozenNodeNameToIndex, blueprint.StageContracts);
     }
 
     private static void EnsureFinalOutputType<TResp>(string flowName, PlanNodeTemplate lastNode)

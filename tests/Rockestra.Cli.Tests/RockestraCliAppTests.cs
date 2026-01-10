@@ -707,6 +707,7 @@ public sealed class RockestraCliAppTests
                     .Define<TestArgs, int>("HomeFeed")
                     .Stage(
                         "s1",
+                        contract => contract.AllowDynamicModules(),
                         stage =>
                         {
                             stage

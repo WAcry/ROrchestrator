@@ -18,6 +18,7 @@ public static class FixtureBootstrapper
                 .Define<FixtureArgs, int>(FlowName)
                 .Stage(
                     "s1",
+                    contract => contract.AllowDynamicModules(),
                     stage =>
                     {
                         stage

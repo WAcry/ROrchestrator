@@ -29,6 +29,7 @@ public sealed class QosOverlayExecutionTests
             FlowBlueprint.Define<int, int>(flowName)
                 .Stage(
                     "s1",
+                    contract => contract.AllowDynamicModules(),
                     stage =>
                         stage.Join<int>(
                             "final",

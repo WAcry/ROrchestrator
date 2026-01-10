@@ -22,6 +22,10 @@ public sealed class ExecutionEngine
     public const string ShadowNotSampledCode = "SHADOW_NOT_SAMPLED";
     public const string BulkheadRejectedCode = "BULKHEAD_REJECTED";
 
+    public const string StageContractDynamicModulesForbiddenCode = "STAGE_CONTRACT_DYNAMIC_MODULES_FORBIDDEN";
+    public const string StageContractModuleTypeForbiddenCode = "STAGE_CONTRACT_MODULE_TYPE_FORBIDDEN";
+    public const string StageContractMaxModulesHardExceededCode = "STAGE_CONTRACT_MAX_MODULES_HARD_EXCEEDED";
+
     private readonly ModuleCatalog _catalog;
     private readonly SelectorRegistry _selectorRegistry;
     private readonly ModuleConcurrencyLimitersV1 _moduleConcurrencyLimiters = new();
@@ -285,8 +289,9 @@ public sealed class ExecutionEngine
                             }
                             else if (!string.Equals(currentStageName, stageName, StringComparison.Ordinal))
                             {
+                                template.TryGetStageContract(stageName, out var stageContract);
                                 currentStageName = stageName;
-                                await ExecuteStageFanoutIfAnyAsync(stageName, patchEvaluation, context, execExplainCollector).ConfigureAwait(false);
+                                await ExecuteStageFanoutIfAnyAsync(stageName, stageContract, patchEvaluation, context, execExplainCollector).ConfigureAwait(false);
 
                                 if (IsDeadlineExceeded(context.Deadline))
                                 {
@@ -471,8 +476,9 @@ public sealed class ExecutionEngine
                     }
                     else if (!string.Equals(currentStageName, stageName, StringComparison.Ordinal))
                     {
+                        template.TryGetStageContract(stageName, out var stageContract);
                         currentStageName = stageName;
-                        await ExecuteStageFanoutIfAnyAsync(stageName, patchEvaluation, context, execExplainCollector).ConfigureAwait(false);
+                        await ExecuteStageFanoutIfAnyAsync(stageName, stageContract, patchEvaluation, context, execExplainCollector).ConfigureAwait(false);
 
                         if (IsDeadlineExceeded(context.Deadline))
                         {
@@ -675,6 +681,7 @@ public sealed class ExecutionEngine
 
     private async ValueTask ExecuteStageFanoutIfAnyAsync(
         string stageName,
+        StageContract stageContract,
         PatchEvaluatorV1.FlowPatchEvaluationV1 patchEvaluation,
         FlowContext context,
         ExecExplainCollectorV1? execExplainCollector)
@@ -687,7 +694,7 @@ public sealed class ExecutionEngine
 
             if (string.Equals(stage.StageName, stageName, StringComparison.Ordinal))
             {
-                await ExecuteStageFanoutAsync(patchEvaluation.FlowName, stageName, stage, context, execExplainCollector).ConfigureAwait(false);
+                await ExecuteStageFanoutAsync(patchEvaluation.FlowName, stageName, stageContract, stage, context, execExplainCollector).ConfigureAwait(false);
                 return;
             }
         }
@@ -696,6 +703,7 @@ public sealed class ExecutionEngine
     private async ValueTask ExecuteStageFanoutAsync(
         string flowName,
         string stageName,
+        StageContract stageContract,
         PatchEvaluatorV1.StagePatchV1 stagePatch,
         FlowContext context,
         ExecExplainCollectorV1? execExplainCollector)
@@ -705,7 +713,66 @@ public sealed class ExecutionEngine
 
         if (moduleCount == 0)
         {
-            await ExecuteStageShadowFanoutIfAnyAsync(flowName, stageName, stagePatch, context, execExplainCollector).ConfigureAwait(false);
+            await ExecuteStageShadowFanoutIfAnyAsync(flowName, stageName, stageContract, stagePatch, context, execExplainCollector).ConfigureAwait(false);
+            return;
+        }
+
+        var results = new StageModuleOutcomeMetadata[moduleCount];
+        var recordStageModuleExplain = execExplainCollector is not null && execExplainCollector.IsActive;
+        var gateDecisionCodes = recordStageModuleExplain ? new string[moduleCount] : null;
+        var gateReasonCodes = recordStageModuleExplain ? new string[moduleCount] : null;
+        var gateSelectorNames = recordStageModuleExplain ? new string[moduleCount] : null;
+        var candidates = new StageModuleCandidate[moduleCount];
+        var candidateCount = 0;
+
+        if (!stageContract.AllowsDynamicModules)
+        {
+            for (var i = 0; i < moduleCount; i++)
+            {
+                var module = modules[i];
+                if (_catalog.TryGetSignature(module.ModuleType, out _, out var outType))
+                {
+                    RecordStageModuleSkippedOutcome(outType, context, module.ModuleId, StageContractDynamicModulesForbiddenCode);
+                }
+                results[i] = new StageModuleOutcomeMetadata(
+                    OutcomeKind.Skipped,
+                    StageContractDynamicModulesForbiddenCode,
+                    isOverride: false,
+                    memoHit: false,
+                    startTimestamp: 0,
+                    endTimestamp: 0);
+                RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, StageContractDynamicModulesForbiddenCode, isShadow: false);
+            }
+
+            if (execExplainCollector is not null)
+            {
+                for (var i = 0; i < moduleCount; i++)
+                {
+                    var module = modules[i];
+                    var meta = results[i];
+                    var limitKey = module.LimitKey ?? module.ModuleType;
+                    execExplainCollector.RecordStageModule(
+                        stageName,
+                        module.ModuleId,
+                        module.ModuleType,
+                        limitKey,
+                        module.Priority,
+                        meta.StartTimestamp,
+                        meta.EndTimestamp,
+                        meta.Kind,
+                        meta.Code,
+                        gateDecisionCode: string.Empty,
+                        gateReasonCode: string.Empty,
+                        gateSelectorName: string.Empty,
+                        isShadow: false,
+                        shadowSampleBps: 0,
+                        isOverride: meta.IsOverride,
+                        memoHit: meta.MemoHit);
+                }
+            }
+
+            RecordStageFanoutSnapshot(stageName, modules, Array.Empty<int>(), executeCount: 0, results: results, context: context);
+            await ExecuteStageShadowFanoutIfAnyAsync(flowName, stageName, stageContract, stagePatch, context, execExplainCollector).ConfigureAwait(false);
             return;
         }
 
@@ -732,14 +799,6 @@ public sealed class ExecutionEngine
             outTypes[i] = outType;
         }
 
-        var results = new StageModuleOutcomeMetadata[moduleCount];
-        var recordStageModuleExplain = execExplainCollector is not null && execExplainCollector.IsActive;
-        var gateDecisionCodes = recordStageModuleExplain ? new string[moduleCount] : null;
-        var gateReasonCodes = recordStageModuleExplain ? new string[moduleCount] : null;
-        var gateSelectorNames = recordStageModuleExplain ? new string[moduleCount] : null;
-        var candidates = new StageModuleCandidate[moduleCount];
-        var candidateCount = 0;
-
         for (var i = 0; i < moduleCount; i++)
         {
             var module = modules[i];
@@ -749,6 +808,20 @@ public sealed class ExecutionEngine
                 RecordStageModuleSkippedOutcome(outTypes[i], context, module.ModuleId, DisabledCode);
                 results[i] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, DisabledCode, isOverride: false, memoHit: false, startTimestamp: 0, endTimestamp: 0);
                 RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, DisabledCode, isShadow: false);
+                continue;
+            }
+
+            if (!stageContract.IsModuleTypeAllowed(module.ModuleType))
+            {
+                RecordStageModuleSkippedOutcome(outTypes[i], context, module.ModuleId, StageContractModuleTypeForbiddenCode);
+                results[i] = new StageModuleOutcomeMetadata(
+                    OutcomeKind.Skipped,
+                    StageContractModuleTypeForbiddenCode,
+                    isOverride: false,
+                    memoHit: false,
+                    startTimestamp: 0,
+                    endTimestamp: 0);
+                RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, StageContractModuleTypeForbiddenCode, isShadow: false);
                 continue;
             }
 
@@ -785,6 +858,28 @@ public sealed class ExecutionEngine
         }
 
         SortStageModuleCandidates(candidates, candidateCount);
+
+        var maxModulesHard = stageContract.MaxModulesHard;
+
+        if (maxModulesHard != 0 && maxModulesHard < candidateCount)
+        {
+            for (var rank = maxModulesHard; rank < candidateCount; rank++)
+            {
+                var moduleIndex = candidates[rank].ModuleIndex;
+                var module = modules[moduleIndex];
+                RecordStageModuleSkippedOutcome(outTypes[moduleIndex], context, module.ModuleId, StageContractMaxModulesHardExceededCode);
+                results[moduleIndex] = new StageModuleOutcomeMetadata(
+                    OutcomeKind.Skipped,
+                    StageContractMaxModulesHardExceededCode,
+                    isOverride: false,
+                    memoHit: false,
+                    startTimestamp: 0,
+                    endTimestamp: 0);
+                RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, StageContractMaxModulesHardExceededCode, isShadow: false);
+            }
+
+            candidateCount = maxModulesHard;
+        }
 
         var executeCount = candidateCount;
 
@@ -871,12 +966,13 @@ public sealed class ExecutionEngine
 
         RecordStageFanoutSnapshot(stageName, modules, executeIndices, taskIndex, results, context);
 
-        await ExecuteStageShadowFanoutIfAnyAsync(flowName, stageName, stagePatch, context, execExplainCollector).ConfigureAwait(false);
+        await ExecuteStageShadowFanoutIfAnyAsync(flowName, stageName, stageContract, stagePatch, context, execExplainCollector).ConfigureAwait(false);
     }
 
     private async ValueTask ExecuteStageShadowFanoutIfAnyAsync(
         string flowName,
         string stageName,
+        StageContract stageContract,
         PatchEvaluatorV1.StagePatchV1 stagePatch,
         FlowContext context,
         ExecExplainCollectorV1? execExplainCollector)
@@ -888,12 +984,13 @@ public sealed class ExecutionEngine
             return;
         }
 
-        await ExecuteStageShadowFanoutAsync(flowName, stageName, shadowModules, context, execExplainCollector).ConfigureAwait(false);
+        await ExecuteStageShadowFanoutAsync(flowName, stageName, stageContract, shadowModules, context, execExplainCollector).ConfigureAwait(false);
     }
 
     private async ValueTask ExecuteStageShadowFanoutAsync(
         string flowName,
         string stageName,
+        StageContract stageContract,
         IReadOnlyList<PatchEvaluatorV1.StageModulePatchV1> shadowModules,
         FlowContext context,
         ExecExplainCollectorV1? execExplainCollector)
@@ -901,6 +998,58 @@ public sealed class ExecutionEngine
         var moduleCount = shadowModules.Count;
         if (moduleCount == 0)
         {
+            return;
+        }
+
+        var results = new StageModuleOutcomeMetadata[moduleCount];
+        var recordStageModuleExplain = execExplainCollector is not null && execExplainCollector.IsActive;
+        var gateDecisionCodes = recordStageModuleExplain ? new string[moduleCount] : null;
+        var gateReasonCodes = recordStageModuleExplain ? new string[moduleCount] : null;
+        var gateSelectorNames = recordStageModuleExplain ? new string[moduleCount] : null;
+        var userId = context.UserId;
+
+        if (!stageContract.AllowsDynamicModules)
+        {
+            for (var i = 0; i < moduleCount; i++)
+            {
+                var module = shadowModules[i];
+                results[i] = new StageModuleOutcomeMetadata(
+                    OutcomeKind.Skipped,
+                    StageContractDynamicModulesForbiddenCode,
+                    isOverride: false,
+                    memoHit: false,
+                    startTimestamp: 0,
+                    endTimestamp: 0);
+                RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, StageContractDynamicModulesForbiddenCode, isShadow: true);
+            }
+
+            if (execExplainCollector is not null)
+            {
+                for (var i = 0; i < moduleCount; i++)
+                {
+                    var module = shadowModules[i];
+                    var meta = results[i];
+                    var limitKey = module.LimitKey ?? module.ModuleType;
+                    execExplainCollector.RecordStageModule(
+                        stageName,
+                        module.ModuleId,
+                        module.ModuleType,
+                        limitKey,
+                        module.Priority,
+                        meta.StartTimestamp,
+                        meta.EndTimestamp,
+                        meta.Kind,
+                        meta.Code,
+                        gateDecisionCode: string.Empty,
+                        gateReasonCode: string.Empty,
+                        gateSelectorName: string.Empty,
+                        isShadow: true,
+                        shadowSampleBps: module.ShadowSampleBps,
+                        isOverride: meta.IsOverride,
+                        memoHit: meta.MemoHit);
+                }
+            }
+
             return;
         }
 
@@ -920,13 +1069,6 @@ public sealed class ExecutionEngine
             outTypes[i] = outType;
         }
 
-        var results = new StageModuleOutcomeMetadata[moduleCount];
-        var recordStageModuleExplain = execExplainCollector is not null && execExplainCollector.IsActive;
-        var gateDecisionCodes = recordStageModuleExplain ? new string[moduleCount] : null;
-        var gateReasonCodes = recordStageModuleExplain ? new string[moduleCount] : null;
-        var gateSelectorNames = recordStageModuleExplain ? new string[moduleCount] : null;
-        var userId = context.UserId;
-
         for (var i = 0; i < moduleCount; i++)
         {
             var module = shadowModules[i];
@@ -935,6 +1077,19 @@ public sealed class ExecutionEngine
             {
                 results[i] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, DisabledCode, isOverride: false, memoHit: false, startTimestamp: 0, endTimestamp: 0);
                 RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, DisabledCode, isShadow: true);
+                continue;
+            }
+
+            if (!stageContract.IsModuleTypeAllowed(module.ModuleType))
+            {
+                results[i] = new StageModuleOutcomeMetadata(
+                    OutcomeKind.Skipped,
+                    StageContractModuleTypeForbiddenCode,
+                    isOverride: false,
+                    memoHit: false,
+                    startTimestamp: 0,
+                    endTimestamp: 0);
+                RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, StageContractModuleTypeForbiddenCode, isShadow: true);
                 continue;
             }
 
