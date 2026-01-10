@@ -19,7 +19,7 @@ jobs:
       - name: Run benchmarks (Release)
         run: >
           dotnet run -c Release
-          --project benchmarks/ROrchestrator.Benchmarks/ROrchestrator.Benchmarks.csproj
+          --project benchmarks/Rockestra.Benchmarks/Rockestra.Benchmarks.csproj
           --
           --filter *ExecutionEngineFanoutBenchmarks* *PatchEvaluatorBenchmarks* *ToolingJsonBenchmarks*
           --artifacts artifacts/benchmarks
@@ -34,4 +34,5 @@ jobs:
         with:
           name: benchmarks
           path: artifacts/benchmarks
+
 

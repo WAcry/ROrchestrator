@@ -25,13 +25,13 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Build (Release)
-        run: dotnet build ROrchestrator.sln -c Release
+        run: dotnet build Rockestra.sln -c Release
 
       - name: Test (Release)
-        run: dotnet test ROrchestrator.sln -c Release --no-build
+        run: dotnet test Rockestra.sln -c Release --no-build
 
       - name: Pack (Release)
-        run: dotnet pack ROrchestrator.sln -c Release -o artifacts/packages
+        run: dotnet pack Rockestra.sln -c Release -o artifacts/packages
 
       - name: Upload packages
         uses: actions/upload-artifact@v4
@@ -40,3 +40,4 @@ jobs:
           path: |
             artifacts/packages/*.nupkg
             artifacts/packages/*.snupkg
+

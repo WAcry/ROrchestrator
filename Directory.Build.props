@@ -11,10 +11,10 @@
   <PropertyGroup Condition="'$(IsPackable)' != 'false'">
     <Authors>David Zhang</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/WAcry/ROrchestrator</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/WAcry/ROrchestrator</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/WAcry/Rockestra</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/WAcry/Rockestra</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
-    <PackageTags>rorchestrator;orchestrator;dotnet</PackageTags>
+    <PackageTags>rockestra;orchestrator;dotnet</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
@@ -24,3 +24,4 @@
     <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="" />
   </ItemGroup>
 </Project>
+

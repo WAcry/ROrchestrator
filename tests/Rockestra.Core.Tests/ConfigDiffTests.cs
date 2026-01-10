@@ -1,0 +1,795 @@
+using Rockestra.Core;
+
+namespace Rockestra.Core.Tests;
+
+public sealed class ConfigDiffTests
+{
+    [Fact]
+    public void DiffModules_ShouldReportAdded_WhenModuleIsAdded()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}},{\"id\":\"m2\",\"use\":\"t2\",\"with\":{}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.Added, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m2", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[1]", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportRemoved_WhenModuleIsRemoved()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}},{\"id\":\"m2\",\"use\":\"t2\",\"with\":{}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.Removed, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m2", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[1]", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportUseChanged_WhenModuleUseChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t2\",\"with\":{}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.UseChanged, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].use", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportEnabledChanged_WhenModuleEnabledChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"enabled\":false}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.EnabledChanged, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].enabled", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportPriorityChanged_WhenExperimentPatchModulePriorityChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"priority\":1}]}}}}]}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"priority\":2}]}}}}]}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.PriorityChanged, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("l1", diff.ExperimentLayer);
+        Assert.Equal("v1", diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].priority", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportWithChanged_WhenModuleWithChangesDeeply()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"a\":{\"b\":1}}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"a\":{\"b\":2}}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.WithChanged, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].with.a.b", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportGateAdded_WhenModuleGateIsAdded()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"l1\",\"in\":[\"A\"]}}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.GateAdded, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].gate", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportGateRemoved_WhenModuleGateIsRemoved()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"l1\",\"in\":[\"A\"]}}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.GateRemoved, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].gate", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportGateChanged_WhenModuleGateChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"l1\",\"in\":[\"A\"]}}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"l1\",\"in\":[\"B\"]}}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.GateChanged, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].gate", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldBeEmpty_WhenOnlyGatePropertyOrderChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"l1\",\"in\":[\"A\"]}}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"gate\":{\"experiment\":{\"in\":[\"A\"],\"layer\":\"l1\"}}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        Assert.Empty(report.Diffs);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportGateChanged_WhenExperimentPatchModuleGateChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"layer1\",\"in\":[\"A\"]}}}]}}}}]}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"layer1\",\"in\":[\"B\"]}}}]}}}}]}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.GateChanged, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("l1", diff.ExperimentLayer);
+        Assert.Equal("v1", diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].gate", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportShadowAdded_WhenModuleShadowIsAdded()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"shadow\":{\"sample\":0.1}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.ShadowAdded, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].shadow", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportShadowRemoved_WhenModuleShadowIsRemoved()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"shadow\":{\"sample\":0.1}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.ShadowRemoved, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].shadow", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportShadowSampleChanged_WhenModuleShadowSampleChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"shadow\":{\"sample\":0.1}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{},\"shadow\":{\"sample\":0.2}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.ShadowSampleChanged, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].shadow.sample", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportWithAddedRemovedAndChanged_WhenModuleWithFieldsChange()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"a\":1,\"b\":2}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"b\":3,\"c\":4}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        Assert.Equal(3, report.Diffs.Count);
+
+        var removed = report.Diffs[0];
+        Assert.Equal(PatchModuleDiffKind.WithRemoved, removed.Kind);
+        Assert.Equal("HomeFeed", removed.FlowName);
+        Assert.Null(removed.ExperimentLayer);
+        Assert.Null(removed.ExperimentVariant);
+        Assert.Equal("s1", removed.StageName);
+        Assert.Equal("m1", removed.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].with.a", removed.Path);
+
+        var changed = report.Diffs[1];
+        Assert.Equal(PatchModuleDiffKind.WithChanged, changed.Kind);
+        Assert.Equal("HomeFeed", changed.FlowName);
+        Assert.Null(changed.ExperimentLayer);
+        Assert.Null(changed.ExperimentVariant);
+        Assert.Equal("s1", changed.StageName);
+        Assert.Equal("m1", changed.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].with.b", changed.Path);
+
+        var added = report.Diffs[2];
+        Assert.Equal(PatchModuleDiffKind.WithAdded, added.Kind);
+        Assert.Equal("HomeFeed", added.FlowName);
+        Assert.Null(added.ExperimentLayer);
+        Assert.Null(added.ExperimentVariant);
+        Assert.Equal("s1", added.StageName);
+        Assert.Equal("m1", added.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].with.c", added.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldBeEmpty_WhenOnlyWithPropertyOrderChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"a\":1,\"b\":2,\"c\":{\"d\":3,\"e\":4}}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"c\":{\"e\":4,\"d\":3},\"b\":2,\"a\":1}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        Assert.Empty(report.Diffs);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldBeEmpty_WhenOnlyModuleOrderChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}},{\"id\":\"m2\",\"use\":\"t2\",\"with\":{}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m2\",\"use\":\"t2\",\"with\":{}},{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        Assert.Empty(report.Diffs);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportRemovedAndAdded_WhenModuleMovesAcrossStages()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s2\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        Assert.Equal(2, report.Diffs.Count);
+
+        var removed = report.Diffs[0];
+        Assert.Equal(PatchModuleDiffKind.Removed, removed.Kind);
+        Assert.Equal("HomeFeed", removed.FlowName);
+        Assert.Null(removed.ExperimentLayer);
+        Assert.Null(removed.ExperimentVariant);
+        Assert.Equal("s1", removed.StageName);
+        Assert.Equal("m1", removed.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0]", removed.Path);
+
+        var added = report.Diffs[1];
+        Assert.Equal(PatchModuleDiffKind.Added, added.Kind);
+        Assert.Equal("HomeFeed", added.FlowName);
+        Assert.Null(added.ExperimentLayer);
+        Assert.Null(added.ExperimentVariant);
+        Assert.Equal("s2", added.StageName);
+        Assert.Equal("m1", added.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.stages.s2.modules[0]", added.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportUseChanged_WhenExperimentPatchModuleUseChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}]}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t2\",\"with\":{}}]}}}}]}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchModuleDiffKind.UseChanged, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("l1", diff.ExperimentLayer);
+        Assert.Equal("v1", diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("m1", diff.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].use", diff.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportWithAddedRemovedAndChanged_WhenExperimentPatchModuleWithFieldsChange()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"a\":1,\"b\":{\"x\":1}}}]}}}}]}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"b\":{\"x\":2},\"c\":4}}]}}}}]}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        Assert.Equal(3, report.Diffs.Count);
+
+        var removed = report.Diffs[0];
+        Assert.Equal(PatchModuleDiffKind.WithRemoved, removed.Kind);
+        Assert.Equal("HomeFeed", removed.FlowName);
+        Assert.Equal("l1", removed.ExperimentLayer);
+        Assert.Equal("v1", removed.ExperimentVariant);
+        Assert.Equal("s1", removed.StageName);
+        Assert.Equal("m1", removed.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].with.a", removed.Path);
+
+        var changed = report.Diffs[1];
+        Assert.Equal(PatchModuleDiffKind.WithChanged, changed.Kind);
+        Assert.Equal("HomeFeed", changed.FlowName);
+        Assert.Equal("l1", changed.ExperimentLayer);
+        Assert.Equal("v1", changed.ExperimentVariant);
+        Assert.Equal("s1", changed.StageName);
+        Assert.Equal("m1", changed.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].with.b.x", changed.Path);
+
+        var added = report.Diffs[2];
+        Assert.Equal(PatchModuleDiffKind.WithAdded, added.Kind);
+        Assert.Equal("HomeFeed", added.FlowName);
+        Assert.Equal("l1", added.ExperimentLayer);
+        Assert.Equal("v1", added.ExperimentVariant);
+        Assert.Equal("s1", added.StageName);
+        Assert.Equal("m1", added.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0].with.c", added.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldBeEmpty_WhenOnlyExperimentPatchWithPropertyOrderChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"a\":1,\"b\":2,\"c\":{\"d\":3,\"e\":4}}}]}}}}]}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{\"c\":{\"e\":4,\"d\":3},\"b\":2,\"a\":1}}]}}}}]}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        Assert.Empty(report.Diffs);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldBeEmpty_WhenOnlyExperimentOrderChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}},{\"layer\":\"l2\",\"variant\":\"v2\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m2\",\"use\":\"t2\",\"with\":{}}]}}}}]}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l2\",\"variant\":\"v2\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m2\",\"use\":\"t2\",\"with\":{}}]}}}},{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}]}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        Assert.Empty(report.Diffs);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldReportRemovedAndAdded_WhenExperimentMappingIsRemovedOrAdded()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"t1\",\"with\":{}}]}}}}]}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l2\",\"variant\":\"v2\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m2\",\"use\":\"t2\",\"with\":{}}]}}}}]}}}";
+
+        var report = PatchDiffV1.DiffModules(oldPatchJson, newPatchJson);
+
+        Assert.Equal(2, report.Diffs.Count);
+
+        var removed = report.Diffs[0];
+        Assert.Equal(PatchModuleDiffKind.Removed, removed.Kind);
+        Assert.Equal("HomeFeed", removed.FlowName);
+        Assert.Equal("l1", removed.ExperimentLayer);
+        Assert.Equal("v1", removed.ExperimentVariant);
+        Assert.Equal("s1", removed.StageName);
+        Assert.Equal("m1", removed.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0]", removed.Path);
+
+        var added = report.Diffs[1];
+        Assert.Equal(PatchModuleDiffKind.Added, added.Kind);
+        Assert.Equal("HomeFeed", added.FlowName);
+        Assert.Equal("l2", added.ExperimentLayer);
+        Assert.Equal("v2", added.ExperimentVariant);
+        Assert.Equal("s1", added.StageName);
+        Assert.Equal("m2", added.ModuleId);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.modules[0]", added.Path);
+    }
+
+    [Fact]
+    public void DiffModules_ShouldThrow_WhenJsonIsInvalid()
+    {
+        var validPatchJson = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
+        Assert.Throws<FormatException>(() => PatchDiffV1.DiffModules("{", validPatchJson));
+    }
+
+    [Fact]
+    public void DiffModules_ShouldThrow_WhenNewJsonIsInvalid()
+    {
+        var validPatchJson = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
+        Assert.Throws<FormatException>(() => PatchDiffV1.DiffModules(validPatchJson, "{"));
+    }
+
+    [Fact]
+    public void DiffModules_ShouldThrow_WhenSchemaVersionIsUnsupported()
+    {
+        var validPatchJson = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
+        Assert.Throws<NotSupportedException>(() => PatchDiffV1.DiffModules("{\"schemaVersion\":\"v999\",\"flows\":{}}", validPatchJson));
+    }
+
+    [Fact]
+    public void DiffModules_ShouldThrowNotSupported_WhenOldSchemaUnsupported_EvenIfNewJsonIsInvalid()
+    {
+        Assert.Throws<NotSupportedException>(() => PatchDiffV1.DiffModules("{\"schemaVersion\":\"v999\",\"flows\":{}}", "{"));
+    }
+
+    [Fact]
+    public void DiffParams_ShouldReportAddedRemovedAndChanged_WhenParamsFieldsChange()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"a\":1,\"b\":2}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"b\":3,\"c\":4}}}}";
+
+        var report = PatchDiffV1.DiffParams(oldPatchJson, newPatchJson);
+
+        Assert.Equal(3, report.Diffs.Count);
+
+        var removed = report.Diffs[0];
+        Assert.Equal(PatchParamDiffKind.Removed, removed.Kind);
+        Assert.Equal("HomeFeed", removed.FlowName);
+        Assert.Null(removed.ExperimentLayer);
+        Assert.Null(removed.ExperimentVariant);
+        Assert.Equal("$.flows.HomeFeed.params.a", removed.Path);
+
+        var changed = report.Diffs[1];
+        Assert.Equal(PatchParamDiffKind.Changed, changed.Kind);
+        Assert.Equal("HomeFeed", changed.FlowName);
+        Assert.Null(changed.ExperimentLayer);
+        Assert.Null(changed.ExperimentVariant);
+        Assert.Equal("$.flows.HomeFeed.params.b", changed.Path);
+
+        var added = report.Diffs[2];
+        Assert.Equal(PatchParamDiffKind.Added, added.Kind);
+        Assert.Equal("HomeFeed", added.FlowName);
+        Assert.Null(added.ExperimentLayer);
+        Assert.Null(added.ExperimentVariant);
+        Assert.Equal("$.flows.HomeFeed.params.c", added.Path);
+    }
+
+    [Fact]
+    public void DiffParams_ShouldReportChanged_WhenNestedParamFieldChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"a\":{\"b\":1,\"c\":2}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"a\":{\"b\":2,\"c\":2}}}}}";
+
+        var report = PatchDiffV1.DiffParams(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchParamDiffKind.Changed, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("$.flows.HomeFeed.params.a.b", diff.Path);
+    }
+
+    [Fact]
+    public void DiffParams_ShouldBeEmpty_WhenOnlyParamPropertyOrderChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"a\":1,\"b\":2,\"c\":{\"d\":3,\"e\":4}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"c\":{\"e\":4,\"d\":3},\"b\":2,\"a\":1}}}}";
+
+        var report = PatchDiffV1.DiffParams(oldPatchJson, newPatchJson);
+
+        Assert.Empty(report.Diffs);
+    }
+
+    [Fact]
+    public void DiffParams_ShouldReportChanged_WhenExperimentPatchParamChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"params\":{\"a\":1}}}]}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"params\":{\"a\":2}}}]}}}";
+
+        var report = PatchDiffV1.DiffParams(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchParamDiffKind.Changed, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("l1", diff.ExperimentLayer);
+        Assert.Equal("v1", diff.ExperimentVariant);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.params.a", diff.Path);
+    }
+
+    [Fact]
+    public void DiffParams_ShouldThrow_WhenJsonIsInvalid()
+    {
+        var validPatchJson = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
+        Assert.Throws<FormatException>(() => PatchDiffV1.DiffParams("{", validPatchJson));
+    }
+
+    [Fact]
+    public void DiffParams_ShouldThrow_WhenNewJsonIsInvalid()
+    {
+        var validPatchJson = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
+        Assert.Throws<FormatException>(() => PatchDiffV1.DiffParams(validPatchJson, "{"));
+    }
+
+    [Fact]
+    public void DiffParams_ShouldThrow_WhenSchemaVersionIsUnsupported()
+    {
+        var validPatchJson = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
+        Assert.Throws<NotSupportedException>(() => PatchDiffV1.DiffParams("{\"schemaVersion\":\"v999\",\"flows\":{}}", validPatchJson));
+    }
+
+    [Fact]
+    public void DiffParams_ShouldThrowNotSupported_WhenOldSchemaUnsupported_EvenIfNewJsonIsInvalid()
+    {
+        Assert.Throws<NotSupportedException>(() => PatchDiffV1.DiffParams("{\"schemaVersion\":\"v999\",\"flows\":{}}", "{"));
+    }
+
+    [Fact]
+    public void DiffFanoutMax_ShouldReportAdded_WhenStageFanoutMaxIsAdded()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":2}}}}}";
+
+        var report = PatchDiffV1.DiffFanoutMax(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchFanoutMaxDiffKind.Added, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.fanoutMax", diff.Path);
+    }
+
+    [Fact]
+    public void DiffFanoutMax_ShouldReportRemoved_WhenStageFanoutMaxIsRemoved()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":2}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{}}}}}";
+
+        var report = PatchDiffV1.DiffFanoutMax(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchFanoutMaxDiffKind.Removed, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.fanoutMax", diff.Path);
+    }
+
+    [Fact]
+    public void DiffFanoutMax_ShouldReportChanged_WhenStageFanoutMaxChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":2}}}}}";
+
+        var report = PatchDiffV1.DiffFanoutMax(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchFanoutMaxDiffKind.Changed, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Null(diff.ExperimentLayer);
+        Assert.Null(diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.fanoutMax", diff.Path);
+    }
+
+    [Fact]
+    public void DiffFanoutMax_ShouldReportChanged_WhenExperimentPatchStageFanoutMaxChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1}}}}]}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":2}}}}]}}}";
+
+        var report = PatchDiffV1.DiffFanoutMax(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchFanoutMaxDiffKind.Changed, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("l1", diff.ExperimentLayer);
+        Assert.Equal("v1", diff.ExperimentVariant);
+        Assert.Equal("s1", diff.StageName);
+        Assert.Equal("$.flows.HomeFeed.experiments[0].patch.stages.s1.fanoutMax", diff.Path);
+    }
+
+    [Fact]
+    public void DiffFanoutMax_ShouldBeEmpty_WhenOnlyExperimentOrderChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1}}}},{\"layer\":\"l2\",\"variant\":\"v2\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":2}}}}]}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l2\",\"variant\":\"v2\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":2}}}},{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1}}}}]}}}";
+
+        var report = PatchDiffV1.DiffFanoutMax(oldPatchJson, newPatchJson);
+
+        Assert.Empty(report.Diffs);
+    }
+
+    [Fact]
+    public void DiffEmergency_ShouldReportAdded_WhenEmergencyIsAdded()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{}}}}}}";
+
+        var report = PatchDiffV1.DiffEmergency(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchEmergencyDiffKind.Added, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("$.flows.HomeFeed.emergency", diff.Path);
+    }
+
+    [Fact]
+    public void DiffEmergency_ShouldReportChanged_WhenEmergencyReasonChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"emergency\":{\"reason\":\"r1\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{}}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"emergency\":{\"reason\":\"r2\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{}}}}}}";
+
+        var report = PatchDiffV1.DiffEmergency(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchEmergencyDiffKind.Changed, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("$.flows.HomeFeed.emergency.reason", diff.Path);
+    }
+
+    [Fact]
+    public void DiffEmergency_ShouldReportChanged_WhenEmergencyPatchFanoutMaxChanges()
+    {
+        var oldPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1}}}}}}}";
+
+        var newPatchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":2}}}}}}}";
+
+        var report = PatchDiffV1.DiffEmergency(oldPatchJson, newPatchJson);
+
+        var diff = Assert.Single(report.Diffs);
+        Assert.Equal(PatchEmergencyDiffKind.Changed, diff.Kind);
+        Assert.Equal("HomeFeed", diff.FlowName);
+        Assert.Equal("$.flows.HomeFeed.emergency.patch.stages.s1.fanoutMax", diff.Path);
+    }
+}
+

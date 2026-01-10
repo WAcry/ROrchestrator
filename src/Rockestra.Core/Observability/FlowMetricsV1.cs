@@ -1,0 +1,373 @@
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
+
+namespace Rockestra.Core.Observability;
+
+internal static class FlowMetricsV1
+{
+    private const string DurationUnit = "ms";
+    private const string CountUnit = "count";
+
+    private const string UnknownSkipCodeTagValue = "OTHER";
+    private const int MaxSkipCodeLength = 64;
+
+    private static readonly Meter Meter = new(FlowActivitySource.ActivitySourceName);
+
+    private static readonly Histogram<double> FlowLatencyMs = Meter.CreateHistogram<double>(
+        name: "rockestra.flow.latency.ms",
+        unit: DurationUnit,
+        description: "End-to-end flow latency for plan-template execution.");
+
+    private static readonly Counter<long> FlowOutcomes = Meter.CreateCounter<long>(
+        name: "rockestra.flow.outcomes",
+        unit: CountUnit,
+        description: "Flow outcomes count for plan-template execution.");
+
+    private static readonly Histogram<double> StepLatencyMs = Meter.CreateHistogram<double>(
+        name: "rockestra.step.latency.ms",
+        unit: DurationUnit,
+        description: "Step latency for plan-template execution.");
+
+    private static readonly Counter<long> StepOutcomes = Meter.CreateCounter<long>(
+        name: "rockestra.step.outcomes",
+        unit: CountUnit,
+        description: "Step outcomes count for plan-template execution.");
+
+    private static readonly Counter<long> StepSkippedReasons = Meter.CreateCounter<long>(
+        name: "rockestra.step.skipped.reasons",
+        unit: CountUnit,
+        description: "Step skip reasons count for plan-template execution.");
+
+    private static readonly Histogram<double> JoinLatencyMs = Meter.CreateHistogram<double>(
+        name: "rockestra.join.latency.ms",
+        unit: DurationUnit,
+        description: "Join latency for plan-template execution.");
+
+    private static readonly Counter<long> JoinOutcomes = Meter.CreateCounter<long>(
+        name: "rockestra.join.outcomes",
+        unit: CountUnit,
+        description: "Join outcomes count for plan-template execution.");
+
+    private static readonly Histogram<double> StageFanoutModuleLatencyMs = Meter.CreateHistogram<double>(
+        name: "rockestra.stage.fanout.module.latency.ms",
+        unit: DurationUnit,
+        description: "Stage fanout module latency for plan-template execution.");
+
+    private static readonly Counter<long> StageFanoutModuleOutcomes = Meter.CreateCounter<long>(
+        name: "rockestra.stage.fanout.module.outcomes",
+        unit: CountUnit,
+        description: "Stage fanout module outcomes count for plan-template execution.");
+
+    private static readonly Counter<long> StageFanoutModuleSkippedReasons = Meter.CreateCounter<long>(
+        name: "rockestra.stage.fanout.module.skipped.reasons",
+        unit: CountUnit,
+        description: "Stage fanout module skip reasons count for plan-template execution.");
+
+    private static readonly Counter<long> QosTierSelected = Meter.CreateCounter<long>(
+        name: "rockestra.qos.tier.selected",
+        unit: CountUnit,
+        description: "Selected QoS tier count for plan-template execution.");
+
+    private static readonly Counter<long> ConfigLkgFallbacks = Meter.CreateCounter<long>(
+        name: "rockestra.config.lkg.fallbacks",
+        unit: CountUnit,
+        description: "Last-known-good config fallback count for plan-template execution.");
+
+    private static readonly Counter<long> ConfigLkgSnapshotLoadFailures = Meter.CreateCounter<long>(
+        name: "rockestra.config.lkg.snapshot.load_failures",
+        unit: CountUnit,
+        description: "Last-known-good config snapshot load failures count.");
+
+    private static readonly Counter<long> ConfigLkgSnapshotPersistFailures = Meter.CreateCounter<long>(
+        name: "rockestra.config.lkg.snapshot.persist_failures",
+        unit: CountUnit,
+        description: "Last-known-good config snapshot persist failures count.");
+
+    internal static bool IsFlowEnabled => FlowLatencyMs.Enabled || FlowOutcomes.Enabled;
+
+    internal static bool IsStepEnabled => StepLatencyMs.Enabled || StepOutcomes.Enabled;
+
+    internal static bool IsStepSkipReasonEnabled => StepSkippedReasons.Enabled;
+
+    internal static bool IsJoinEnabled => JoinLatencyMs.Enabled || JoinOutcomes.Enabled;
+
+    internal static bool IsStageFanoutModuleEnabled => StageFanoutModuleLatencyMs.Enabled || StageFanoutModuleOutcomes.Enabled;
+
+    internal static bool IsStageFanoutModuleSkipReasonEnabled => StageFanoutModuleSkippedReasons.Enabled;
+
+    internal static long StartFlowTimer()
+    {
+        return FlowLatencyMs.Enabled ? Stopwatch.GetTimestamp() : 0;
+    }
+
+    internal static long StartStepTimer()
+    {
+        return StepLatencyMs.Enabled ? Stopwatch.GetTimestamp() : 0;
+    }
+
+    internal static long StartJoinTimer()
+    {
+        return JoinLatencyMs.Enabled ? Stopwatch.GetTimestamp() : 0;
+    }
+
+    internal static long StartStageFanoutModuleTimer()
+    {
+        return StageFanoutModuleLatencyMs.Enabled ? Stopwatch.GetTimestamp() : 0;
+    }
+
+    internal static void RecordFlow(long startTimestamp, string flowName, OutcomeKind outcomeKind)
+    {
+        var recordDuration = startTimestamp != 0 && FlowLatencyMs.Enabled;
+        var recordOutcome = FlowOutcomes.Enabled;
+
+        if (!recordDuration && !recordOutcome)
+        {
+            return;
+        }
+
+        TagList tags = default;
+        tags.Add(FlowActivitySource.TagFlowName, flowName);
+        tags.Add(FlowActivitySource.TagOutcomeKind, FlowActivitySource.GetOutcomeKindTagValue(outcomeKind));
+
+        if (recordDuration)
+        {
+            var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
+            FlowLatencyMs.Record(elapsed.TotalMilliseconds, tags);
+        }
+
+        if (recordOutcome)
+        {
+            FlowOutcomes.Add(1, tags);
+        }
+    }
+
+    internal static void RecordQosTierSelected(string flowName, QosTier qosTier)
+    {
+        if (!QosTierSelected.Enabled)
+        {
+            return;
+        }
+
+        TagList tags = default;
+        tags.Add("flow_name", flowName);
+        tags.Add("qos_tier", GetQosTierTagValue(qosTier));
+
+        QosTierSelected.Add(1, tags);
+    }
+
+    internal static void RecordConfigLkgFallback(string flowName)
+    {
+        if (!ConfigLkgFallbacks.Enabled)
+        {
+            return;
+        }
+
+        TagList tags = default;
+        tags.Add("flow_name", flowName);
+
+        ConfigLkgFallbacks.Add(1, tags);
+    }
+
+    internal static void RecordConfigLkgSnapshotLoadFailure()
+    {
+        if (!ConfigLkgSnapshotLoadFailures.Enabled)
+        {
+            return;
+        }
+
+        ConfigLkgSnapshotLoadFailures.Add(1);
+    }
+
+    internal static void RecordConfigLkgSnapshotPersistFailure()
+    {
+        if (!ConfigLkgSnapshotPersistFailures.Enabled)
+        {
+            return;
+        }
+
+        ConfigLkgSnapshotPersistFailures.Add(1);
+    }
+
+    internal static void RecordStep(long startTimestamp, string flowName, string moduleType, OutcomeKind outcomeKind)
+    {
+        var recordDuration = startTimestamp != 0 && StepLatencyMs.Enabled;
+        var recordOutcome = StepOutcomes.Enabled;
+
+        if (!recordDuration && !recordOutcome)
+        {
+            return;
+        }
+
+        TagList tags = default;
+        tags.Add(FlowActivitySource.TagFlowName, flowName);
+        tags.Add(FlowActivitySource.TagModuleType, moduleType);
+        tags.Add(FlowActivitySource.TagOutcomeKind, FlowActivitySource.GetOutcomeKindTagValue(outcomeKind));
+
+        if (recordDuration)
+        {
+            var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
+            StepLatencyMs.Record(elapsed.TotalMilliseconds, tags);
+        }
+
+        if (recordOutcome)
+        {
+            StepOutcomes.Add(1, tags);
+        }
+    }
+
+    internal static void RecordStepSkipReason(string flowName, string code)
+    {
+        if (!StepSkippedReasons.Enabled)
+        {
+            return;
+        }
+
+        var codeTagValue = GetSkipCodeTagValue(code);
+
+        TagList tags = default;
+        tags.Add(FlowActivitySource.TagFlowName, flowName);
+        tags.Add(FlowActivitySource.TagSkipCode, codeTagValue);
+
+        StepSkippedReasons.Add(1, tags);
+    }
+
+    internal static void RecordJoin(long startTimestamp, string flowName, OutcomeKind outcomeKind)
+    {
+        var recordDuration = startTimestamp != 0 && JoinLatencyMs.Enabled;
+        var recordOutcome = JoinOutcomes.Enabled;
+
+        if (!recordDuration && !recordOutcome)
+        {
+            return;
+        }
+
+        TagList tags = default;
+        tags.Add(FlowActivitySource.TagFlowName, flowName);
+        tags.Add(FlowActivitySource.TagOutcomeKind, FlowActivitySource.GetOutcomeKindTagValue(outcomeKind));
+
+        if (recordDuration)
+        {
+            var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
+            JoinLatencyMs.Record(elapsed.TotalMilliseconds, tags);
+        }
+
+        if (recordOutcome)
+        {
+            JoinOutcomes.Add(1, tags);
+        }
+    }
+
+    internal static void RecordStageFanoutModule(
+        long startTimestamp,
+        string flowName,
+        string stageName,
+        string moduleType,
+        OutcomeKind outcomeKind,
+        bool isShadow)
+    {
+        var recordDuration = startTimestamp != 0 && StageFanoutModuleLatencyMs.Enabled;
+        var recordOutcome = StageFanoutModuleOutcomes.Enabled;
+
+        if (!recordDuration && !recordOutcome)
+        {
+            return;
+        }
+
+        TagList tags = default;
+        tags.Add(FlowActivitySource.TagFlowName, flowName);
+        tags.Add(FlowActivitySource.TagStageName, stageName);
+        tags.Add(FlowActivitySource.TagModuleType, moduleType);
+        tags.Add(FlowActivitySource.TagOutcomeKind, FlowActivitySource.GetOutcomeKindTagValue(outcomeKind));
+        tags.Add(FlowActivitySource.TagExecutionPath, isShadow ? FlowActivitySource.ExecutionPathShadow : FlowActivitySource.ExecutionPathPrimary);
+
+        if (recordDuration)
+        {
+            var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
+            StageFanoutModuleLatencyMs.Record(elapsed.TotalMilliseconds, tags);
+        }
+
+        if (recordOutcome)
+        {
+            StageFanoutModuleOutcomes.Add(1, tags);
+        }
+    }
+
+    internal static void RecordStageFanoutModuleSkipReason(
+        string flowName,
+        string stageName,
+        string moduleType,
+        string code,
+        bool isShadow)
+    {
+        if (!StageFanoutModuleSkippedReasons.Enabled)
+        {
+            return;
+        }
+
+        var codeTagValue = GetSkipCodeTagValue(code);
+
+        TagList tags = default;
+        tags.Add(FlowActivitySource.TagFlowName, flowName);
+        tags.Add(FlowActivitySource.TagStageName, stageName);
+        tags.Add(FlowActivitySource.TagModuleType, moduleType);
+        tags.Add(FlowActivitySource.TagExecutionPath, isShadow ? FlowActivitySource.ExecutionPathShadow : FlowActivitySource.ExecutionPathPrimary);
+        tags.Add(FlowActivitySource.TagSkipCode, codeTagValue);
+
+        StageFanoutModuleSkippedReasons.Add(1, tags);
+    }
+
+    private static string GetSkipCodeTagValue(string code)
+    {
+        if (string.IsNullOrEmpty(code) || code.Length > MaxSkipCodeLength)
+        {
+            return UnknownSkipCodeTagValue;
+        }
+
+        var digitRun = 0;
+
+        for (var i = 0; i < code.Length; i++)
+        {
+            var c = code[i];
+
+            if (c >= 'A' && c <= 'Z')
+            {
+                digitRun = 0;
+                continue;
+            }
+
+            if (c == '_')
+            {
+                digitRun = 0;
+                continue;
+            }
+
+            if (c >= '0' && c <= '9')
+            {
+                digitRun++;
+                if (digitRun >= 6)
+                {
+                    return UnknownSkipCodeTagValue;
+                }
+
+                continue;
+            }
+
+            return UnknownSkipCodeTagValue;
+        }
+
+        return code;
+    }
+
+    private static string GetQosTierTagValue(QosTier tier)
+    {
+        return tier switch
+        {
+            QosTier.Full => "full",
+            QosTier.Conserve => "conserve",
+            QosTier.Emergency => "emergency",
+            QosTier.Fallback => "fallback",
+            _ => "full",
+        };
+    }
+}
+

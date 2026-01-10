@@ -1,10 +1,11 @@
-# ROrchestrator
+# Rockestra
 
-ROrchestrator is a high-performance, in-process request orchestration library for .NET.
+Rockestra is a high-performance, in-process request orchestration library for .NET.
 
-- `ROrchestrator.Core`: runtime primitives and execution engine
-- `ROrchestrator.Tooling`: JSON validation / explain / diff / preview helpers
-- `rorchestrator`: CLI (.NET tool)
+- `Rockestra.Core`: runtime primitives and execution engine
+- `Rockestra.Tooling`: JSON validation / explain / diff / preview helpers
+- `rock`: CLI (.NET tool, package id: `rockestra`)
 
 Status: beta.
+
 
