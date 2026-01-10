@@ -68,7 +68,7 @@ public sealed class ExecExplainJsonV1Tests
             userId: "u1");
 
         var flowContext = new FlowContext(services: EmptyServiceProvider.Instance, CancellationToken.None, FutureDeadline, requestOptions);
-        flowContext.EnableExecExplain(ExplainLevel.Standard);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
 
         var outcome = await host.ExecuteAsync<int, int>(flowName, request: 5, flowContext);
         Assert.True(outcome.IsOk);

@@ -12,6 +12,10 @@ public sealed class ExecExplain
     private readonly ExecExplainStageModule[] _stageModules;
     private readonly PatchEvaluatorV1.PatchOverlayAppliedV1[] _overlaysApplied;
     private readonly IReadOnlyDictionary<string, string> _variants;
+    private readonly ExplainLevel _requestedLevel;
+    private readonly string? _explainReason;
+    private readonly ExplainRedactionPolicy _policy;
+    private readonly string? _levelDowngradeReasonCode;
     private readonly ulong _configVersion;
     private readonly bool _hasConfigVersion;
     private readonly QosTier _qosSelectedTier;
@@ -21,6 +25,14 @@ public sealed class ExecExplain
     public string FlowName { get; }
 
     public ExplainLevel Level { get; }
+
+    public ExplainLevel RequestedLevel => _requestedLevel;
+
+    public string? ExplainReason => _explainReason;
+
+    public ExplainRedactionPolicy Policy => _policy;
+
+    public string? LevelDowngradeReasonCode => _levelDowngradeReasonCode;
 
     public ulong PlanHash { get; }
 
@@ -46,7 +58,11 @@ public sealed class ExecExplain
 
     internal ExecExplain(
         string flowName,
+        ExplainLevel requestedLevel,
         ExplainLevel level,
+        string? explainReason,
+        ExplainRedactionPolicy policy,
+        string? levelDowngradeReasonCode,
         ulong planHash,
         bool hasConfigVersion,
         ulong configVersion,
@@ -63,6 +79,21 @@ public sealed class ExecExplain
         if (string.IsNullOrEmpty(flowName))
         {
             throw new ArgumentException("FlowName must be non-empty.", nameof(flowName));
+        }
+
+        if ((uint)requestedLevel > (uint)ExplainLevel.Full)
+        {
+            throw new ArgumentOutOfRangeException(nameof(requestedLevel), requestedLevel, "Unsupported explain level.");
+        }
+
+        if ((uint)level > (uint)ExplainLevel.Full)
+        {
+            throw new ArgumentOutOfRangeException(nameof(level), level, "Unsupported explain level.");
+        }
+
+        if ((uint)policy > (uint)ExplainRedactionPolicy.Default)
+        {
+            throw new ArgumentOutOfRangeException(nameof(policy), policy, "Unsupported explain redaction policy.");
         }
 
         if (nodes is null)
@@ -91,6 +122,10 @@ public sealed class ExecExplain
 
         FlowName = flowName;
         Level = level;
+        _requestedLevel = requestedLevel;
+        _explainReason = explainReason;
+        _policy = policy;
+        _levelDowngradeReasonCode = levelDowngradeReasonCode;
         PlanHash = planHash;
         _hasConfigVersion = hasConfigVersion;
         _configVersion = configVersion;

@@ -25,7 +25,7 @@ public sealed class ExecutionEngineSelectorGateTests
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
-        flowContext.EnableExecExplain(ExplainLevel.Standard);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
 
         var invocationCollector = new FlowTestInvocationCollector();
         flowContext.ConfigureForTesting(overrideProvider: null, invocationCollector);

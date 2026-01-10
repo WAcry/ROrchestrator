@@ -19,7 +19,7 @@ public sealed class ExecutionEngineShadowTests
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
-        flowContext.EnableExecExplain(ExplainLevel.Standard);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
 
         _ = await flowContext.GetConfigSnapshotAsync(new StaticConfigProvider(configVersion: 1, patchJson));
 

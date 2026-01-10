@@ -35,7 +35,7 @@ public sealed class FlowTestHost
             flowContext.SetConfigSnapshotForTesting(configSnapshot.Value);
         }
 
-        flowContext.EnableExecExplain(ExplainLevel.Standard);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
 
         var invocationCollector = new FlowTestInvocationCollector();
         flowContext.ConfigureForTesting(_overrideProvider, invocationCollector);

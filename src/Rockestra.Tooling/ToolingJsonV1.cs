@@ -11,6 +11,12 @@ public static class ToolingJsonV1
 {
     private const string ToolingJsonVersion = "v1";
 
+    private static string EncodeRedactedJson(ReadOnlyMemory<byte> jsonUtf8)
+    {
+        var redacted = ExplainRedactor.Redact(jsonUtf8, ExplainRedactionPolicy.Default);
+        return Encoding.UTF8.GetString(redacted);
+    }
+
     public static ToolingCommandResult ValidatePatchJson(string patchJson, FlowRegistry registry, ModuleCatalog catalog)
     {
         return ValidatePatchJson(patchJson, registry, catalog, SelectorRegistry.Empty);
@@ -290,7 +296,7 @@ public static class ToolingJsonV1
         writer.WriteEndObject();
         writer.Flush();
 
-        return Encoding.UTF8.GetString(output.WrittenSpan);
+        return EncodeRedactedJson(output.WrittenMemory);
     }
 
     private static string BuildPreviewMatrixJson(
@@ -393,7 +399,7 @@ public static class ToolingJsonV1
         writer.WriteEndObject();
         writer.Flush();
 
-        return Encoding.UTF8.GetString(output.WrittenSpan);
+        return EncodeRedactedJson(output.WrittenMemory);
     }
 
     private static string BuildPreviewMatrixErrorJson(string code, string message)
@@ -418,7 +424,7 @@ public static class ToolingJsonV1
         writer.WriteEndObject();
         writer.Flush();
 
-        return Encoding.UTF8.GetString(output.WrittenSpan);
+        return EncodeRedactedJson(output.WrittenMemory);
     }
 
     private static Dictionary<string, int>? ParseMaxInFlightMap(string patchJson)
@@ -2060,7 +2066,7 @@ public static class ToolingJsonV1
         writer.WriteEndObject();
         writer.Flush();
 
-        return Encoding.UTF8.GetString(output.WrittenSpan);
+        return EncodeRedactedJson(output.WrittenMemory);
     }
 
     private static readonly IReadOnlyDictionary<string, string> EmptyVariantDictionary =
@@ -2115,6 +2121,33 @@ public static class ToolingJsonV1
         writer.WriteString("flow_name", explain.FlowName);
         writer.WriteString("plan_template_hash", explain.PlanTemplateHash.ToString("X16"));
 
+        writer.WritePropertyName("stages");
+        writer.WriteStartArray();
+
+        var stageContracts = explain.StageContracts;
+
+        if (stageContracts.Count != 0)
+        {
+            var sorted = new PlanExplainStageContract[stageContracts.Count];
+
+            for (var i = 0; i < sorted.Length; i++)
+            {
+                sorted[i] = stageContracts[i];
+            }
+
+            if (sorted.Length > 1)
+            {
+                Array.Sort(sorted, PlanExplainStageContractByNameComparer.Instance);
+            }
+
+            for (var i = 0; i < sorted.Length; i++)
+            {
+                WriteStageContractSummary(writer, sorted[i]);
+            }
+        }
+
+        writer.WriteEndArray();
+
         writer.WritePropertyName("nodes");
         writer.WriteStartArray();
 
@@ -2134,7 +2167,66 @@ public static class ToolingJsonV1
         writer.WriteEndObject();
         writer.Flush();
 
-        return Encoding.UTF8.GetString(output.WrittenSpan);
+        return EncodeRedactedJson(output.WrittenMemory);
+    }
+
+    private static void WriteStageContractSummary(Utf8JsonWriter writer, PlanExplainStageContract stageContract)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("stage_name", stageContract.StageName);
+
+        var contract = stageContract.Contract;
+
+        writer.WritePropertyName("contract");
+        writer.WriteStartObject();
+        writer.WriteBoolean("allows_dynamic_modules", contract.AllowsDynamicModules);
+
+        var allowed = contract.AllowedModuleTypes;
+
+        if (!contract.AllowsDynamicModules || allowed.Length == 0)
+        {
+            writer.WriteNull("allowed_module_types");
+        }
+        else
+        {
+            var allowedTypes = new string[allowed.Length];
+
+            for (var i = 0; i < allowedTypes.Length; i++)
+            {
+                allowedTypes[i] = allowed[i];
+            }
+
+            if (allowedTypes.Length > 1)
+            {
+                Array.Sort(allowedTypes, StringComparer.Ordinal);
+            }
+
+            writer.WritePropertyName("allowed_module_types");
+            writer.WriteStartArray();
+
+            for (var i = 0; i < allowedTypes.Length; i++)
+            {
+                writer.WriteStringValue(allowedTypes[i]);
+            }
+
+            writer.WriteEndArray();
+        }
+
+        writer.WriteNumber("max_modules_warn", contract.MaxModulesWarn);
+        writer.WriteNumber("max_modules_hard", contract.MaxModulesHard);
+        writer.WriteEndObject();
+
+        writer.WriteEndObject();
+    }
+
+    private sealed class PlanExplainStageContractByNameComparer : IComparer<PlanExplainStageContract>
+    {
+        public static readonly PlanExplainStageContractByNameComparer Instance = new();
+
+        public int Compare(PlanExplainStageContract x, PlanExplainStageContract y)
+        {
+            return string.CompareOrdinal(x.StageName, y.StageName);
+        }
     }
 
     private static void WriteExplainNode(Utf8JsonWriter writer, PlanExplainNode node)
@@ -2254,7 +2346,7 @@ public static class ToolingJsonV1
         writer.WriteEndObject();
         writer.Flush();
 
-        return Encoding.UTF8.GetString(output.WrittenSpan);
+        return EncodeRedactedJson(output.WrittenMemory);
     }
 
     private static string BuildValidateJson(ValidationReport report)
@@ -2297,7 +2389,7 @@ public static class ToolingJsonV1
         writer.WriteEndObject();
         writer.Flush();
 
-        return Encoding.UTF8.GetString(output.WrittenSpan);
+        return EncodeRedactedJson(output.WrittenMemory);
     }
 
     private static void WriteFinding(Utf8JsonWriter writer, ValidationFinding finding)
@@ -2337,7 +2429,7 @@ public static class ToolingJsonV1
         writer.WriteEndObject();
         writer.Flush();
 
-        return Encoding.UTF8.GetString(output.WrittenSpan);
+        return EncodeRedactedJson(output.WrittenMemory);
     }
 
     private enum RiskLevel
@@ -2762,7 +2854,7 @@ public static class ToolingJsonV1
         writer.WriteEndObject();
         writer.Flush();
 
-        return Encoding.UTF8.GetString(output.WrittenSpan);
+        return EncodeRedactedJson(output.WrittenMemory);
     }
 
     private static void WriteModuleDiffs(Utf8JsonWriter writer, IReadOnlyList<PatchModuleDiff> diffs)

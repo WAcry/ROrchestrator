@@ -10,6 +10,63 @@ public sealed class ExecExplainJsonV1QosDecisionTests
     private static readonly DateTimeOffset FutureDeadline = new(2100, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public async Task ExportJson_WhenFullWithoutReason_ShouldDowngradeAndNotCollectSignals()
+    {
+        const string flowName = "QosDecision_FullWithoutReason";
+
+        var registry = new FlowRegistry();
+        var catalog = new ModuleCatalog();
+        catalog.Register<int, int>("test.compute", _ => new ComputeModule());
+
+        registry.Register(
+            flowName,
+            FlowBlueprint.Define<int, int>(flowName)
+                .Step("compute", moduleType: "test.compute")
+                .Join<int>(
+                    "final",
+                    ctx =>
+                    {
+                        Assert.True(ctx.TryGetNodeOutcome<int>("compute", out var outcome));
+                        return new ValueTask<Outcome<int>>(outcome);
+                    })
+                .Build());
+
+        var provider = new FixedQosProvider(
+            tier: QosTier.Emergency,
+            reasonCode: "PRESSURE_HIGH",
+            signals: new Dictionary<string, string>
+            {
+                { "b", "2" },
+                { "a", "1" },
+            });
+
+        var host = new FlowHost(registry, catalog, provider);
+
+        var flowContext = new FlowContext(services: EmptyServiceProvider.Instance, CancellationToken.None, FutureDeadline);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Full));
+
+        var outcome = await host.ExecuteAsync<int, int>(flowName, request: 5, flowContext);
+        Assert.True(outcome.IsOk);
+
+        Assert.True(flowContext.TryGetExecExplain(out var explain));
+
+        var json = ExecExplainJsonV1.ExportJson(explain);
+
+        Assert.False(provider.LastRequestCollectSignals);
+
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+
+        Assert.Equal("standard", root.GetProperty("level").GetString());
+
+        var options = root.GetProperty("explain_options");
+        Assert.Equal("full", options.GetProperty("requested_level").GetString());
+        Assert.Equal("standard", options.GetProperty("effective_level").GetString());
+        Assert.Equal(JsonValueKind.Null, options.GetProperty("reason").ValueKind);
+        Assert.Equal("FULL_REASON_REQUIRED", options.GetProperty("downgrade_reason").GetString());
+    }
+
+    [Fact]
     public async Task ExportJson_ShouldNotRequestSignals_ByDefault()
     {
         const string flowName = "QosDecision_NoSignals";
@@ -43,7 +100,7 @@ public sealed class ExecExplainJsonV1QosDecisionTests
         var host = new FlowHost(registry, catalog, provider);
 
         var flowContext = new FlowContext(services: EmptyServiceProvider.Instance, CancellationToken.None, FutureDeadline);
-        flowContext.EnableExecExplain(ExplainLevel.Standard);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
 
         var outcome = await host.ExecuteAsync<int, int>(flowName, request: 5, flowContext);
         Assert.True(outcome.IsOk);
@@ -96,7 +153,7 @@ public sealed class ExecExplainJsonV1QosDecisionTests
         var host = new FlowHost(registry, catalog, provider);
 
         var flowContext = new FlowContext(services: EmptyServiceProvider.Instance, CancellationToken.None, FutureDeadline);
-        flowContext.EnableExecExplain(ExplainLevel.Full);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Full, reason: "qos_signals"));
 
         var outcome = await host.ExecuteAsync<int, int>(flowName, request: 5, flowContext);
         Assert.True(outcome.IsOk);
@@ -173,7 +230,7 @@ public sealed class ExecExplainJsonV1QosDecisionTests
         var host = new FlowHost(registry, catalog, provider);
 
         var flowContext = new FlowContext(services: EmptyServiceProvider.Instance, CancellationToken.None, FutureDeadline);
-        flowContext.EnableExecExplain(ExplainLevel.Minimal);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Minimal));
 
         var outcome = await host.ExecuteAsync<int, int>(flowName, request: 5, flowContext);
         Assert.True(outcome.IsOk);
@@ -215,7 +272,7 @@ public sealed class ExecExplainJsonV1QosDecisionTests
         var host = new FlowHost(registry, catalog, new ThrowingQosProvider());
 
         var flowContext = new FlowContext(services: EmptyServiceProvider.Instance, CancellationToken.None, FutureDeadline);
-        flowContext.EnableExecExplain(ExplainLevel.Full);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Full, reason: "qos_provider_error"));
 
         var outcome = await host.ExecuteAsync<int, int>(flowName, request: 5, flowContext);
         Assert.True(outcome.IsOk);

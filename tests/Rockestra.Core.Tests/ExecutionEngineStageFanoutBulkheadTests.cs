@@ -46,7 +46,7 @@ public sealed class ExecutionEngineStageFanoutBulkheadTests
             CancellationToken.None,
             FutureDeadline,
             requestOptions: new FlowRequestOptions(userId: "A"));
-        flowContextA.EnableExecExplain(ExplainLevel.Standard);
+        flowContextA.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
         _ = await flowContextA.GetConfigSnapshotAsync(new StaticConfigProvider(configVersion: 1, patchJson));
 
         var taskA = engine.ExecuteAsync(template, request: 0, flowContextA).AsTask();
@@ -63,7 +63,7 @@ public sealed class ExecutionEngineStageFanoutBulkheadTests
             CancellationToken.None,
             FutureDeadline,
             requestOptions: new FlowRequestOptions(userId: "B"));
-        flowContextB.EnableExecExplain(ExplainLevel.Standard);
+        flowContextB.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
         _ = await flowContextB.GetConfigSnapshotAsync(new StaticConfigProvider(configVersion: 1, patchJson));
 
         var resultB = await engine.ExecuteAsync(template, request: 0, flowContextB);

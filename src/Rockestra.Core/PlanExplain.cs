@@ -5,6 +5,7 @@ namespace Rockestra.Core;
 public sealed class PlanExplain
 {
     private readonly PlanExplainNode[] _nodes;
+    private readonly PlanExplainStageContract[] _stageContracts;
 
     public string FlowName { get; }
 
@@ -12,7 +13,9 @@ public sealed class PlanExplain
 
     public IReadOnlyList<PlanExplainNode> Nodes => _nodes;
 
-    internal PlanExplain(string flowName, ulong planTemplateHash, PlanExplainNode[] nodes)
+    public IReadOnlyList<PlanExplainStageContract> StageContracts => _stageContracts;
+
+    internal PlanExplain(string flowName, ulong planTemplateHash, PlanExplainNode[] nodes, PlanExplainStageContract[] stageContracts)
     {
         if (string.IsNullOrEmpty(flowName))
         {
@@ -32,6 +35,20 @@ public sealed class PlanExplain
         FlowName = flowName;
         PlanTemplateHash = planTemplateHash;
         _nodes = nodes;
+        _stageContracts = stageContracts ?? Array.Empty<PlanExplainStageContract>();
+    }
+}
+
+public readonly struct PlanExplainStageContract
+{
+    public string StageName { get; }
+
+    public StageContract Contract { get; }
+
+    internal PlanExplainStageContract(string stageName, StageContract contract)
+    {
+        StageName = stageName ?? throw new ArgumentNullException(nameof(stageName));
+        Contract = contract;
     }
 }
 

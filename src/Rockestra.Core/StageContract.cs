@@ -44,7 +44,7 @@ public readonly struct StageContract
 
     public int MaxModulesHard => _maxModulesHard;
 
-    internal string[] AllowedModuleTypes => _allowedModuleTypes;
+    public ReadOnlySpan<string> AllowedModuleTypes => _allowedModuleTypes;
 
     internal bool IsModuleTypeAllowed(string moduleType)
     {
@@ -194,4 +194,3 @@ internal readonly struct StageContractEntry
         Contract = contract;
     }
 }
-

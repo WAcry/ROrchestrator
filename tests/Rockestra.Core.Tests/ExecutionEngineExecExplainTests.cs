@@ -96,7 +96,7 @@ public sealed class ExecutionEngineExecExplainTests
                     { "l1", "A" },
                 }));
 
-        flowContext.EnableExecExplain(ExplainLevel.Standard);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
 
         var configProvider = new StaticConfigProvider(configVersion: 123, patchJson);
         _ = await flowContext.GetConfigSnapshotAsync(configProvider);
@@ -157,7 +157,7 @@ public sealed class ExecutionEngineExecExplainTests
                     { "l1", "A" },
                 }));
 
-        flowContext.EnableExecExplain(ExplainLevel.Minimal);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Minimal));
 
         var configProvider = new StaticConfigProvider(configVersion: 123, patchJson);
         _ = await flowContext.GetConfigSnapshotAsync(configProvider);

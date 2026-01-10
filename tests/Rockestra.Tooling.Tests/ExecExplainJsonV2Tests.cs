@@ -69,7 +69,7 @@ public sealed class ExecExplainJsonV2Tests
             userId: "u1");
 
         var flowContext = new FlowContext(services: EmptyServiceProvider.Instance, CancellationToken.None, FutureDeadline, requestOptions);
-        flowContext.EnableExecExplain(ExplainLevel.Standard);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
 
         var outcome = await host.ExecuteAsync<int, int>(flowName, request: 5, flowContext);
         Assert.True(outcome.IsOk);
@@ -126,7 +126,7 @@ public sealed class ExecExplainJsonV2Tests
         var host = new FlowHost(registry, catalog, new StaticConfigProvider(configVersion: 1, patchJson));
 
         var flowContext = new FlowContext(services: EmptyServiceProvider.Instance, CancellationToken.None, FutureDeadline);
-        flowContext.EnableExecExplain(ExplainLevel.Standard);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
 
         var outcome = await host.ExecuteAsync<int, int>(flowName, request: 5, flowContext);
         Assert.True(outcome.IsOk);

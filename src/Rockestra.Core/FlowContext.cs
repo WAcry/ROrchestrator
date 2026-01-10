@@ -176,22 +176,28 @@ public sealed class FlowContext
         _qosSignals = signals;
     }
 
-    public void EnableExecExplain(ExplainLevel level = ExplainLevel.Minimal)
+    public void EnableExecExplain()
     {
-        if ((uint)level > (uint)ExplainLevel.Full)
-        {
-            throw new ArgumentOutOfRangeException(nameof(level), level, "Unsupported explain level.");
-        }
+        EnableExecExplain(new ExplainOptions(ExplainLevel.Minimal));
+    }
 
+    public void EnableExecExplain(ExplainOptions options)
+    {
         var collector = _execExplainCollector;
 
         if (collector is null)
         {
-            _execExplainCollector = new ExecExplainCollectorV1(level);
+            _execExplainCollector = new ExecExplainCollectorV1(options);
             return;
         }
 
-        collector.SetLevel(level);
+        collector.SetOptions(options);
+    }
+
+    [Obsolete("Use EnableExecExplain(ExplainOptions) instead. Full explain requires a reason and may be downgraded.")]
+    public void EnableExecExplain(ExplainLevel level = ExplainLevel.Minimal)
+    {
+        EnableExecExplain(new ExplainOptions(level));
     }
 
     public bool TryGetExecExplain(out ExecExplain explain)
@@ -406,6 +412,152 @@ public sealed class FlowContext
             Volatile.Write(ref _paramsCacheState, 1);
             return computed;
         }
+    }
+
+    public bool TryGetParamsExplain(out ParamsExplain explain)
+    {
+        var collector = _execExplainCollector;
+
+        if (collector is null || collector.Level == ExplainLevel.Minimal)
+        {
+            explain = default;
+            return false;
+        }
+
+        var flowName = _currentFlowName;
+        var paramsType = _flowParamsType;
+        var defaultParams = _flowDefaultParams;
+
+        if (string.IsNullOrEmpty(flowName) || paramsType is null || defaultParams is null)
+        {
+            explain = default;
+            return false;
+        }
+
+        var configVersion = 0UL;
+        var patchJson = string.Empty;
+
+        if (TryGetConfigSnapshot(out var snapshot))
+        {
+            configVersion = snapshot.ConfigVersion;
+            patchJson = snapshot.PatchJson;
+        }
+
+        var defaultParamsJson = JsonSerializer.SerializeToUtf8Bytes(defaultParams, paramsType);
+
+        using var defaultDocument = JsonDocument.Parse(defaultParamsJson);
+        var defaultElement = defaultDocument.RootElement;
+
+        if (defaultElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException($"Default params JSON must be an object. Flow: '{flowName}'.");
+        }
+
+        var variants = _variants;
+        var qosTier = _qosSelectedTier;
+
+        if (TryGetParamsExplainFromActiveEvaluation(flowName, configVersion, defaultElement, variants, qosTier, collector, out explain))
+        {
+            return true;
+        }
+
+        return TryGetParamsExplainFromPatchJson(flowName, patchJson, defaultElement, variants, qosTier, collector, out explain);
+    }
+
+    private bool TryGetParamsExplainFromActiveEvaluation(
+        string flowName,
+        ulong configVersion,
+        JsonElement defaultElement,
+        IReadOnlyDictionary<string, string> variants,
+        QosTier qosTier,
+        ExecExplainCollectorV1 collector,
+        out ParamsExplain explain)
+    {
+        var evaluation = Volatile.Read(ref _activePatchEvaluation);
+
+        if (evaluation is null
+            || Volatile.Read(ref _activePatchEvaluationConfigVersion) != configVersion
+            || !string.Equals(evaluation.FlowName, flowName, StringComparison.Ordinal))
+        {
+            explain = default;
+            return false;
+        }
+
+        if (!evaluation.TryGetFlowPatch(out var flowPatch) || flowPatch.ValueKind != JsonValueKind.Object)
+        {
+            return TryGetParamsExplainFromFlowPatch(defaultElement, flowPatch: default, variants, qosTier, collector, out explain);
+        }
+
+        return TryGetParamsExplainFromFlowPatch(defaultElement, flowPatch, variants, qosTier, collector, out explain);
+    }
+
+    private static bool TryGetParamsExplainFromPatchJson(
+        string flowName,
+        string patchJson,
+        JsonElement defaultElement,
+        IReadOnlyDictionary<string, string> variants,
+        QosTier qosTier,
+        ExecExplainCollectorV1 collector,
+        out ParamsExplain explain)
+    {
+        if (string.IsNullOrEmpty(patchJson))
+        {
+            return TryGetParamsExplainFromFlowPatch(defaultElement, flowPatch: default, variants, qosTier, collector, out explain);
+        }
+
+        using var patchDocument = JsonDocument.Parse(patchJson);
+        var root = patchDocument.RootElement;
+
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("schemaVersion", out var schemaVersion)
+            || schemaVersion.ValueKind != JsonValueKind.String
+            || !schemaVersion.ValueEquals("v1")
+            || !root.TryGetProperty("flows", out var flowsElement)
+            || flowsElement.ValueKind != JsonValueKind.Object
+            || !flowsElement.TryGetProperty(flowName, out var flowPatch)
+            || flowPatch.ValueKind != JsonValueKind.Object)
+        {
+            return TryGetParamsExplainFromFlowPatch(defaultElement, flowPatch: default, variants, qosTier, collector, out explain);
+        }
+
+        return TryGetParamsExplainFromFlowPatch(defaultElement, flowPatch, variants, qosTier, collector, out explain);
+    }
+
+    private static bool TryGetParamsExplainFromFlowPatch(
+        JsonElement defaultElement,
+        JsonElement flowPatch,
+        IReadOnlyDictionary<string, string> variants,
+        QosTier qosTier,
+        ExecExplainCollectorV1 collector,
+        out ParamsExplain explain)
+    {
+        if (collector.Level == ExplainLevel.Standard)
+        {
+            if (!FlowParamsResolver.TryComputeParamsHash(defaultElement, flowPatch, variants, qosTier, out var hash))
+            {
+                explain = default;
+                return false;
+            }
+
+            explain = new ParamsExplain(paramsHash: hash.ToString("X16"), effectiveJsonUtf8: null, sources: null);
+            return true;
+        }
+
+        if (collector.Level == ExplainLevel.Full)
+        {
+            if (!FlowParamsResolver.TryComputeExplainFull(defaultElement, flowPatch, variants, qosTier, out var effectiveJsonUtf8, out var sources, out var hash))
+            {
+                explain = default;
+                return false;
+            }
+
+            var redacted = ExplainRedactor.RedactParamsEffective(effectiveJsonUtf8.AsMemory(), collector.Policy);
+            explain = new ParamsExplain(paramsHash: hash.ToString("X16"), redacted, sources);
+            return true;
+        }
+
+        explain = default;
+        return false;
     }
 
     private TParams ComputeParams<TParams>(string flowName, string patchJson, ulong configVersion)

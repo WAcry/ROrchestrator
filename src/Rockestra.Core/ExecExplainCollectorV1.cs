@@ -11,7 +11,11 @@ internal sealed class ExecExplainCollectorV1
     private List<ExecExplainStageModule>? _stageModules;
     private ExecExplain? _explain;
     private string? _flowName;
+    private ExplainLevel _requestedLevel;
     private ExplainLevel _level;
+    private string? _reason;
+    private ExplainRedactionPolicy _policy;
+    private string? _levelDowngradeReasonCode;
     private ulong _planHash;
     private PatchEvaluatorV1.PatchOverlayAppliedV1[]? _overlaysApplied;
     private IReadOnlyDictionary<string, string>? _variants;
@@ -23,14 +27,25 @@ internal sealed class ExecExplainCollectorV1
 
     public ExplainLevel Level => _level;
 
-    public ExecExplainCollectorV1(ExplainLevel level)
+    public ExplainLevel RequestedLevel => _requestedLevel;
+
+    public string? ExplainReason => _reason;
+
+    public ExplainRedactionPolicy Policy => _policy;
+
+    public string? LevelDowngradeReasonCode => _levelDowngradeReasonCode;
+
+    public ExecExplainCollectorV1(ExplainOptions options)
     {
-        _level = level;
+        SetOptions(options);
     }
 
-    public void SetLevel(ExplainLevel level)
+    public void SetOptions(ExplainOptions options)
     {
-        _level = level;
+        _requestedLevel = options.Level;
+        _reason = options.Reason;
+        _policy = options.Policy;
+        _level = ApplyReasonGate(_requestedLevel, _reason, out _levelDowngradeReasonCode);
     }
 
     public void Clear()
@@ -45,6 +60,18 @@ internal sealed class ExecExplainCollectorV1
         _flowStartTimestamp = 0;
         _flowEndTimestamp = 0;
         _active = false;
+    }
+
+    private static ExplainLevel ApplyReasonGate(ExplainLevel requestedLevel, string? reason, out string? downgradeReasonCode)
+    {
+        if (requestedLevel == ExplainLevel.Full && string.IsNullOrWhiteSpace(reason))
+        {
+            downgradeReasonCode = "FULL_REASON_REQUIRED";
+            return ExplainLevel.Standard;
+        }
+
+        downgradeReasonCode = null;
+        return requestedLevel;
     }
 
     public void Start(string flowName, ulong planHash, IReadOnlyList<PlanNodeTemplate> nodes)
@@ -236,7 +263,11 @@ internal sealed class ExecExplainCollectorV1
 
         _explain = new ExecExplain(
             _flowName!,
+            _requestedLevel,
             _level,
+            _reason,
+            _policy,
+            _levelDowngradeReasonCode,
             _planHash,
             hasConfigVersion,
             configVersion,

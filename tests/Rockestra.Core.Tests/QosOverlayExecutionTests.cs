@@ -43,7 +43,7 @@ public sealed class QosOverlayExecutionTests
         var hostFull = new FlowHost(registry, catalog, configProvider);
 
         var fullContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
-        fullContext.EnableExecExplain(ExplainLevel.Standard);
+        fullContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
 
         var fullOutcome = await hostFull.ExecuteAsync<int, int>(flowName, request: 0, fullContext);
         Assert.True(fullOutcome.IsOk);
@@ -61,7 +61,7 @@ public sealed class QosOverlayExecutionTests
         var hostEmergency = new FlowHost(registry, catalog, configProvider, new FixedQosTierProvider(QosTier.Emergency));
 
         var emergencyContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
-        emergencyContext.EnableExecExplain(ExplainLevel.Standard);
+        emergencyContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
 
         var emergencyOutcome = await hostEmergency.ExecuteAsync<int, int>(flowName, request: 0, emergencyContext);
         Assert.True(emergencyOutcome.IsOk);

@@ -29,7 +29,7 @@ public sealed class ExecutionEngineStageFanoutTests
                     { "l1", "A" },
                 }));
 
-        flowContext.EnableExecExplain(ExplainLevel.Standard);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
 
         var invocationCollector = new FlowTestInvocationCollector();
         flowContext.ConfigureForTesting(overrideProvider: null, invocationCollector);
@@ -95,7 +95,7 @@ public sealed class ExecutionEngineStageFanoutTests
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
-        flowContext.EnableExecExplain(ExplainLevel.Standard);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
 
         var invocationCollector = new FlowTestInvocationCollector();
         flowContext.ConfigureForTesting(overrideProvider: null, invocationCollector);
@@ -148,7 +148,7 @@ public sealed class ExecutionEngineStageFanoutTests
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
-        flowContext.EnableExecExplain(ExplainLevel.Standard);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
 
         var invocationCollector = new FlowTestInvocationCollector();
         flowContext.ConfigureForTesting(overrideProvider: null, invocationCollector);

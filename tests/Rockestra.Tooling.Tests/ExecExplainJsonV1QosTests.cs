@@ -39,7 +39,7 @@ public sealed class ExecExplainJsonV1QosTests
         var host = new FlowHost(registry, catalog, new FixedQosTierProvider(QosTier.Emergency));
 
         var flowContext = new FlowContext(services: EmptyServiceProvider.Instance, CancellationToken.None, FutureDeadline);
-        flowContext.EnableExecExplain(ExplainLevel.Standard);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
 
         var outcome = await host.ExecuteAsync<int, int>(flowName, request: 5, flowContext);
         Assert.True(outcome.IsOk);

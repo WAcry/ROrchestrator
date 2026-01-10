@@ -76,7 +76,7 @@ public static class RunnerApp
 
         var services = new EmptyServiceProvider();
         var flowContext = new FlowContext(services, cancellationToken, FutureDeadline, requestOptions);
-        flowContext.EnableExecExplain(ExplainLevel.Standard);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
 
         var outcomeResult = await host.ExecuteAsync<int, int>(FlowName, request: 5, flowContext).ConfigureAwait(false);
 

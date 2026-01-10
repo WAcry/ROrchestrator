@@ -84,7 +84,7 @@ public sealed class ExecExplainJsonV1MemoizationTests
         var host = new FlowHost(registry, catalog, new StaticConfigProvider(configVersion: 1, patchJson));
 
         var context = new FlowContext(services: EmptyServiceProvider.Instance, CancellationToken.None, FutureDeadline);
-        context.EnableExecExplain(ExplainLevel.Standard);
+        context.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
         context.EnableRequestMemo();
 
         var outcome = await host.ExecuteAsync<int, int>(flowName, request: 0, context);
@@ -144,7 +144,7 @@ public sealed class ExecExplainJsonV1MemoizationTests
         var host = new FlowHost(registry, catalog, new StaticConfigProvider(configVersion: 1, patchJson));
 
         var context = new FlowContext(services: EmptyServiceProvider.Instance, CancellationToken.None, FutureDeadline);
-        context.EnableExecExplain(ExplainLevel.Standard);
+        context.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
         context.EnableRequestMemo();
 
         var outcome = await host.ExecuteAsync<int, int>(flowName, request: 0, context);
@@ -231,7 +231,7 @@ public sealed class ExecExplainJsonV1MemoizationTests
         var host = new FlowHost(registry, catalog, new StaticConfigProvider(configVersion: 1, patchJson));
 
         var context = new FlowContext(services: EmptyServiceProvider.Instance, CancellationToken.None, FutureDeadline);
-        context.EnableExecExplain(ExplainLevel.Standard);
+        context.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
         context.EnableRequestMemo();
 
         var outcome = await host.ExecuteAsync<int, int>(flowName, request: 0, context);

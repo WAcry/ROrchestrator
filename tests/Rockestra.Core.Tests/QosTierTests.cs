@@ -21,7 +21,7 @@ public sealed class QosTierTests
         var services = new DummyServiceProvider();
 
         var fullContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
-        fullContext.EnableExecExplain(ExplainLevel.Standard);
+        fullContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
 
         var hostDefault = new FlowHost(registry, catalog);
 
@@ -32,7 +32,7 @@ public sealed class QosTierTests
         Assert.Equal(QosTier.Full, fullExplain.QosSelectedTier);
 
         var conserveContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
-        conserveContext.EnableExecExplain(ExplainLevel.Standard);
+        conserveContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
 
         var qosProvider = new FixedQosTierProvider(QosTier.Conserve);
         var hostConserve = new FlowHost(registry, catalog, qosProvider);

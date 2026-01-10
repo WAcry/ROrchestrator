@@ -31,6 +31,7 @@ public static class ExecExplainJsonV2
         writer.WriteString("tooling_json_version", ToolingJsonVersion);
         writer.WriteString("flow_name", explain.FlowName);
         writer.WriteString("level", GetExplainLevelString(explain.Level));
+        WriteExplainOptions(writer, explain);
         writer.WriteString("plan_hash", explain.PlanHash.ToString("X16"));
 
         if (explain.TryGetConfigVersion(out var configVersion))
@@ -98,7 +99,37 @@ public static class ExecExplainJsonV2
         writer.WriteEndObject();
         writer.Flush();
 
-        return Encoding.UTF8.GetString(output.WrittenSpan);
+        var redacted = ExplainRedactor.Redact(output.WrittenMemory, explain.Policy);
+        return Encoding.UTF8.GetString(redacted);
+    }
+
+    private static void WriteExplainOptions(Utf8JsonWriter writer, ExecExplain explain)
+    {
+        writer.WritePropertyName("explain_options");
+        writer.WriteStartObject();
+        writer.WriteString("requested_level", GetExplainLevelString(explain.RequestedLevel));
+        writer.WriteString("effective_level", GetExplainLevelString(explain.Level));
+
+        if (string.IsNullOrEmpty(explain.ExplainReason))
+        {
+            writer.WriteNull("reason");
+        }
+        else
+        {
+            writer.WriteString("reason", explain.ExplainReason);
+        }
+
+        if (string.IsNullOrEmpty(explain.LevelDowngradeReasonCode))
+        {
+            writer.WriteNull("downgrade_reason");
+        }
+        else
+        {
+            writer.WriteString("downgrade_reason", explain.LevelDowngradeReasonCode);
+        }
+
+        writer.WriteString("policy", GetRedactionPolicyString(explain.Policy));
+        writer.WriteEndObject();
     }
 
     private static void WriteTiming(Utf8JsonWriter writer, long durationStopwatchTicks, double durationMs)
@@ -299,6 +330,15 @@ public static class ExecExplainJsonV2
             ExplainLevel.Minimal => "minimal",
             ExplainLevel.Standard => "standard",
             ExplainLevel.Full => "full",
+            _ => "unknown",
+        };
+    }
+
+    private static string GetRedactionPolicyString(ExplainRedactionPolicy policy)
+    {
+        return policy switch
+        {
+            ExplainRedactionPolicy.Default => "default",
             _ => "unknown",
         };
     }

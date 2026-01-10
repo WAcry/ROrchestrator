@@ -138,7 +138,24 @@ public static class PlanCompiler
         }
         else
         {
-            explain = new PlanExplain(blueprint.Name, planTemplateHash: hash, explainNodes);
+            var blueprintContracts = blueprint.StageContracts;
+            PlanExplainStageContract[] stageContracts;
+
+            if (blueprintContracts.Length == 0)
+            {
+                stageContracts = Array.Empty<PlanExplainStageContract>();
+            }
+            else
+            {
+                stageContracts = new PlanExplainStageContract[blueprintContracts.Length];
+
+                for (var i = 0; i < blueprintContracts.Length; i++)
+                {
+                    stageContracts[i] = new PlanExplainStageContract(blueprintContracts[i].StageName, blueprintContracts[i].Contract);
+                }
+            }
+
+            explain = new PlanExplain(blueprint.Name, planTemplateHash: hash, explainNodes, stageContracts);
         }
 
         var frozenNodeNameToIndex = nodeNameToIndex.ToFrozenDictionary();
