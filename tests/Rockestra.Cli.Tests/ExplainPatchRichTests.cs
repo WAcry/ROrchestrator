@@ -7,6 +7,8 @@ namespace Rockestra.Cli.Tests;
 
 public sealed class ExplainPatchRichTests
 {
+    private static readonly DateTimeOffset ExpiredTimestampUtc = new(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
     [Fact]
     public void ExplainPatchRich_ShouldMatchGolden_GateFalse()
     {
@@ -105,6 +107,130 @@ public sealed class ExplainPatchRichTests
         Assert.False(doc.RootElement.GetProperty("validation").GetProperty("is_valid").GetBoolean());
     }
 
+    [Fact]
+    public void ExplainPatchRich_ShouldMatchGolden_EmergencyTtlApplied()
+    {
+        const string patchJson =
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "RichFlow": {
+                  "params": { "A": 2, "Token": "abc" },
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 2,
+                      "modules": [
+                        { "id": "m1", "use": "test.module", "with": {} },
+                        { "id": "m2", "use": "test.module", "with": {} }
+                      ]
+                    }
+                  },
+                  "emergency": {
+                    "reason": "r",
+                    "operator": "op",
+                    "ttl_minutes": 30,
+                    "patch": {
+                      "params": { "A": 3 },
+                      "stages": {
+                        "s1": {
+                          "fanoutMax": 1,
+                          "modules": [
+                            { "id": "m2", "enabled": false }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """;
+
+        var (exitCode, stdout, stderr) = RunExplainPatchRich(
+            flowName: "RichFlow",
+            patchJson: patchJson,
+            qosTier: "full");
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(string.Empty, stderr);
+        Assert.Equal(ReadGoldenFile("explain_patch_rich_emergency_ttl_applied.json"), stdout);
+
+        using var doc = JsonDocument.Parse(stdout);
+        Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("emergency_ignored_reason_code").ValueKind);
+    }
+
+    [Fact]
+    public void ExplainPatchRich_ShouldMatchGolden_EmergencyTtlExpired()
+    {
+        const string patchJson =
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "RichFlow": {
+                  "params": { "A": 2, "Token": "abc" },
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 2,
+                      "modules": [
+                        { "id": "m1", "use": "test.module", "with": {} },
+                        { "id": "m2", "use": "test.module", "with": {} }
+                      ]
+                    }
+                  },
+                  "emergency": {
+                    "reason": "r",
+                    "operator": "op",
+                    "ttl_minutes": 30,
+                    "patch": {
+                      "params": { "A": 3 },
+                      "stages": {
+                        "s1": {
+                          "fanoutMax": 1,
+                          "modules": [
+                            { "id": "m2", "enabled": false }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """;
+
+        var tempPath = Path.Combine(Path.GetTempPath(), $"rockestra_patch_{Guid.NewGuid():N}.json");
+
+        try
+        {
+            File.WriteAllText(tempPath, patchJson);
+            File.SetLastWriteTimeUtc(tempPath, ExpiredTimestampUtc.UtcDateTime);
+
+            var (exitCode, stdout, stderr) = RunExplainPatchRichFromFile(
+                flowName: "RichFlow",
+                patchPath: tempPath,
+                qosTier: "full");
+
+            Assert.Equal(0, exitCode);
+            Assert.Equal(string.Empty, stderr);
+            Assert.Equal(ReadGoldenFile("explain_patch_rich_emergency_ttl_expired.json"), stdout);
+
+            using var doc = JsonDocument.Parse(stdout);
+            Assert.Equal("EMERGENCY_TTL_EXPIRED", doc.RootElement.GetProperty("emergency_ignored_reason_code").GetString());
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(tempPath);
+            }
+            catch
+            {
+            }
+        }
+    }
+
     private static (int exitCode, string stdout, string stderr) RunExplainPatchRich(string flowName, string patchJson, string qosTier)
     {
         using var stdout = new StringWriter();
@@ -121,6 +247,31 @@ public sealed class ExplainPatchRichTests
                 flowName,
                 "--patch-json",
                 patchJson,
+                "--qos-tier",
+                qosTier,
+            },
+            stdout,
+            stderr);
+
+        return (exitCode, stdout.ToString().TrimEnd(), stderr.ToString());
+    }
+
+    private static (int exitCode, string stdout, string stderr) RunExplainPatchRichFromFile(string flowName, string patchPath, string qosTier)
+    {
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+
+        var exitCode = RockestraCliApp.Run(
+            new[]
+            {
+                "explain-patch",
+                "--rich",
+                "--bootstrapper-type",
+                typeof(RichExplainPatchBootstrapper).FullName!,
+                "--flow",
+                flowName,
+                "--patch",
+                patchPath,
                 "--qos-tier",
                 qosTier,
             },

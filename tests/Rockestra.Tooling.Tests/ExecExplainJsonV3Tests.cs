@@ -11,6 +11,7 @@ public sealed class ExecExplainJsonV3Tests
 {
     private static readonly DateTimeOffset FutureDeadline = new(2100, 1, 1, 0, 0, 0, TimeSpan.Zero);
     private static readonly DateTimeOffset SnapshotTimestampUtc = new(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset SnapshotTimestampUtcFresh = new(2100, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
     [Fact]
     public async Task ExportJson_ShouldMatchGoldenFile_AfterNormalization()
@@ -116,7 +117,7 @@ public sealed class ExecExplainJsonV3Tests
         }
         """;
 
-        var host = new FlowHost(registry, catalog, new StaticConfigProvider(configVersion: 42, patchJson));
+        var host = new FlowHost(registry, catalog, new StaticConfigProvider(configVersion: 42, patchJson, SnapshotTimestampUtcFresh));
 
         var requestOptions = new FlowRequestOptions(
             variants: new Dictionary<string, string>
@@ -224,6 +225,141 @@ public sealed class ExecExplainJsonV3Tests
         var sources = paramsElement.GetProperty("sources");
         Assert.True(sources.ValueKind == JsonValueKind.Array);
         Assert.True(sources.GetArrayLength() > 0);
+    }
+
+    [Fact]
+    public async Task ExportJson_ShouldIncludeEmergencyTtlExpiredReason_WhenEmergencyOverlayIsExpired()
+    {
+        const string flowName = "ExecExplainFlowV3TtlExpired";
+
+        var registry = new FlowRegistry();
+        var catalog = new ModuleCatalog();
+
+        var blueprint = FlowBlueprint
+            .Define<int, int>(flowName)
+            .Stage(
+                "s1",
+                stage =>
+                    stage.Join<int>(
+                        "final",
+                        _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0))))
+            .Build();
+
+        registry.Register<int, int, DefaultParams, DefaultParamsPatch>(
+            flowName,
+            blueprint,
+            defaultParams: new DefaultParams { Token = "secret", A = 1 });
+
+        var patchJson = $$"""
+        {
+          "schemaVersion": "v1",
+          "flows": {
+            "{{flowName}}": {
+              "params": { "A": 1 },
+              "emergency": {
+                "reason": "r",
+                "operator": "op",
+                "ttl_minutes": 30,
+                "patch": { "params": { "A": 2 } }
+              }
+            }
+          }
+        }
+        """;
+
+        var host = new FlowHost(registry, catalog, new StaticConfigProvider(configVersion: 1, patchJson, SnapshotTimestampUtc));
+
+        var flowContext = new FlowContext(services: EmptyServiceProvider.Instance, CancellationToken.None, FutureDeadline);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
+
+        var outcome = await host.ExecuteAsync<int, int>(flowName, request: 0, flowContext);
+        Assert.True(outcome.IsOk);
+
+        Assert.True(flowContext.TryGetExecExplain(out var explain));
+
+        var json = ExecExplainJsonV3.ExportJson(explain);
+
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        Assert.Equal("EMERGENCY_TTL_EXPIRED", root.GetProperty("emergency_ignored_reason_code").GetString());
+
+        var overlays = root.GetProperty("overlays_applied").EnumerateArray();
+        foreach (var overlay in overlays)
+        {
+            Assert.NotEqual("emergency", overlay.GetProperty("layer").GetString());
+        }
+    }
+
+    [Fact]
+    public async Task ExportJson_ShouldNotIncludeEmergencyTtlExpiredReason_WhenEmergencyOverlayIsApplied()
+    {
+        const string flowName = "ExecExplainFlowV3TtlApplied";
+
+        var registry = new FlowRegistry();
+        var catalog = new ModuleCatalog();
+
+        var blueprint = FlowBlueprint
+            .Define<int, int>(flowName)
+            .Stage(
+                "s1",
+                stage =>
+                    stage.Join<int>(
+                        "final",
+                        _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0))))
+            .Build();
+
+        registry.Register<int, int, DefaultParams, DefaultParamsPatch>(
+            flowName,
+            blueprint,
+            defaultParams: new DefaultParams { Token = "secret", A = 1 });
+
+        var patchJson = $$"""
+        {
+          "schemaVersion": "v1",
+          "flows": {
+            "{{flowName}}": {
+              "params": { "A": 1 },
+              "emergency": {
+                "reason": "r",
+                "operator": "op",
+                "ttl_minutes": 30,
+                "patch": { "params": { "A": 2 } }
+              }
+            }
+          }
+        }
+        """;
+
+        var host = new FlowHost(registry, catalog, new StaticConfigProvider(configVersion: 1, patchJson, SnapshotTimestampUtcFresh));
+
+        var flowContext = new FlowContext(services: EmptyServiceProvider.Instance, CancellationToken.None, FutureDeadline);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
+
+        var outcome = await host.ExecuteAsync<int, int>(flowName, request: 0, flowContext);
+        Assert.True(outcome.IsOk);
+
+        Assert.True(flowContext.TryGetExecExplain(out var explain));
+
+        var json = ExecExplainJsonV3.ExportJson(explain);
+
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("emergency_ignored_reason_code").ValueKind);
+
+        var hasEmergencyOverlay = false;
+        var overlays = root.GetProperty("overlays_applied").EnumerateArray();
+        foreach (var overlay in overlays)
+        {
+            if (string.Equals("emergency", overlay.GetProperty("layer").GetString(), StringComparison.Ordinal))
+            {
+                hasEmergencyOverlay = true;
+                break;
+            }
+        }
+
+        Assert.True(hasEmergencyOverlay);
     }
 
     [Fact]
@@ -342,11 +478,16 @@ public sealed class ExecExplainJsonV3Tests
         private readonly ConfigSnapshot _snapshot;
 
         public StaticConfigProvider(ulong configVersion, string patchJson)
+            : this(configVersion, patchJson, SnapshotTimestampUtc)
+        {
+        }
+
+        public StaticConfigProvider(ulong configVersion, string patchJson, DateTimeOffset timestampUtc)
         {
             _snapshot = new ConfigSnapshot(
                 configVersion,
                 patchJson,
-                new ConfigSnapshotMeta(source: "static", timestampUtc: SnapshotTimestampUtc));
+                new ConfigSnapshotMeta(source: "static", timestampUtc: timestampUtc));
         }
 
         public ValueTask<ConfigSnapshot> GetSnapshotAsync(FlowContext context)

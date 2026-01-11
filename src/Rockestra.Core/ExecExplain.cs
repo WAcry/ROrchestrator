@@ -11,6 +11,7 @@ public sealed class ExecExplain
     private readonly ExecExplainNode[] _nodes;
     private readonly ExecExplainStageModule[] _stageModules;
     private readonly PatchEvaluatorV1.PatchOverlayAppliedV1[] _overlaysApplied;
+    private readonly string? _emergencyOverlayIgnoredReasonCode;
     private readonly IReadOnlyDictionary<string, string> _variants;
     private readonly bool _hasTrace;
     private readonly ActivityTraceId _traceId;
@@ -59,6 +60,8 @@ public sealed class ExecExplain
 
     public IReadOnlyList<PatchEvaluatorV1.PatchOverlayAppliedV1> OverlaysApplied => _overlaysApplied;
 
+    public string? EmergencyOverlayIgnoredReasonCode => _emergencyOverlayIgnoredReasonCode;
+
     public IReadOnlyDictionary<string, string> Variants => _variants;
 
     public QosTier QosSelectedTier => _qosSelectedTier;
@@ -83,6 +86,7 @@ public sealed class ExecExplain
         string? qosReasonCode,
         IReadOnlyDictionary<string, string>? qosSignals,
         PatchEvaluatorV1.PatchOverlayAppliedV1[]? overlaysApplied,
+        string? emergencyOverlayIgnoredReasonCode,
         IReadOnlyDictionary<string, string>? variants,
         bool hasTrace,
         ActivityTraceId traceId,
@@ -128,6 +132,7 @@ public sealed class ExecExplain
 
         _stageModules = stageModules ?? throw new ArgumentNullException(nameof(stageModules));
         _overlaysApplied = overlaysApplied ?? Array.Empty<PatchEvaluatorV1.PatchOverlayAppliedV1>();
+        _emergencyOverlayIgnoredReasonCode = emergencyOverlayIgnoredReasonCode;
         _variants = variants ?? EmptyVariants;
 
         if (startTimestamp < 0)

@@ -54,6 +54,54 @@ public sealed class FlowContextParamsTests
     }
 
     [Fact]
+    public async Task Params_WhenEmergencyTtlExpired_ShouldIgnoreEmergencyParamsOverlay()
+    {
+        var patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
+            "\"params\":{\"MaxCandidate\":10,\"Nested\":{\"Mode\":\"base\"}}," +
+            "\"experiments\":[{\"layer\":\"l1\",\"variant\":\"B\",\"patch\":{\"params\":{\"MaxCandidate\":20,\"Nested\":{\"Threshold\":99}}}}]," +
+            "\"qos\":{\"tiers\":{\"emergency\":{\"patch\":{\"params\":{\"MaxCandidate\":25,\"Nested\":{\"Mode\":\"qos\",\"Threshold\":123}}}}}}," +
+            "\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"params\":{\"MaxCandidate\":30,\"Nested\":{\"Mode\":\"emergency\"}}}}" +
+            "}}}";
+
+        var services = new DummyServiceProvider();
+        var flowContext = new FlowContext(
+            services,
+            CancellationToken.None,
+            FutureDeadline,
+            requestOptions: new FlowRequestOptions(
+                variants: new Dictionary<string, string>
+                {
+                    { "l1", "B" },
+                }));
+
+        flowContext.SetQosDecision(QosTier.Emergency, reasonCode: null, signals: null);
+
+        flowContext.ConfigureFlowBinding(
+            flowName: "HomeFeed",
+            paramsType: typeof(TestParams),
+            patchType: typeof(TestParamsPatch),
+            defaultParams: new TestParams
+            {
+                MaxCandidate = 1,
+                Nested = new TestNestedParams { Mode = "default", Threshold = 1 },
+            });
+
+        var expiredTimestampUtc = new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        _ = await flowContext.GetConfigSnapshotAsync(new StaticConfigProvider(configVersion: 1, patchJson, expiredTimestampUtc));
+
+        var @params = flowContext.Params<TestParams>();
+
+        Assert.Equal(25, @params.MaxCandidate);
+        Assert.NotNull(@params.Nested);
+        Assert.Equal("qos", @params.Nested.Mode);
+        Assert.Equal(123, @params.Nested.Threshold);
+
+        var second = flowContext.Params<TestParams>();
+        Assert.Same(@params, second);
+    }
+
+    [Fact]
     public async Task Params_ShouldThrowJsonException_WhenBindingFails()
     {
         var patchJson =
@@ -139,11 +187,16 @@ public sealed class FlowContextParamsTests
         private readonly ConfigSnapshot _snapshot;
 
         public StaticConfigProvider(ulong configVersion, string patchJson)
+            : this(configVersion, patchJson, DateTimeOffset.UtcNow)
+        {
+        }
+
+        public StaticConfigProvider(ulong configVersion, string patchJson, DateTimeOffset timestampUtc)
         {
             _snapshot = new ConfigSnapshot(
                 configVersion,
                 patchJson,
-                new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow));
+                new ConfigSnapshotMeta(source: "static", timestampUtc: timestampUtc));
         }
 
         public ValueTask<ConfigSnapshot> GetSnapshotAsync(FlowContext context)

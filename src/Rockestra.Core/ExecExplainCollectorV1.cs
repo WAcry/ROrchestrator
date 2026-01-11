@@ -18,6 +18,7 @@ internal sealed class ExecExplainCollectorV1
     private string? _levelDowngradeReasonCode;
     private ulong _planHash;
     private PatchEvaluatorV1.PatchOverlayAppliedV1[]? _overlaysApplied;
+    private string? _emergencyOverlayIgnoredReasonCode;
     private IReadOnlyDictionary<string, string>? _variants;
     private bool _hasTrace;
     private ActivityTraceId _traceId;
@@ -61,6 +62,7 @@ internal sealed class ExecExplainCollectorV1
         _flowName = null;
         _planHash = 0;
         _overlaysApplied = null;
+        _emergencyOverlayIgnoredReasonCode = null;
         _variants = null;
         _hasTrace = false;
         _traceId = default;
@@ -120,6 +122,7 @@ internal sealed class ExecExplainCollectorV1
         _active = true;
         _explain = null;
         _overlaysApplied = Array.Empty<PatchEvaluatorV1.PatchOverlayAppliedV1>();
+        _emergencyOverlayIgnoredReasonCode = null;
         _variants = EmptyVariants;
 
         if (_stageModules is not null)
@@ -152,7 +155,10 @@ internal sealed class ExecExplainCollectorV1
         _spanId = spanId;
     }
 
-    public void RecordRouting(IReadOnlyDictionary<string, string> variants, IReadOnlyList<PatchEvaluatorV1.PatchOverlayAppliedV1>? overlaysApplied)
+    public void RecordRouting(
+        IReadOnlyDictionary<string, string> variants,
+        IReadOnlyList<PatchEvaluatorV1.PatchOverlayAppliedV1>? overlaysApplied,
+        string? emergencyOverlayIgnoredReasonCode)
     {
         if (!_active)
         {
@@ -197,6 +203,8 @@ internal sealed class ExecExplainCollectorV1
 
             _overlaysApplied = array;
         }
+
+        _emergencyOverlayIgnoredReasonCode = string.IsNullOrEmpty(emergencyOverlayIgnoredReasonCode) ? null : emergencyOverlayIgnoredReasonCode;
     }
 
     public void RecordStageModule(
@@ -311,6 +319,7 @@ internal sealed class ExecExplainCollectorV1
             qosReasonCode,
             qosSignals,
             _overlaysApplied,
+            _emergencyOverlayIgnoredReasonCode,
             _variants,
             _hasTrace,
             _traceId,

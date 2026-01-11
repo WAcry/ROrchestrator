@@ -436,11 +436,13 @@ public sealed class FlowContext
 
         var configVersion = 0UL;
         var patchJson = string.Empty;
+        DateTimeOffset? configTimestampUtc = null;
 
         if (TryGetConfigSnapshot(out var snapshot))
         {
             configVersion = snapshot.ConfigVersion;
             patchJson = snapshot.PatchJson;
+            configTimestampUtc = snapshot.Meta.TimestampUtc;
         }
 
         var defaultParamsJson = JsonSerializer.SerializeToUtf8Bytes(defaultParams, paramsType);
@@ -456,12 +458,28 @@ public sealed class FlowContext
         var variants = _variants;
         var qosTier = _qosSelectedTier;
 
-        if (TryGetParamsExplainFromActiveEvaluation(flowName, configVersion, defaultElement, variants, qosTier, collector, out explain))
+        if (TryGetParamsExplainFromActiveEvaluation(
+                flowName,
+                configVersion,
+                defaultElement,
+                variants,
+                qosTier,
+                configTimestampUtc,
+                collector,
+                out explain))
         {
             return true;
         }
 
-        return TryGetParamsExplainFromPatchJson(flowName, patchJson, defaultElement, variants, qosTier, collector, out explain);
+        return TryGetParamsExplainFromPatchJson(
+            flowName,
+            patchJson,
+            defaultElement,
+            variants,
+            qosTier,
+            configTimestampUtc,
+            collector,
+            out explain);
     }
 
     private bool TryGetParamsExplainFromActiveEvaluation(
@@ -470,6 +488,7 @@ public sealed class FlowContext
         JsonElement defaultElement,
         IReadOnlyDictionary<string, string> variants,
         QosTier qosTier,
+        DateTimeOffset? configTimestampUtc,
         ExecExplainCollectorV1 collector,
         out ParamsExplain explain)
     {
@@ -485,10 +504,10 @@ public sealed class FlowContext
 
         if (!evaluation.TryGetFlowPatch(out var flowPatch) || flowPatch.ValueKind != JsonValueKind.Object)
         {
-            return TryGetParamsExplainFromFlowPatch(defaultElement, flowPatch: default, variants, qosTier, collector, out explain);
+            return TryGetParamsExplainFromFlowPatch(defaultElement, flowPatch: default, variants, qosTier, configTimestampUtc, collector, out explain);
         }
 
-        return TryGetParamsExplainFromFlowPatch(defaultElement, flowPatch, variants, qosTier, collector, out explain);
+        return TryGetParamsExplainFromFlowPatch(defaultElement, flowPatch, variants, qosTier, configTimestampUtc, collector, out explain);
     }
 
     private static bool TryGetParamsExplainFromPatchJson(
@@ -497,12 +516,13 @@ public sealed class FlowContext
         JsonElement defaultElement,
         IReadOnlyDictionary<string, string> variants,
         QosTier qosTier,
+        DateTimeOffset? configTimestampUtc,
         ExecExplainCollectorV1 collector,
         out ParamsExplain explain)
     {
         if (string.IsNullOrEmpty(patchJson))
         {
-            return TryGetParamsExplainFromFlowPatch(defaultElement, flowPatch: default, variants, qosTier, collector, out explain);
+            return TryGetParamsExplainFromFlowPatch(defaultElement, flowPatch: default, variants, qosTier, configTimestampUtc, collector, out explain);
         }
 
         using var patchDocument = JsonDocument.Parse(patchJson);
@@ -517,10 +537,10 @@ public sealed class FlowContext
             || !flowsElement.TryGetProperty(flowName, out var flowPatch)
             || flowPatch.ValueKind != JsonValueKind.Object)
         {
-            return TryGetParamsExplainFromFlowPatch(defaultElement, flowPatch: default, variants, qosTier, collector, out explain);
+            return TryGetParamsExplainFromFlowPatch(defaultElement, flowPatch: default, variants, qosTier, configTimestampUtc, collector, out explain);
         }
 
-        return TryGetParamsExplainFromFlowPatch(defaultElement, flowPatch, variants, qosTier, collector, out explain);
+        return TryGetParamsExplainFromFlowPatch(defaultElement, flowPatch, variants, qosTier, configTimestampUtc, collector, out explain);
     }
 
     private static bool TryGetParamsExplainFromFlowPatch(
@@ -528,12 +548,13 @@ public sealed class FlowContext
         JsonElement flowPatch,
         IReadOnlyDictionary<string, string> variants,
         QosTier qosTier,
+        DateTimeOffset? configTimestampUtc,
         ExecExplainCollectorV1 collector,
         out ParamsExplain explain)
     {
         if (collector.Level == ExplainLevel.Standard)
         {
-            if (!FlowParamsResolver.TryComputeParamsHash(defaultElement, flowPatch, variants, qosTier, out var hash))
+            if (!FlowParamsResolver.TryComputeParamsHash(defaultElement, flowPatch, variants, qosTier, out var hash, configTimestampUtc))
             {
                 explain = default;
                 return false;
@@ -545,7 +566,7 @@ public sealed class FlowContext
 
         if (collector.Level == ExplainLevel.Full)
         {
-            if (!FlowParamsResolver.TryComputeExplainFull(defaultElement, flowPatch, variants, qosTier, out var effectiveJsonUtf8, out var sources, out var hash))
+            if (!FlowParamsResolver.TryComputeExplainFull(defaultElement, flowPatch, variants, qosTier, out var effectiveJsonUtf8, out var sources, out var hash, configTimestampUtc))
             {
                 explain = default;
                 return false;
@@ -666,6 +687,9 @@ public sealed class FlowContext
     {
         var buffer = new JsonElementBuffer(initialCapacity: 4);
 
+        var hasConfigSnapshotMetaTimestamp = TryGetConfigSnapshot(out var snapshot);
+        var configSnapshotTimestampUtc = hasConfigSnapshotMetaTimestamp ? snapshot.Meta.TimestampUtc : default;
+
         if (flowPatch.TryGetProperty("params", out var baseParamsPatch))
         {
             if (baseParamsPatch.ValueKind == JsonValueKind.Object)
@@ -718,7 +742,18 @@ public sealed class FlowContext
         {
             if (emergencyParamsPatch.ValueKind == JsonValueKind.Object)
             {
-                buffer.Add(emergencyParamsPatch);
+                var isExpired = false;
+
+                if (hasConfigSnapshotMetaTimestamp)
+                {
+                    var nowUtcTicks = DateTimeOffset.UtcNow.UtcTicks;
+                    isExpired = EmergencyOverlayTtlV1.IsExpired(emergencyPatch, configSnapshotTimestampUtc, nowUtcTicks);
+                }
+
+                if (!isExpired)
+                {
+                    buffer.Add(emergencyParamsPatch);
+                }
             }
             else if (emergencyParamsPatch.ValueKind != JsonValueKind.Undefined)
             {

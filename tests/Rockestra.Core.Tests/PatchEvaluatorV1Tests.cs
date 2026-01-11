@@ -152,6 +152,87 @@ public sealed class PatchEvaluatorV1Tests
     }
 
     [Fact]
+    public void Evaluate_WhenEmergencyTtlExpired_ShouldIgnoreEmergencyOverlay()
+    {
+        var patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
+            "\"stages\":{\"s1\":{\"fanoutMax\":4,\"modules\":[" +
+            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":true}," +
+            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{},\"enabled\":true}" +
+            "]}},\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m2\",\"enabled\":false}]}}}}" +
+            "}}}";
+
+        var expiredTimestampUtc = new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        using var evaluation = PatchEvaluatorV1.Evaluate(
+            "HomeFeed",
+            patchJson,
+            requestOptions: default,
+            qosTier: QosTier.Full,
+            configVersion: 0,
+            configTimestampUtc: expiredTimestampUtc);
+
+        Assert.Equal("EMERGENCY_TTL_EXPIRED", evaluation.EmergencyOverlayIgnoredReasonCode);
+        Assert.Single(evaluation.OverlaysApplied);
+        Assert.Equal("base", evaluation.OverlaysApplied[0].Layer);
+
+        Assert.Single(evaluation.Stages);
+        var stage = evaluation.Stages[0];
+        Assert.True(stage.HasFanoutMax);
+        Assert.Equal(4, stage.FanoutMax);
+
+        Assert.Equal(2, stage.Modules.Count);
+        Assert.Equal("m1", stage.Modules[0].ModuleId);
+        Assert.True(stage.Modules[0].Enabled);
+        Assert.False(stage.Modules[0].DisabledByEmergency);
+
+        Assert.Equal("m2", stage.Modules[1].ModuleId);
+        Assert.True(stage.Modules[1].Enabled);
+        Assert.False(stage.Modules[1].DisabledByEmergency);
+    }
+
+    [Fact]
+    public void Evaluate_WhenEmergencyTtlNotExpired_ShouldApplyEmergencyOverlay()
+    {
+        var patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
+            "\"stages\":{\"s1\":{\"fanoutMax\":4,\"modules\":[" +
+            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":true}," +
+            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{},\"enabled\":true}" +
+            "]}},\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m2\",\"enabled\":false}]}}}}" +
+            "}}}";
+
+        var freshTimestampUtc = new DateTimeOffset(2100, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        using var evaluation = PatchEvaluatorV1.Evaluate(
+            "HomeFeed",
+            patchJson,
+            requestOptions: default,
+            qosTier: QosTier.Full,
+            configVersion: 0,
+            configTimestampUtc: freshTimestampUtc);
+
+        Assert.Null(evaluation.EmergencyOverlayIgnoredReasonCode);
+        Assert.Equal(2, evaluation.OverlaysApplied.Count);
+        Assert.Equal("base", evaluation.OverlaysApplied[0].Layer);
+        Assert.Equal("emergency", evaluation.OverlaysApplied[1].Layer);
+
+        Assert.Single(evaluation.Stages);
+        var stage = evaluation.Stages[0];
+        Assert.True(stage.HasFanoutMax);
+        Assert.Equal(1, stage.FanoutMax);
+
+        Assert.Equal(2, stage.Modules.Count);
+        Assert.Equal("m1", stage.Modules[0].ModuleId);
+        Assert.True(stage.Modules[0].Enabled);
+        Assert.False(stage.Modules[0].DisabledByEmergency);
+
+        Assert.Equal("m2", stage.Modules[1].ModuleId);
+        Assert.False(stage.Modules[1].Enabled);
+        Assert.True(stage.Modules[1].DisabledByEmergency);
+    }
+
+    [Fact]
     public void Evaluate_ShouldSeparateShadowModules()
     {
         var patchJson =

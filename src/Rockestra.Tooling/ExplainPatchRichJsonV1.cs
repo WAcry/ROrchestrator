@@ -32,7 +32,8 @@ public static class ExplainPatchRichJsonV1
         ModuleCatalog catalog,
         SelectorRegistry selectorRegistry,
         FlowRequestOptions requestOptions = default,
-        QosTier qosTier = QosTier.Full)
+        QosTier qosTier = QosTier.Full,
+        DateTimeOffset? configTimestampUtc = null)
     {
         if (flowName is null)
         {
@@ -64,10 +65,10 @@ public static class ExplainPatchRichJsonV1
             var validator = new ConfigValidator(registry, catalog, selectorRegistry);
             var report = validator.ValidatePatchJson(patchJson);
 
-            using var evaluation = PatchEvaluatorV1.Evaluate(flowName, patchJson, requestOptions, qosTier: qosTier);
+            using var evaluation = PatchEvaluatorV1.Evaluate(flowName, patchJson, requestOptions, qosTier: qosTier, configTimestampUtc: configTimestampUtc);
             var planExplain = registry.Explain(flowName, catalog);
 
-            var json = BuildExplainPatchRichJson(registry, flowName, evaluation, planExplain, report, requestOptions, qosTier, catalog, selectorRegistry);
+            var json = BuildExplainPatchRichJson(registry, flowName, evaluation, planExplain, report, requestOptions, qosTier, configTimestampUtc, catalog, selectorRegistry);
             var exitCode = report.IsValid ? 0 : 2;
             return new ToolingCommandResult(exitCode, json);
         }
@@ -128,6 +129,7 @@ public static class ExplainPatchRichJsonV1
         ValidationReport validationReport,
         FlowRequestOptions requestOptions,
         QosTier qosTier,
+        DateTimeOffset? configTimestampUtc,
         ModuleCatalog catalog,
         SelectorRegistry selectorRegistry)
     {
@@ -155,6 +157,15 @@ public static class ExplainPatchRichJsonV1
 
         WriteSortedVariants(writer, requestOptions.Variants);
 
+        if (string.IsNullOrEmpty(evaluation.EmergencyOverlayIgnoredReasonCode))
+        {
+            writer.WriteNull("emergency_ignored_reason_code");
+        }
+        else
+        {
+            writer.WriteString("emergency_ignored_reason_code", evaluation.EmergencyOverlayIgnoredReasonCode);
+        }
+
         writer.WritePropertyName("overlays_applied");
         writer.WriteStartArray();
 
@@ -176,7 +187,7 @@ public static class ExplainPatchRichJsonV1
         WriteModuleTypes(writer, evaluation, catalog);
 
         writer.WritePropertyName("params");
-        WriteParamsExplain(writer, evaluation, registry, flowName, requestOptions, qosTier);
+        WriteParamsExplain(writer, evaluation, registry, flowName, requestOptions, qosTier, configTimestampUtc);
 
         writer.WritePropertyName("stage_snapshots");
         WriteStageSnapshots(writer, evaluation, planExplain.StageContracts, requestOptions, catalog, selectorRegistry);
@@ -511,7 +522,8 @@ public static class ExplainPatchRichJsonV1
         FlowRegistry registry,
         string flowName,
         FlowRequestOptions requestOptions,
-        QosTier qosTier)
+        QosTier qosTier,
+        DateTimeOffset? configTimestampUtc)
     {
         writer.WriteStartObject();
 
@@ -557,7 +569,8 @@ public static class ExplainPatchRichJsonV1
                     qosTier,
                     out var effectiveJsonUtf8,
                     out var sources,
-                    out var hash))
+                    out var hash,
+                    configTimestampUtc))
             {
                 writer.WriteNull("hash");
                 writer.WriteNull("effective");

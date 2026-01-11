@@ -80,6 +80,15 @@ public static class ExecExplainJsonV3
 
         WriteSortedStringDictionaryOrNull(writer, "variants", explain.Variants);
 
+        if (string.IsNullOrEmpty(explain.EmergencyOverlayIgnoredReasonCode))
+        {
+            writer.WriteNull("emergency_ignored_reason_code");
+        }
+        else
+        {
+            writer.WriteString("emergency_ignored_reason_code", explain.EmergencyOverlayIgnoredReasonCode);
+        }
+
         writer.WritePropertyName("overlays_applied");
         writer.WriteStartArray();
 

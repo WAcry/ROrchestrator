@@ -245,7 +245,10 @@ public sealed class ExecutionEngine
                 context.SetActivePatchEvaluation(patchEvaluation, patchConfigVersion);
             }
 
-            execExplainCollector?.RecordRouting(context.Variants, patchEvaluation?.OverlaysApplied);
+            execExplainCollector?.RecordRouting(
+                context.Variants,
+                patchEvaluation?.OverlaysApplied,
+                patchEvaluation?.EmergencyOverlayIgnoredReasonCode);
             string? currentStageName = null;
 
             var activitySource = FlowActivitySource.Instance;
@@ -679,7 +682,8 @@ public sealed class ExecutionEngine
             patchJson,
             new FlowRequestOptions(context.Variants, context.UserId, context.RequestAttributes),
             qosTier: context.QosSelectedTier,
-            configVersion: snapshot.ConfigVersion);
+            configVersion: snapshot.ConfigVersion,
+            configTimestampUtc: snapshot.Meta.TimestampUtc);
     }
 
     private async ValueTask ExecuteStageFanoutIfAnyAsync(

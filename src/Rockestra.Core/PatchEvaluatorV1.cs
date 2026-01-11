@@ -11,9 +11,20 @@ public static class PatchEvaluatorV1
     private static readonly Lock ParsedPatchCacheGate = new();
     private static readonly CachedPatchDocument?[] ParsedPatchCache = new CachedPatchDocument?[ParsedPatchCacheSize];
 
-    public static FlowPatchEvaluationV1 Evaluate(string flowName, string patchJson, FlowRequestOptions requestOptions, ulong configVersion = 0)
+    public static FlowPatchEvaluationV1 Evaluate(
+        string flowName,
+        string patchJson,
+        FlowRequestOptions requestOptions,
+        ulong configVersion = 0,
+        DateTimeOffset? configTimestampUtc = null)
     {
-        return Evaluate(flowName, patchJson, requestOptions, qosTier: QosTier.Full, configVersion: configVersion);
+        return Evaluate(
+            flowName,
+            patchJson,
+            requestOptions,
+            qosTier: QosTier.Full,
+            configVersion: configVersion,
+            configTimestampUtc: configTimestampUtc);
     }
 
     public static FlowPatchEvaluationV1 Evaluate(
@@ -21,7 +32,8 @@ public static class PatchEvaluatorV1
         string patchJson,
         FlowRequestOptions requestOptions,
         QosTier qosTier,
-        ulong configVersion = 0)
+        ulong configVersion = 0,
+        DateTimeOffset? configTimestampUtc = null)
     {
         if (string.IsNullOrEmpty(flowName))
         {
@@ -74,6 +86,7 @@ public static class PatchEvaluatorV1
             var stageMap = new StageMap();
             var overlays = new List<PatchOverlayAppliedV1>(capacity: 5);
             overlays.Add(PatchOverlayAppliedV1.Base);
+            string? emergencyOverlayIgnoredReasonCode = null;
 
             if (flowPatch.TryGetProperty("stages", out var baseStagesPatch) && baseStagesPatch.ValueKind == JsonValueKind.Object)
             {
@@ -106,18 +119,39 @@ public static class PatchEvaluatorV1
                 && emergencyPatch.TryGetProperty("patch", out var emergencyPatchBody)
                 && emergencyPatchBody.ValueKind == JsonValueKind.Object)
             {
-                overlays.Add(PatchOverlayAppliedV1.Emergency);
-
-                if (emergencyPatchBody.TryGetProperty("stages", out var emergencyStagesPatch)
-                    && emergencyStagesPatch.ValueKind == JsonValueKind.Object)
+                if (configTimestampUtc.HasValue)
                 {
-                    ApplyEmergencyStagesPatch(emergencyStagesPatch, ref stageMap);
+                    var nowUtcTicks = DateTimeOffset.UtcNow.UtcTicks;
+
+                    if (EmergencyOverlayTtlV1.IsExpired(emergencyPatch, configTimestampUtc.Value, nowUtcTicks))
+                    {
+                        emergencyOverlayIgnoredReasonCode = EmergencyOverlayTtlV1.TtlExpiredCode;
+                    }
+                }
+
+                if (emergencyOverlayIgnoredReasonCode is null)
+                {
+                    overlays.Add(PatchOverlayAppliedV1.Emergency);
+
+                    if (emergencyPatchBody.TryGetProperty("stages", out var emergencyStagesPatch)
+                        && emergencyStagesPatch.ValueKind == JsonValueKind.Object)
+                    {
+                        ApplyEmergencyStagesPatch(emergencyStagesPatch, ref stageMap);
+                    }
                 }
             }
 
             var stageArray = stageMap.Build();
             var overlayArray = overlays.ToArray();
-            return new FlowPatchEvaluationV1(flowName, document, flowPatch, overlayArray, stageArray, ownsDocument, cachedDocument);
+            return new FlowPatchEvaluationV1(
+                flowName,
+                document,
+                flowPatch,
+                overlayArray,
+                stageArray,
+                ownsDocument,
+                cachedDocument,
+                emergencyOverlayIgnoredReasonCode);
         }
         catch
         {
@@ -570,6 +604,7 @@ public static class PatchEvaluatorV1
         private readonly JsonElement _flowPatch;
         private readonly PatchOverlayAppliedV1[] _overlaysApplied;
         private readonly StagePatchV1[] _stages;
+        private readonly string? _emergencyOverlayIgnoredReasonCode;
         private readonly bool _ownsDocument;
         private CachedPatchDocument? _cachedDocument;
 
@@ -578,6 +613,8 @@ public static class PatchEvaluatorV1
         public IReadOnlyList<PatchOverlayAppliedV1> OverlaysApplied => _overlaysApplied;
 
         public IReadOnlyList<StagePatchV1> Stages => _stages;
+
+        public string? EmergencyOverlayIgnoredReasonCode => _emergencyOverlayIgnoredReasonCode;
 
         internal JsonDocument GetDocumentForTesting()
         {
@@ -596,7 +633,8 @@ public static class PatchEvaluatorV1
             PatchOverlayAppliedV1[] overlaysApplied,
             StagePatchV1[] stages,
             bool ownsDocument,
-            CachedPatchDocument? cachedDocument)
+            CachedPatchDocument? cachedDocument,
+            string? emergencyOverlayIgnoredReasonCode)
         {
             FlowName = flowName;
             _document = document;
@@ -605,9 +643,14 @@ public static class PatchEvaluatorV1
             _stages = stages;
             _ownsDocument = ownsDocument;
             _cachedDocument = cachedDocument;
+            _emergencyOverlayIgnoredReasonCode = emergencyOverlayIgnoredReasonCode;
         }
 
-        private FlowPatchEvaluationV1(string flowName, PatchOverlayAppliedV1[] overlaysApplied, StagePatchV1[] stages)
+        private FlowPatchEvaluationV1(
+            string flowName,
+            PatchOverlayAppliedV1[] overlaysApplied,
+            StagePatchV1[] stages,
+            string? emergencyOverlayIgnoredReasonCode)
         {
             FlowName = flowName;
             _document = null;
@@ -616,11 +659,12 @@ public static class PatchEvaluatorV1
             _stages = stages;
             _ownsDocument = false;
             _cachedDocument = null;
+            _emergencyOverlayIgnoredReasonCode = emergencyOverlayIgnoredReasonCode;
         }
 
         internal static FlowPatchEvaluationV1 CreateEmpty(string flowName)
         {
-            return new FlowPatchEvaluationV1(flowName, EmptyOverlayArray, EmptyStageArray);
+            return new FlowPatchEvaluationV1(flowName, EmptyOverlayArray, EmptyStageArray, emergencyOverlayIgnoredReasonCode: null);
         }
 
         public void Dispose()

@@ -17,7 +17,8 @@ public static class FlowParamsResolver
         JsonElement flowPatch,
         IReadOnlyDictionary<string, string>? variants,
         QosTier qosTier,
-        out ulong hash)
+        out ulong hash,
+        DateTimeOffset? configTimestampUtc = null)
     {
         if (defaultParamsObject.ValueKind != JsonValueKind.Object)
         {
@@ -25,7 +26,7 @@ public static class FlowParamsResolver
         }
 
         var overlayBuffer = new ParamsOverlayBuffer(initialCapacity: 4);
-        CollectOverlays(flowPatch, variants, qosTier, ref overlayBuffer);
+        CollectOverlays(flowPatch, variants, qosTier, configTimestampUtc, ref overlayBuffer);
 
         var output = new ArrayBufferWriter<byte>(256);
         using var writer = new Utf8JsonWriter(
@@ -58,7 +59,8 @@ public static class FlowParamsResolver
         QosTier qosTier,
         out byte[] effectiveJsonUtf8,
         out ParamsSourceEntry[] sources,
-        out ulong hash)
+        out ulong hash,
+        DateTimeOffset? configTimestampUtc = null)
     {
         if (defaultParamsObject.ValueKind != JsonValueKind.Object)
         {
@@ -66,7 +68,7 @@ public static class FlowParamsResolver
         }
 
         var overlayBuffer = new ParamsOverlayBuffer(initialCapacity: 4);
-        CollectOverlays(flowPatch, variants, qosTier, ref overlayBuffer);
+        CollectOverlays(flowPatch, variants, qosTier, configTimestampUtc, ref overlayBuffer);
 
         var sourcesList = new List<ParamsSourceEntry>(capacity: 32);
 
@@ -119,6 +121,7 @@ public static class FlowParamsResolver
         JsonElement flowPatch,
         IReadOnlyDictionary<string, string>? variants,
         QosTier qosTier,
+        DateTimeOffset? configTimestampUtc,
         ref ParamsOverlayBuffer overlays)
     {
         if (flowPatch.ValueKind != JsonValueKind.Object)
@@ -252,7 +255,18 @@ public static class FlowParamsResolver
         {
             if (emergencyParamsPatch.ValueKind == JsonValueKind.Object)
             {
-                overlays.Add(new ParamsOverlay(emergencyParamsPatch, EmergencySource));
+                var isExpired = false;
+
+                if (configTimestampUtc.HasValue)
+                {
+                    var nowUtcTicks = DateTimeOffset.UtcNow.UtcTicks;
+                    isExpired = EmergencyOverlayTtlV1.IsExpired(emergencyPatch, configTimestampUtc.Value, nowUtcTicks);
+                }
+
+                if (!isExpired)
+                {
+                    overlays.Add(new ParamsOverlay(emergencyParamsPatch, EmergencySource));
+                }
             }
             else if (emergencyParamsPatch.ValueKind != JsonValueKind.Undefined)
             {

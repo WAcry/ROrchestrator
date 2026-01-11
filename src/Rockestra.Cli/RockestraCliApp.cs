@@ -318,6 +318,24 @@ public static class RockestraCliApp
             return CreateCliErrorResult("CLI_USAGE_INVALID", inputError);
         }
 
+        DateTimeOffset? configTimestampUtc = DateTimeOffset.UtcNow;
+
+        if (!string.IsNullOrEmpty(patchPath) && string.IsNullOrEmpty(patchJson))
+        {
+            try
+            {
+                var lastWriteUtc = File.GetLastWriteTimeUtc(patchPath);
+                if (lastWriteUtc != default)
+                {
+                    configTimestampUtc = new DateTimeOffset(lastWriteUtc, TimeSpan.Zero);
+                }
+            }
+            catch
+            {
+                configTimestampUtc = DateTimeOffset.UtcNow;
+            }
+        }
+
         FlowRequestOptions options;
         options = new FlowRequestOptions(
             variants: variants.Count == 0 ? null : variants,
@@ -342,7 +360,15 @@ public static class RockestraCliApp
                 return CreateCliErrorResult("CLI_BOOTSTRAP_FAILED", bootstrapError);
             }
 
-            return ExplainPatchRichJsonV1.ExplainPatchJson(flowName, resolvedPatchJson, registry, catalog, richSelectors, options, qosTier);
+            return ExplainPatchRichJsonV1.ExplainPatchJson(
+                flowName,
+                resolvedPatchJson,
+                registry,
+                catalog,
+                richSelectors,
+                options,
+                qosTier,
+                configTimestampUtc);
         }
 
         SelectorRegistry? selectors = null;
