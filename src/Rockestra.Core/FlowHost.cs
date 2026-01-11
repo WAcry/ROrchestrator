@@ -368,7 +368,11 @@ public sealed class FlowHost
     {
         public static readonly EmptyConfigProvider Instance = new();
 
-        private static readonly ConfigSnapshot Snapshot = new(configVersion: 0, patchJson: string.Empty);
+        private static readonly ConfigSnapshot Snapshot =
+            new(
+                configVersion: 0,
+                patchJson: string.Empty,
+                meta: new ConfigSnapshotMeta(source: "empty", timestampUtc: DateTimeOffset.UtcNow));
 
         private EmptyConfigProvider()
         {

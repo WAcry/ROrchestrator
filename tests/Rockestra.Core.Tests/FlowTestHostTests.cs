@@ -168,7 +168,10 @@ public sealed class FlowTestHostTests
             "{\"id\":\"m_exp\",\"use\":\"m.ok\",\"with\":{},\"priority\":20}" +
             "]}}}}]}}}";
 
-        var snapshot = new ConfigSnapshot(configVersion: 123, patchJson);
+        var snapshot = new ConfigSnapshot(
+            configVersion: 123,
+            patchJson,
+            meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow));
 
         var host = FlowTestHost.Create(registry, catalog)
             .WithDeadline(FutureDeadline)

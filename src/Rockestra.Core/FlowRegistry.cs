@@ -93,7 +93,7 @@ public sealed class FlowRegistry
         return false;
     }
 
-    internal bool TryGetParamsBinding(string flowName, out Type paramsType, out Type patchType, out object defaultParams)
+    public bool TryGetParamsBinding(string flowName, out Type paramsType, out Type patchType, out object defaultParams)
     {
         if (string.IsNullOrEmpty(flowName))
         {

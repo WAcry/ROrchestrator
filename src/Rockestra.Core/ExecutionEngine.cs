@@ -25,6 +25,8 @@ public sealed class ExecutionEngine
     public const string StageContractDynamicModulesForbiddenCode = "STAGE_CONTRACT_DYNAMIC_MODULES_FORBIDDEN";
     public const string StageContractModuleTypeForbiddenCode = "STAGE_CONTRACT_MODULE_TYPE_FORBIDDEN";
     public const string StageContractMaxModulesHardExceededCode = "STAGE_CONTRACT_MAX_MODULES_HARD_EXCEEDED";
+    public const string StageContractShadowModulesForbiddenCode = "STAGE_CONTRACT_SHADOW_MODULES_FORBIDDEN";
+    public const string StageContractMaxShadowModulesHardExceededCode = "STAGE_CONTRACT_MAX_SHADOW_MODULES_HARD_EXCEEDED";
 
     private readonly ModuleCatalog _catalog;
     private readonly SelectorRegistry _selectorRegistry;
@@ -229,7 +231,7 @@ public sealed class ExecutionEngine
         }
 
         context.PrepareForExecution(template.NodeNameToIndex, nodeCount);
-        execExplainCollector?.Start(flowName, template.PlanHash, nodes);
+        execExplainCollector?.Start(flowName, template.PlanHash, nodes, context.Deadline);
 
         PatchEvaluatorV1.FlowPatchEvaluationV1? patchEvaluation = null;
 
@@ -257,6 +259,7 @@ public sealed class ExecutionEngine
                     var planHashTagValue = template.PlanHash.ToString(FlowActivitySource.PlanHashFormat);
                     flowActivity.SetTag(FlowActivitySource.TagFlowName, flowName);
                     flowActivity.SetTag(FlowActivitySource.TagPlanHash, planHashTagValue);
+                    execExplainCollector?.RecordTrace(flowActivity.TraceId, flowActivity.SpanId);
 
                     string? configVersionTagValue = null;
                     if (context.TryGetConfigVersion(out var configVersion))
@@ -783,6 +786,17 @@ public sealed class ExecutionEngine
             fanoutMax = 0;
         }
 
+        if (fanoutMax > StageContract.MaxAllowedFanoutMax)
+        {
+            fanoutMax = StageContract.MaxAllowedFanoutMax;
+        }
+
+        var contractMaxFanoutMax = stageContract.MaxFanoutMax;
+        if (fanoutMax > contractMaxFanoutMax)
+        {
+            fanoutMax = contractMaxFanoutMax;
+        }
+
         var argsTypes = new Type[moduleCount];
         var outTypes = new Type[moduleCount];
 
@@ -1053,6 +1067,51 @@ public sealed class ExecutionEngine
             return;
         }
 
+        if (!stageContract.AllowsShadowModules)
+        {
+            for (var i = 0; i < moduleCount; i++)
+            {
+                var module = shadowModules[i];
+                results[i] = new StageModuleOutcomeMetadata(
+                    OutcomeKind.Skipped,
+                    StageContractShadowModulesForbiddenCode,
+                    isOverride: false,
+                    memoHit: false,
+                    startTimestamp: 0,
+                    endTimestamp: 0);
+                RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, StageContractShadowModulesForbiddenCode, isShadow: true);
+            }
+
+            if (execExplainCollector is not null)
+            {
+                for (var i = 0; i < moduleCount; i++)
+                {
+                    var module = shadowModules[i];
+                    var meta = results[i];
+                    var limitKey = module.LimitKey ?? module.ModuleType;
+                    execExplainCollector.RecordStageModule(
+                        stageName,
+                        module.ModuleId,
+                        module.ModuleType,
+                        limitKey,
+                        module.Priority,
+                        meta.StartTimestamp,
+                        meta.EndTimestamp,
+                    meta.Kind,
+                    meta.Code,
+                    gateDecisionCode: string.Empty,
+                    gateReasonCode: string.Empty,
+                    gateSelectorName: string.Empty,
+                    isShadow: true,
+                    shadowSampleBps: module.ShadowSampleBps,
+                    isOverride: meta.IsOverride,
+                    memoHit: meta.MemoHit);
+                }
+            }
+
+            return;
+        }
+
         var argsTypes = new Type[moduleCount];
         var outTypes = new Type[moduleCount];
 
@@ -1069,9 +1128,19 @@ public sealed class ExecutionEngine
             outTypes[i] = outType;
         }
 
+        var candidates = new StageModuleCandidate[moduleCount];
+        var candidateCount = 0;
+        var maxShadowSampleBps = stageContract.MaxShadowSampleBps;
+
         for (var i = 0; i < moduleCount; i++)
         {
             var module = shadowModules[i];
+            var effectiveShadowSampleBps = module.ShadowSampleBps;
+
+            if (effectiveShadowSampleBps > maxShadowSampleBps)
+            {
+                effectiveShadowSampleBps = (ushort)maxShadowSampleBps;
+            }
 
             if (!module.Enabled)
             {
@@ -1120,16 +1189,64 @@ public sealed class ExecutionEngine
                 }
             }
 
-            if (!ShouldExecuteShadow(module.ShadowSampleBps, userId, module.ModuleId))
+            if (!ShouldExecuteShadow(effectiveShadowSampleBps, userId, module.ModuleId))
             {
                 results[i] = new StageModuleOutcomeMetadata(OutcomeKind.Skipped, ShadowNotSampledCode, isOverride: false, memoHit: false, startTimestamp: 0, endTimestamp: 0);
                 RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, ShadowNotSampledCode, isShadow: true);
                 continue;
             }
 
-            var executor = ShadowStageModuleExecutorCache.Get(argsTypes[i], outTypes[i]);
+            candidates[candidateCount] = new StageModuleCandidate(moduleIndex: i, priority: module.Priority);
+            candidateCount++;
+        }
 
-            results[i] = await executor(this, flowName, stageName, module.ModuleId, module.ModuleType, module.LimitKey, module.MemoKey, module.Args, context, module.ShadowSampleBps)
+        SortStageModuleCandidates(candidates, candidateCount);
+
+        var maxShadowModulesHard = stageContract.MaxShadowModulesHard;
+
+        if (maxShadowModulesHard != 0 && maxShadowModulesHard < candidateCount)
+        {
+            for (var rank = maxShadowModulesHard; rank < candidateCount; rank++)
+            {
+                var moduleIndex = candidates[rank].ModuleIndex;
+                var module = shadowModules[moduleIndex];
+
+                results[moduleIndex] = new StageModuleOutcomeMetadata(
+                    OutcomeKind.Skipped,
+                    StageContractMaxShadowModulesHardExceededCode,
+                    isOverride: false,
+                    memoHit: false,
+                    startTimestamp: 0,
+                    endTimestamp: 0);
+                RecordStageFanoutModuleSkipped(flowName, stageName, module.ModuleType, StageContractMaxShadowModulesHardExceededCode, isShadow: true);
+            }
+
+            candidateCount = maxShadowModulesHard;
+        }
+
+        for (var rank = 0; rank < candidateCount; rank++)
+        {
+            var moduleIndex = candidates[rank].ModuleIndex;
+            var module = shadowModules[moduleIndex];
+
+            var executor = ShadowStageModuleExecutorCache.Get(argsTypes[moduleIndex], outTypes[moduleIndex]);
+            var effectiveSampleBps = module.ShadowSampleBps;
+            if (effectiveSampleBps > maxShadowSampleBps)
+            {
+                effectiveSampleBps = (ushort)maxShadowSampleBps;
+            }
+
+            results[moduleIndex] = await executor(
+                    this,
+                    flowName,
+                    stageName,
+                    module.ModuleId,
+                    module.ModuleType,
+                    module.LimitKey,
+                    module.MemoKey,
+                    module.Args,
+                    context,
+                    effectiveSampleBps)
                 .ConfigureAwait(false);
         }
 
@@ -1158,7 +1275,7 @@ public sealed class ExecutionEngine
                     gateReasonCode,
                     gateSelectorName,
                     isShadow: true,
-                    shadowSampleBps: module.ShadowSampleBps,
+                    shadowSampleBps: module.ShadowSampleBps > maxShadowSampleBps ? (ushort)maxShadowSampleBps : module.ShadowSampleBps,
                     meta.IsOverride,
                     meta.MemoHit);
             }

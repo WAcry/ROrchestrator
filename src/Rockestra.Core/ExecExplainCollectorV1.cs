@@ -19,6 +19,11 @@ internal sealed class ExecExplainCollectorV1
     private ulong _planHash;
     private PatchEvaluatorV1.PatchOverlayAppliedV1[]? _overlaysApplied;
     private IReadOnlyDictionary<string, string>? _variants;
+    private bool _hasTrace;
+    private ActivityTraceId _traceId;
+    private ActivitySpanId _spanId;
+    private DateTimeOffset _deadlineUtc;
+    private long _budgetRemainingMsAtStart;
     private long _flowStartTimestamp;
     private long _flowEndTimestamp;
     private bool _active;
@@ -57,6 +62,11 @@ internal sealed class ExecExplainCollectorV1
         _planHash = 0;
         _overlaysApplied = null;
         _variants = null;
+        _hasTrace = false;
+        _traceId = default;
+        _spanId = default;
+        _deadlineUtc = default;
+        _budgetRemainingMsAtStart = 0;
         _flowStartTimestamp = 0;
         _flowEndTimestamp = 0;
         _active = false;
@@ -74,7 +84,7 @@ internal sealed class ExecExplainCollectorV1
         return requestedLevel;
     }
 
-    public void Start(string flowName, ulong planHash, IReadOnlyList<PlanNodeTemplate> nodes)
+    public void Start(string flowName, ulong planHash, IReadOnlyList<PlanNodeTemplate> nodes, DateTimeOffset deadlineUtc)
     {
         if (string.IsNullOrEmpty(flowName))
         {
@@ -86,6 +96,11 @@ internal sealed class ExecExplainCollectorV1
             throw new ArgumentNullException(nameof(nodes));
         }
 
+        if (deadlineUtc == default)
+        {
+            throw new ArgumentException("Deadline must be non-default.", nameof(deadlineUtc));
+        }
+
         var nodeCount = nodes.Count;
         if (nodeCount <= 0)
         {
@@ -94,6 +109,12 @@ internal sealed class ExecExplainCollectorV1
 
         _flowName = flowName;
         _planHash = planHash;
+        _deadlineUtc = deadlineUtc.ToUniversalTime();
+        var remainingTicks = _deadlineUtc.UtcTicks - DateTimeOffset.UtcNow.UtcTicks;
+        _budgetRemainingMsAtStart = remainingTicks <= 0 ? 0 : remainingTicks / TimeSpan.TicksPerMillisecond;
+        _hasTrace = false;
+        _traceId = default;
+        _spanId = default;
         _flowStartTimestamp = Stopwatch.GetTimestamp();
         _flowEndTimestamp = 0;
         _active = true;
@@ -122,6 +143,13 @@ internal sealed class ExecExplainCollectorV1
         }
 
         _nodes = explainNodes;
+    }
+
+    public void RecordTrace(ActivityTraceId traceId, ActivitySpanId spanId)
+    {
+        _hasTrace = true;
+        _traceId = traceId;
+        _spanId = spanId;
     }
 
     public void RecordRouting(IReadOnlyDictionary<string, string> variants, IReadOnlyList<PatchEvaluatorV1.PatchOverlayAppliedV1>? overlaysApplied)
@@ -247,9 +275,15 @@ internal sealed class ExecExplainCollectorV1
 
         _flowEndTimestamp = Stopwatch.GetTimestamp();
         var hasConfigVersion = context.TryGetConfigVersion(out var configVersion);
+        var hasConfigSnapshotMeta = context.TryGetConfigSnapshot(out var configSnapshot);
+        var configSnapshotMeta = hasConfigSnapshotMeta ? configSnapshot.Meta : default;
         var qosSelectedTier = context.QosSelectedTier;
         var qosReasonCode = context.QosReasonCode;
         var qosSignals = context.QosSignals;
+
+        ParamsExplain paramsExplain = default;
+        var hasParamsExplain = _level != ExplainLevel.Minimal && context.TryGetParamsExplain(out paramsExplain);
+
         var nodes = _nodes;
         if (nodes is null)
         {
@@ -271,11 +305,20 @@ internal sealed class ExecExplainCollectorV1
             _planHash,
             hasConfigVersion,
             configVersion,
+            hasConfigSnapshotMeta,
+            configSnapshotMeta,
             qosSelectedTier,
             qosReasonCode,
             qosSignals,
             _overlaysApplied,
             _variants,
+            _hasTrace,
+            _traceId,
+            _spanId,
+            _deadlineUtc,
+            _budgetRemainingMsAtStart,
+            hasParamsExplain,
+            paramsExplain,
             _flowStartTimestamp,
             _flowEndTimestamp,
             nodes,

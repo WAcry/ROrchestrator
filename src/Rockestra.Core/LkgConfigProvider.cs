@@ -21,7 +21,11 @@ internal sealed class LkgConfigProvider : IConfigProvider
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));
         _validator = validator ?? throw new ArgumentNullException(nameof(validator));
         _gate = new Lock();
-        _lkg = new SnapshotBox(new ConfigSnapshot(configVersion: 0, patchJson: string.Empty));
+        _lkg = new SnapshotBox(
+            new ConfigSnapshot(
+                configVersion: 0,
+                patchJson: string.Empty,
+                meta: new ConfigSnapshotMeta(source: "empty", timestampUtc: DateTimeOffset.UtcNow)));
     }
 
     public ValueTask<ConfigSnapshot> GetSnapshotAsync(FlowContext context)
@@ -40,7 +44,7 @@ internal sealed class LkgConfigProvider : IConfigProvider
         catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
         {
             RecordFallback(context);
-            return new ValueTask<ConfigSnapshot>(Volatile.Read(ref _lkg).Snapshot);
+            return new ValueTask<ConfigSnapshot>(CreateFallbackSnapshot(Volatile.Read(ref _lkg).Snapshot, hasCandidateConfigVersion: false, candidateConfigVersion: 0));
         }
 
         if (snapshotTask.IsCompletedSuccessfully)
@@ -62,7 +66,7 @@ internal sealed class LkgConfigProvider : IConfigProvider
         catch (Exception ex) when (ExceptionGuard.ShouldHandle(ex))
         {
             RecordFallback(context);
-            return Volatile.Read(ref _lkg).Snapshot;
+            return CreateFallbackSnapshot(Volatile.Read(ref _lkg).Snapshot, hasCandidateConfigVersion: false, candidateConfigVersion: 0);
         }
 
         return HandleCandidate(context, candidate);
@@ -81,7 +85,7 @@ internal sealed class LkgConfigProvider : IConfigProvider
         if (rejected is not null && rejected.ConfigVersion == candidate.ConfigVersion)
         {
             RecordFallback(context);
-            return lkg.Snapshot;
+            return CreateFallbackSnapshot(lkg.Snapshot, hasCandidateConfigVersion: true, candidateConfigVersion: candidate.ConfigVersion);
         }
 
         lock (_gate)
@@ -97,7 +101,7 @@ internal sealed class LkgConfigProvider : IConfigProvider
             if (rejected is not null && rejected.ConfigVersion == candidate.ConfigVersion)
             {
                 RecordFallback(context);
-                return lkg.Snapshot;
+                return CreateFallbackSnapshot(lkg.Snapshot, hasCandidateConfigVersion: true, candidateConfigVersion: candidate.ConfigVersion);
             }
 
             Interlocked.Increment(ref _validationAttemptCount);
@@ -106,7 +110,7 @@ internal sealed class LkgConfigProvider : IConfigProvider
             {
                 Volatile.Write(ref _rejected, new RejectedCandidate(candidate.ConfigVersion));
                 RecordFallback(context);
-                return lkg.Snapshot;
+                return CreateFallbackSnapshot(lkg.Snapshot, hasCandidateConfigVersion: true, candidateConfigVersion: candidate.ConfigVersion);
             }
 
             var accepted = new SnapshotBox(candidate);
@@ -114,6 +118,18 @@ internal sealed class LkgConfigProvider : IConfigProvider
             Volatile.Write(ref _rejected, null);
             return candidate;
         }
+    }
+
+    private static ConfigSnapshot CreateFallbackSnapshot(in ConfigSnapshot lkgSnapshot, bool hasCandidateConfigVersion, ulong candidateConfigVersion)
+    {
+        var evidence = new ConfigSnapshotLkgFallbackEvidence(
+            fallback: true,
+            lastGoodConfigVersion: lkgSnapshot.ConfigVersion,
+            hasCandidateConfigVersion: hasCandidateConfigVersion,
+            candidateConfigVersion: candidateConfigVersion);
+
+        var meta = lkgSnapshot.Meta.WithSourceAndLkgFallbackEvidence(source: "lkg", evidence);
+        return new ConfigSnapshot(lkgSnapshot.ConfigVersion, lkgSnapshot.PatchJson, meta);
     }
 
     private bool TryAcceptCandidate(ConfigSnapshot candidate)

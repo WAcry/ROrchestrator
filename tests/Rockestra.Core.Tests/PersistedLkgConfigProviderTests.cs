@@ -13,7 +13,7 @@ public sealed class PersistedLkgConfigProviderTests
 
         var store = new FakeLkgSnapshotStore(
             loadResult: LkgSnapshotLoadResultKind.Loaded,
-            loadedSnapshot: new ConfigSnapshot(configVersion: 10, validPatch));
+            loadedSnapshot: new ConfigSnapshot(configVersion: 10, validPatch, meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow)));
 
         var validator = new ConfigValidator(new FlowRegistry(), new ModuleCatalog());
         var provider = new PersistedLkgConfigProvider(new ThrowingConfigProvider(), validator, store);
@@ -23,6 +23,12 @@ public sealed class PersistedLkgConfigProviderTests
 
         var snapshot = await provider.GetSnapshotAsync(context);
         Assert.Equal((ulong)10, snapshot.ConfigVersion);
+
+        Assert.Equal("lkg", snapshot.Meta.Source);
+        Assert.True(snapshot.Meta.TryGetLkgFallbackEvidence(out var evidence));
+        Assert.True(evidence.Fallback);
+        Assert.False(evidence.HasCandidateConfigVersion);
+        Assert.Equal((ulong)10, evidence.LastGoodConfigVersion);
 
         Assert.True(explainSink.TryGet("config_lkg_fallback", out var fallback));
         Assert.Equal("true", fallback);
@@ -53,8 +59,8 @@ public sealed class PersistedLkgConfigProviderTests
         var validator = new ConfigValidator(new FlowRegistry(), new ModuleCatalog());
         var provider = new PersistedLkgConfigProvider(
             new SequenceConfigProvider(
-                new ConfigSnapshot(configVersion: 1, validPatch),
-                new ConfigSnapshot(configVersion: 2, invalidPatch)),
+                new ConfigSnapshot(configVersion: 1, validPatch, meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow)),
+                new ConfigSnapshot(configVersion: 2, invalidPatch, meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow))),
             validator,
             store);
 
@@ -97,7 +103,10 @@ public sealed class PersistedLkgConfigProviderTests
 
         public StaticConfigProvider(ulong configVersion, string patchJson)
         {
-            _snapshot = new ConfigSnapshot(configVersion, patchJson);
+            _snapshot = new ConfigSnapshot(
+                configVersion,
+                patchJson,
+                new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow));
         }
 
         public ValueTask<ConfigSnapshot> GetSnapshotAsync(FlowContext context)
@@ -147,7 +156,10 @@ public sealed class PersistedLkgConfigProviderTests
         {
             _loadResult = loadResult;
             _loadedSnapshot = loadedSnapshot;
-            _lastStoredSnapshot = new ConfigSnapshot(configVersion: 0, patchJson: string.Empty);
+            _lastStoredSnapshot = new ConfigSnapshot(
+                configVersion: 0,
+                patchJson: string.Empty,
+                meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow));
         }
 
         public LkgSnapshotLoadResultKind TryLoad(out ConfigSnapshot snapshot)

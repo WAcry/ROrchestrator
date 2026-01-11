@@ -36,7 +36,7 @@ public sealed class ToolingJsonV1Tests
         Assert.Equal(0, result.ExitCode);
 
         Assert.Equal(
-            "{\"kind\":\"explain\",\"tooling_json_version\":\"v1\",\"flow_name\":\"HomeFeed\",\"plan_template_hash\":\"01BF10E88E40BACA\",\"stages\":[{\"stage_name\":\"s1\",\"contract\":{\"allows_dynamic_modules\":true,\"allowed_module_types\":null,\"max_modules_warn\":0,\"max_modules_hard\":0}}],\"nodes\":[{\"kind\":\"step\",\"name\":\"n1\",\"stage_name\":\"s1\",\"module_type\":\"test.module\",\"output_type\":\"System.Int32\"},{\"kind\":\"join\",\"name\":\"join\",\"stage_name\":\"s1\",\"module_type\":null,\"output_type\":\"System.Int32\"}]}",
+            "{\"kind\":\"explain\",\"tooling_json_version\":\"v1\",\"flow_name\":\"HomeFeed\",\"plan_template_hash\":\"01BF10E88E40BACA\",\"stages\":[{\"stage_name\":\"s1\",\"contract\":{\"allows_dynamic_modules\":true,\"allows_shadow_modules\":true,\"allowed_module_types\":null,\"max_modules_warn\":0,\"max_modules_hard\":0,\"max_shadow_modules_hard\":0,\"max_shadow_sample_bps\":10000,\"min_fanout_max\":0,\"max_fanout_max\":8}}],\"nodes\":[{\"kind\":\"step\",\"name\":\"n1\",\"stage_name\":\"s1\",\"module_type\":\"test.module\",\"output_type\":\"System.Int32\"},{\"kind\":\"join\",\"name\":\"join\",\"stage_name\":\"s1\",\"module_type\":null,\"output_type\":\"System.Int32\"}]}",
             result.Json);
     }
 
@@ -51,7 +51,7 @@ public sealed class ToolingJsonV1Tests
         Assert.Equal(0, result.ExitCode);
 
         Assert.Equal(
-            "{\"kind\":\"explain\",\"tooling_json_version\":\"v1\",\"flow_name\":\"HomeFeed\",\"plan_template_hash\":\"01BF10E88E40BACA\",\"stages\":[{\"stage_name\":\"s1\",\"contract\":{\"allows_dynamic_modules\":true,\"allowed_module_types\":null,\"max_modules_warn\":0,\"max_modules_hard\":0}}],\"nodes\":[{\"kind\":\"step\",\"name\":\"n1\",\"stage_name\":\"s1\",\"module_type\":\"test.module\",\"output_type\":\"System.Int32\"},{\"kind\":\"join\",\"name\":\"join\",\"stage_name\":\"s1\",\"module_type\":null,\"output_type\":\"System.Int32\"}],\"mermaid\":\"flowchart TD\\n  n0[\\\"n1\\\\nstep\\\\n(test.module)\\\\nSystem.Int32\\\"] --> n1[\\\"join\\\\njoin\\\\nSystem.Int32\\\"]\\n\"}",
+            "{\"kind\":\"explain\",\"tooling_json_version\":\"v1\",\"flow_name\":\"HomeFeed\",\"plan_template_hash\":\"01BF10E88E40BACA\",\"stages\":[{\"stage_name\":\"s1\",\"contract\":{\"allows_dynamic_modules\":true,\"allows_shadow_modules\":true,\"allowed_module_types\":null,\"max_modules_warn\":0,\"max_modules_hard\":0,\"max_shadow_modules_hard\":0,\"max_shadow_sample_bps\":10000,\"min_fanout_max\":0,\"max_fanout_max\":8}}],\"nodes\":[{\"kind\":\"step\",\"name\":\"n1\",\"stage_name\":\"s1\",\"module_type\":\"test.module\",\"output_type\":\"System.Int32\"},{\"kind\":\"join\",\"name\":\"join\",\"stage_name\":\"s1\",\"module_type\":null,\"output_type\":\"System.Int32\"}],\"mermaid\":\"flowchart TD\\n  n0[\\\"n1\\\\nstep\\\\n(test.module)\\\\nSystem.Int32\\\"] --> n1[\\\"join\\\\njoin\\\\nSystem.Int32\\\"]\\n\"}",
             result.Json);
     }
 

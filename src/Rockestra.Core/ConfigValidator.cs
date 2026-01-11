@@ -41,6 +41,10 @@ public sealed class ConfigValidator
     private const string CodeStageModuleTypeForbidden = "CFG_STAGE_MODULE_TYPE_FORBIDDEN";
     private const string CodeStageModuleCountWarnExceeded = "CFG_STAGE_MODULE_COUNT_WARN_EXCEEDED";
     private const string CodeStageModuleCountHardExceeded = "CFG_STAGE_MODULE_COUNT_HARD_EXCEEDED";
+    private const string CodeStageShadowForbidden = "CFG_STAGE_SHADOW_FORBIDDEN";
+    private const string CodeStageShadowModuleCountHardExceeded = "CFG_STAGE_SHADOW_MODULE_COUNT_HARD_EXCEEDED";
+    private const string CodeStageShadowSampleBpsExceeded = "CFG_STAGE_SHADOW_SAMPLE_BPS_EXCEEDED";
+    private const string CodeStageFanoutMaxOutOfRange = "CFG_STAGE_FANOUT_MAX_OUT_OF_RANGE";
     private const string CodeParamsBindFailed = "CFG_PARAMS_BIND_FAILED";
     private const string CodeParamsUnknownField = "CFG_PARAMS_UNKNOWN_FIELD";
     private const string CodeModulesNotArray = "CFG_MODULES_NOT_ARRAY";
@@ -68,7 +72,6 @@ public sealed class ConfigValidator
     private const string CodeShadowSampleInvalid = "CFG_SHADOW_SAMPLE_INVALID";
     private const string GateCodePrefix = "CFG_GATE_";
 
-    private const int MaxAllowedFanoutMax = 8;
     private const int MinModulePriority = -1000;
     private const int MaxModulePriority = 1000;
 
@@ -1687,7 +1690,7 @@ public sealed class ConfigValidator
                 return;
             }
 
-            if (value32 > MaxAllowedFanoutMax)
+            if (value32 > StageContract.MaxAllowedFanoutMax)
             {
                 findings.Add(
                     new ValidationFinding(
@@ -1698,7 +1701,7 @@ public sealed class ConfigValidator
                             "fanoutMax=",
                             value32.ToString(System.Globalization.CultureInfo.InvariantCulture),
                             " exceeds maxAllowed=",
-                            MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            StageContract.MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
                             ".")));
                 return;
             }
@@ -1719,7 +1722,7 @@ public sealed class ConfigValidator
                 return;
             }
 
-            if (value64 > MaxAllowedFanoutMax)
+            if (value64 > StageContract.MaxAllowedFanoutMax)
             {
                 findings.Add(
                     new ValidationFinding(
@@ -1730,7 +1733,7 @@ public sealed class ConfigValidator
                             "fanoutMax=",
                             value64.ToString(System.Globalization.CultureInfo.InvariantCulture),
                             " exceeds maxAllowed=",
-                            MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            StageContract.MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
                             ".")));
                 return;
             }
@@ -2292,7 +2295,7 @@ public sealed class ConfigValidator
                 return;
             }
 
-            if (value32 > MaxAllowedFanoutMax)
+            if (value32 > StageContract.MaxAllowedFanoutMax)
             {
                 findings.Add(
                     new ValidationFinding(
@@ -2303,7 +2306,7 @@ public sealed class ConfigValidator
                             "fanoutMax=",
                             value32.ToString(System.Globalization.CultureInfo.InvariantCulture),
                             " exceeds maxAllowed=",
-                            MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            StageContract.MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
                             ".")));
                 return;
             }
@@ -2324,7 +2327,7 @@ public sealed class ConfigValidator
                 return;
             }
 
-            if (value64 > MaxAllowedFanoutMax)
+            if (value64 > StageContract.MaxAllowedFanoutMax)
             {
                 findings.Add(
                     new ValidationFinding(
@@ -2335,7 +2338,7 @@ public sealed class ConfigValidator
                             "fanoutMax=",
                             value64.ToString(System.Globalization.CultureInfo.InvariantCulture),
                             " exceeds maxAllowed=",
-                            MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            StageContract.MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
                             ".")));
                 return;
             }
@@ -2719,6 +2722,8 @@ public sealed class ConfigValidator
         ref FindingBuffer findings,
         ref Dictionary<string, ModuleIdFirstOccurrence>? moduleIdFirstOccurrenceMap)
     {
+        var stagePathPrefix = string.Concat("$.flows.", flowName, ".stages.", stageName);
+
         var hasModules = false;
         JsonElement modulesPatch = default;
         var hasFanoutMax = false;
@@ -2745,24 +2750,40 @@ public sealed class ConfigValidator
                 new ValidationFinding(
                     ValidationSeverity.Error,
                     code: CodeUnknownField,
-                    path: string.Concat("$.flows.", flowName, ".stages.", stageName, ".", fieldName),
+                    path: string.Concat(stagePathPrefix, ".", fieldName),
                     message: string.Concat("Unknown field: ", fieldName)));
         }
+
+        var validFanoutMaxValue = 0;
+        var hasValidFanoutMaxValue = hasFanoutMax && TryGetValidFanoutMaxValue(fanoutMax, out validFanoutMaxValue);
 
         if (hasFanoutMax)
         {
             ValidateFanoutMax(flowName, stageName, fanoutMax, ref findings);
+
+            if (hasValidFanoutMaxValue
+                && (validFanoutMaxValue < stageContract.MinFanoutMax || validFanoutMaxValue > stageContract.MaxFanoutMax))
+            {
+                findings.Add(
+                    new ValidationFinding(
+                        ValidationSeverity.Error,
+                        code: CodeStageFanoutMaxOutOfRange,
+                        path: string.Concat(stagePathPrefix, ".fanoutMax"),
+                        message: string.Concat(
+                            "fanoutMax=",
+                            validFanoutMaxValue.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            " is outside stage contract range ",
+                            stageContract.MinFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            "..",
+                            stageContract.MaxFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            ".")));
+            }
         }
 
         if (!hasModules)
         {
             return;
         }
-
-        var stagePathPrefix = string.Concat("$.flows.", flowName, ".stages.", stageName);
-
-        var validFanoutMaxValue = 0;
-        var hasValidFanoutMaxValue = hasFanoutMax && TryGetValidFanoutMaxValue(fanoutMax, out validFanoutMaxValue);
 
         var modulesPathPrefix = string.Concat(stagePathPrefix, ".modules");
 
@@ -2874,7 +2895,7 @@ public sealed class ConfigValidator
                 return;
             }
 
-            if (value32 > MaxAllowedFanoutMax)
+            if (value32 > StageContract.MaxAllowedFanoutMax)
             {
                 findings.Add(
                     new ValidationFinding(
@@ -2885,7 +2906,7 @@ public sealed class ConfigValidator
                             "fanoutMax=",
                             value32.ToString(System.Globalization.CultureInfo.InvariantCulture),
                             " exceeds maxAllowed=",
-                            MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            StageContract.MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
                             ".")));
                 return;
             }
@@ -2906,7 +2927,7 @@ public sealed class ConfigValidator
                 return;
             }
 
-            if (value64 > MaxAllowedFanoutMax)
+            if (value64 > StageContract.MaxAllowedFanoutMax)
             {
                 findings.Add(
                     new ValidationFinding(
@@ -2917,7 +2938,7 @@ public sealed class ConfigValidator
                             "fanoutMax=",
                             value64.ToString(System.Globalization.CultureInfo.InvariantCulture),
                             " exceeds maxAllowed=",
-                            MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            StageContract.MaxAllowedFanoutMax.ToString(System.Globalization.CultureInfo.InvariantCulture),
                             ".")));
                 return;
             }
@@ -2947,6 +2968,7 @@ public sealed class ConfigValidator
         ref Dictionary<string, ModuleIdFirstOccurrence>? moduleIdFirstOccurrenceMap)
     {
         Dictionary<string, int>? moduleIdIndexMap = null;
+        var shadowModuleCount = 0;
 
         var index = 0;
 
@@ -3427,7 +3449,19 @@ public sealed class ConfigValidator
 
             if (hasModuleShadow)
             {
+                shadowModuleCount++;
+
                 var shadowPath = string.Concat(modulesPathPrefix, "[", index.ToString(System.Globalization.CultureInfo.InvariantCulture), "].shadow");
+
+                if (!stageContract.AllowsShadowModules)
+                {
+                    findings.Add(
+                        new ValidationFinding(
+                            ValidationSeverity.Error,
+                            code: CodeStageShadowForbidden,
+                            path: shadowPath,
+                            message: string.Concat("Shadow modules are not allowed for stage: ", stageName)));
+                }
 
                 if (moduleShadow.ValueKind != JsonValueKind.Object)
                 {
@@ -3484,6 +3518,26 @@ public sealed class ConfigValidator
                                     path: string.Concat(shadowPath, ".sample"),
                                     message: "modules[].shadow.sample must be a number in range 0..1."));
                         }
+                        else if (stageContract.MaxShadowSampleBps < 10000)
+                        {
+                            var sampleBps = ConvertShadowSampleToBps(sampleRate);
+                            var maxShadowSampleBps = stageContract.MaxShadowSampleBps;
+
+                            if (sampleBps > maxShadowSampleBps)
+                            {
+                                findings.Add(
+                                    new ValidationFinding(
+                                        ValidationSeverity.Error,
+                                        code: CodeStageShadowSampleBpsExceeded,
+                                        path: string.Concat(shadowPath, ".sample"),
+                                        message: string.Concat(
+                                            "shadowSampleBps=",
+                                            sampleBps.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                            " exceeds stage contract maxShadowSampleBps=",
+                                            maxShadowSampleBps.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                            ".")));
+                            }
+                        }
                     }
                 }
             }
@@ -3495,6 +3549,49 @@ public sealed class ConfigValidator
 
             index++;
         }
+
+        var maxShadowModulesHard = stageContract.MaxShadowModulesHard;
+        if (maxShadowModulesHard != 0 && shadowModuleCount > maxShadowModulesHard)
+        {
+            findings.Add(
+                new ValidationFinding(
+                    ValidationSeverity.Error,
+                    code: CodeStageShadowModuleCountHardExceeded,
+                    path: modulesPathPrefix,
+                    message: string.Concat(
+                        "shadowModules=",
+                        shadowModuleCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        " exceeds stage contract hard limit=",
+                        maxShadowModulesHard.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        ".")));
+        }
+    }
+
+    private static int ConvertShadowSampleToBps(double sampleRate)
+    {
+        if (sampleRate <= 0)
+        {
+            return 0;
+        }
+
+        if (sampleRate >= 1)
+        {
+            return 10000;
+        }
+
+        var bps = (int)Math.Round(sampleRate * 10000.0, MidpointRounding.AwayFromZero);
+
+        if (bps < 0)
+        {
+            return 0;
+        }
+
+        if (bps > 10000)
+        {
+            return 10000;
+        }
+
+        return bps;
     }
 
     private static bool TryGetValidFanoutMaxValue(JsonElement fanoutMax, out int value)
@@ -3507,7 +3604,7 @@ public sealed class ConfigValidator
 
         if (fanoutMax.TryGetInt32(out var value32))
         {
-            if (value32 < 0 || value32 > MaxAllowedFanoutMax)
+            if (value32 < 0 || value32 > StageContract.MaxAllowedFanoutMax)
             {
                 value = 0;
                 return false;
@@ -3519,7 +3616,7 @@ public sealed class ConfigValidator
 
         if (fanoutMax.TryGetInt64(out var value64))
         {
-            if (value64 < 0 || value64 > MaxAllowedFanoutMax)
+            if (value64 < 0 || value64 > StageContract.MaxAllowedFanoutMax)
             {
                 value = 0;
                 return false;

@@ -2180,6 +2180,7 @@ public static class ToolingJsonV1
         writer.WritePropertyName("contract");
         writer.WriteStartObject();
         writer.WriteBoolean("allows_dynamic_modules", contract.AllowsDynamicModules);
+        writer.WriteBoolean("allows_shadow_modules", contract.AllowsShadowModules);
 
         var allowed = contract.AllowedModuleTypes;
 
@@ -2214,6 +2215,10 @@ public static class ToolingJsonV1
 
         writer.WriteNumber("max_modules_warn", contract.MaxModulesWarn);
         writer.WriteNumber("max_modules_hard", contract.MaxModulesHard);
+        writer.WriteNumber("max_shadow_modules_hard", contract.MaxShadowModulesHard);
+        writer.WriteNumber("max_shadow_sample_bps", contract.MaxShadowSampleBps);
+        writer.WriteNumber("min_fanout_max", contract.MinFanoutMax);
+        writer.WriteNumber("max_fanout_max", contract.MaxFanoutMax);
         writer.WriteEndObject();
 
         writer.WriteEndObject();

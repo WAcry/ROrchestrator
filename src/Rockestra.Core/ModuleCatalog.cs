@@ -14,6 +14,16 @@ public sealed class ModuleCatalog
         _modules = new Dictionary<string, Entry>();
     }
 
+    public bool IsRegistered(string typeName)
+    {
+        if (string.IsNullOrEmpty(typeName))
+        {
+            throw new ArgumentException("TypeName must be non-empty.", nameof(typeName));
+        }
+
+        return _modules.ContainsKey(typeName);
+    }
+
     public void Register<TArgs, TOut>(
         string typeName,
         Func<IServiceProvider, IModule<TArgs, TOut>> factory,

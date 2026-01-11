@@ -60,7 +60,53 @@ public sealed class FileLkgSnapshotStore : ILkgSnapshotStore
                 return LkgSnapshotLoadResultKind.Corrupt;
             }
 
-            snapshot = new ConfigSnapshot(configVersion, patchJson);
+            var lastWriteUtc = File.GetLastWriteTimeUtc(_path);
+            var fallbackTimestampUtc = new DateTimeOffset(lastWriteUtc, TimeSpan.Zero);
+
+            var timestampUtc = fallbackTimestampUtc;
+            var overlays = Array.Empty<string>();
+
+            if (root.TryGetProperty("meta", out var metaElement) && metaElement.ValueKind == JsonValueKind.Object)
+            {
+                if (metaElement.TryGetProperty("timestamp_utc", out var timestampElement)
+                    && timestampElement.ValueKind == JsonValueKind.String
+                    && timestampElement.TryGetDateTimeOffset(out var parsedTimestamp))
+                {
+                    timestampUtc = parsedTimestamp.ToUniversalTime();
+                }
+
+                if (metaElement.TryGetProperty("overlays", out var overlaysElement) && overlaysElement.ValueKind == JsonValueKind.Array)
+                {
+                    var count = overlaysElement.GetArrayLength();
+                    if (count != 0)
+                    {
+                        var overlayArray = new string[count];
+                        var overlayIndex = 0;
+
+                        foreach (var overlayElement in overlaysElement.EnumerateArray())
+                        {
+                            if (overlayElement.ValueKind != JsonValueKind.String)
+                            {
+                                return LkgSnapshotLoadResultKind.Corrupt;
+                            }
+
+                            var overlay = overlayElement.GetString();
+                            if (string.IsNullOrEmpty(overlay))
+                            {
+                                return LkgSnapshotLoadResultKind.Corrupt;
+                            }
+
+                            overlayArray[overlayIndex] = overlay;
+                            overlayIndex++;
+                        }
+
+                        overlays = overlayArray;
+                    }
+                }
+            }
+
+            var meta = new ConfigSnapshotMeta(source: "lkg_persisted", timestampUtc: timestampUtc, overlays: overlays);
+            snapshot = new ConfigSnapshot(configVersion, patchJson, meta);
             return LkgSnapshotLoadResultKind.Loaded;
         }
         catch (JsonException)
@@ -95,6 +141,24 @@ public sealed class FileLkgSnapshotStore : ILkgSnapshotStore
                 writer.WriteStartObject();
                 writer.WriteNumber("config_version", snapshot.ConfigVersion);
                 writer.WriteString("patch_json", snapshot.PatchJson);
+
+                writer.WritePropertyName("meta");
+                writer.WriteStartObject();
+                writer.WriteString("source", snapshot.Meta.Source);
+                writer.WriteString("timestamp_utc", snapshot.Meta.TimestampUtc);
+
+                writer.WritePropertyName("overlays");
+                writer.WriteStartArray();
+
+                var overlays = snapshot.Meta.Overlays;
+                for (var i = 0; i < overlays.Length; i++)
+                {
+                    writer.WriteStringValue(overlays[i]);
+                }
+
+                writer.WriteEndArray();
+                writer.WriteEndObject();
+
                 writer.WriteEndObject();
                 writer.Flush();
             }

@@ -12,12 +12,19 @@ public sealed class ExecExplain
     private readonly ExecExplainStageModule[] _stageModules;
     private readonly PatchEvaluatorV1.PatchOverlayAppliedV1[] _overlaysApplied;
     private readonly IReadOnlyDictionary<string, string> _variants;
+    private readonly bool _hasTrace;
+    private readonly ActivityTraceId _traceId;
+    private readonly ActivitySpanId _spanId;
+    private readonly bool _hasParamsExplain;
+    private readonly ParamsExplain _paramsExplain;
     private readonly ExplainLevel _requestedLevel;
     private readonly string? _explainReason;
     private readonly ExplainRedactionPolicy _policy;
     private readonly string? _levelDowngradeReasonCode;
     private readonly ulong _configVersion;
     private readonly bool _hasConfigVersion;
+    private readonly bool _hasConfigSnapshotMeta;
+    private readonly ConfigSnapshotMeta _configSnapshotMeta;
     private readonly QosTier _qosSelectedTier;
     private readonly string? _qosReasonCode;
     private readonly IReadOnlyDictionary<string, string>? _qosSignals;
@@ -35,6 +42,10 @@ public sealed class ExecExplain
     public string? LevelDowngradeReasonCode => _levelDowngradeReasonCode;
 
     public ulong PlanHash { get; }
+
+    public DateTimeOffset DeadlineUtc { get; }
+
+    public long BudgetRemainingMsAtStart { get; }
 
     public long StartTimestamp { get; }
 
@@ -66,11 +77,20 @@ public sealed class ExecExplain
         ulong planHash,
         bool hasConfigVersion,
         ulong configVersion,
+        bool hasConfigSnapshotMeta,
+        ConfigSnapshotMeta configSnapshotMeta,
         QosTier qosSelectedTier,
         string? qosReasonCode,
         IReadOnlyDictionary<string, string>? qosSignals,
         PatchEvaluatorV1.PatchOverlayAppliedV1[]? overlaysApplied,
         IReadOnlyDictionary<string, string>? variants,
+        bool hasTrace,
+        ActivityTraceId traceId,
+        ActivitySpanId spanId,
+        DateTimeOffset deadlineUtc,
+        long budgetRemainingMsAtStart,
+        bool hasParamsExplain,
+        ParamsExplain paramsExplain,
         long startTimestamp,
         long endTimestamp,
         ExecExplainNode[] nodes,
@@ -120,6 +140,16 @@ public sealed class ExecExplain
             throw new ArgumentOutOfRangeException(nameof(endTimestamp), endTimestamp, "EndTimestamp must be >= StartTimestamp.");
         }
 
+        if (deadlineUtc == default)
+        {
+            throw new ArgumentException("DeadlineUtc must be non-default.", nameof(deadlineUtc));
+        }
+
+        if (budgetRemainingMsAtStart < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(budgetRemainingMsAtStart), budgetRemainingMsAtStart, "BudgetRemainingMsAtStart must be >= 0.");
+        }
+
         FlowName = flowName;
         Level = level;
         _requestedLevel = requestedLevel;
@@ -129,9 +159,18 @@ public sealed class ExecExplain
         PlanHash = planHash;
         _hasConfigVersion = hasConfigVersion;
         _configVersion = configVersion;
+        _hasConfigSnapshotMeta = hasConfigSnapshotMeta;
+        _configSnapshotMeta = configSnapshotMeta;
         _qosSelectedTier = qosSelectedTier;
         _qosReasonCode = qosReasonCode;
         _qosSignals = qosSignals;
+        _hasTrace = hasTrace;
+        _traceId = traceId;
+        _spanId = spanId;
+        DeadlineUtc = deadlineUtc;
+        BudgetRemainingMsAtStart = budgetRemainingMsAtStart;
+        _hasParamsExplain = hasParamsExplain;
+        _paramsExplain = paramsExplain;
         StartTimestamp = startTimestamp;
         EndTimestamp = endTimestamp;
         _nodes = nodes;
@@ -149,9 +188,47 @@ public sealed class ExecExplain
         return false;
     }
 
+    public bool TryGetConfigSnapshotMeta(out ConfigSnapshotMeta meta)
+    {
+        if (_hasConfigSnapshotMeta)
+        {
+            meta = _configSnapshotMeta;
+            return true;
+        }
+
+        meta = default;
+        return false;
+    }
+
     public TimeSpan GetDuration()
     {
         return Stopwatch.GetElapsedTime(StartTimestamp, EndTimestamp);
+    }
+
+    public bool TryGetTrace(out ActivityTraceId traceId, out ActivitySpanId spanId)
+    {
+        if (_hasTrace)
+        {
+            traceId = _traceId;
+            spanId = _spanId;
+            return true;
+        }
+
+        traceId = default;
+        spanId = default;
+        return false;
+    }
+
+    public bool TryGetParamsExplain(out ParamsExplain explain)
+    {
+        if (_hasParamsExplain)
+        {
+            explain = _paramsExplain;
+            return true;
+        }
+
+        explain = default;
+        return false;
     }
 }
 

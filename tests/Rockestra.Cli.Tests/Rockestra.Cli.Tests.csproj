@@ -25,5 +25,9 @@
     <ProjectReference Include="..\Rockestra.BootstrapperFixture\Rockestra.BootstrapperFixture.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="Golden\**\*.*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
 

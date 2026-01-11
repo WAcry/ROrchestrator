@@ -94,8 +94,8 @@ public sealed class FlowMetricsQosAndLkgTests
         var invalidPatch = "{\"flows\":{}}";
 
         var configProvider = new SequenceConfigProvider(
-            new ConfigSnapshot(configVersion: 1, validPatch),
-            new ConfigSnapshot(configVersion: 2, invalidPatch));
+            new ConfigSnapshot(configVersion: 1, validPatch, meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow)),
+            new ConfigSnapshot(configVersion: 2, invalidPatch, meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow)));
 
         var host = new FlowHost(registry, catalog, configProvider);
 

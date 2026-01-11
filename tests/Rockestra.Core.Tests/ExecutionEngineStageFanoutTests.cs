@@ -195,6 +195,62 @@ public sealed class ExecutionEngineStageFanoutTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Template_WhenStageContractFanoutMaxIsExceeded_ShouldClampAndTrim()
+    {
+        var patchJson =
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"FanoutFlow\":{\"stages\":{\"s1\":{\"fanoutMax\":3,\"modules\":[" +
+            "{\"id\":\"m_high\",\"use\":\"test.ok\",\"with\":{},\"priority\":10}," +
+            "{\"id\":\"m_low\",\"use\":\"test.ok\",\"with\":{},\"priority\":0}" +
+            "]}}}}}";
+
+        var services = new DummyServiceProvider();
+        var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
+        flowContext.EnableExecExplain(new ExplainOptions(ExplainLevel.Standard));
+
+        var invocationCollector = new FlowTestInvocationCollector();
+        flowContext.ConfigureForTesting(overrideProvider: null, invocationCollector);
+
+        _ = await flowContext.GetConfigSnapshotAsync(new StaticConfigProvider(configVersion: 1, patchJson));
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<OkArgs, int>("test.ok", _ => new OkModule());
+
+        var blueprint = FlowBlueprint
+            .Define<int, int>("FanoutFlow")
+            .Stage(
+                "s1",
+                contract => contract.AllowDynamicModules().FanoutMaxRange(min: 0, max: 1),
+                stage =>
+                    stage.Join<int>(
+                        "final",
+                        _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0))))
+            .Build();
+
+        var template = PlanCompiler.Compile(blueprint, catalog);
+        var engine = new ExecutionEngine(catalog);
+
+        var result = await engine.ExecuteAsync(template, request: 0, flowContext);
+
+        Assert.True(result.IsOk);
+
+        Assert.True(flowContext.TryGetStageFanoutSnapshot("s1", out var snapshot));
+        Assert.Single(snapshot.EnabledModuleIds);
+        Assert.Equal("m_high", snapshot.EnabledModuleIds[0]);
+
+        Assert.Single(snapshot.SkippedModules);
+        AssertStageModuleSkip(snapshot, "m_low", ExecutionEngine.FanoutTrimCode);
+
+        Assert.True(flowContext.TryGetExecExplain(out var explain));
+        Assert.Equal(ExplainLevel.Standard, explain.Level);
+        Assert.Equal(2, explain.StageModules.Count);
+        AssertStageModuleOutcome(explain, "m_high", OutcomeKind.Ok, "OK");
+        AssertStageModuleOutcome(explain, "m_low", OutcomeKind.Skipped, ExecutionEngine.FanoutTrimCode);
+
+        Assert.Single(invocationCollector.ToArray());
+        Assert.Equal("m_high", invocationCollector.ToArray()[0].ModuleId);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Template_ShouldExecuteFanoutModulesConcurrently()
     {
         var patchJson =
@@ -374,7 +430,10 @@ public sealed class ExecutionEngineStageFanoutTests
 
         public StaticConfigProvider(ulong configVersion, string patchJson)
         {
-            _snapshot = new ConfigSnapshot(configVersion, patchJson);
+            _snapshot = new ConfigSnapshot(
+                configVersion,
+                patchJson,
+                new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow));
         }
 
         public ValueTask<ConfigSnapshot> GetSnapshotAsync(FlowContext context)

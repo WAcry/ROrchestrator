@@ -122,7 +122,10 @@ public sealed class QosOverlayExecutionTests
 
         public StaticConfigProvider(ulong configVersion, string patchJson)
         {
-            _snapshot = new ConfigSnapshot(configVersion, patchJson);
+            _snapshot = new ConfigSnapshot(
+                configVersion,
+                patchJson,
+                new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow));
         }
 
         public ValueTask<ConfigSnapshot> GetSnapshotAsync(FlowContext context)

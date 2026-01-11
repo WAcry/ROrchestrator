@@ -130,6 +130,131 @@ public sealed class StageContractAndValidationTests
     }
 
     [Fact]
+    public void ValidatePatchJson_ShouldRejectShadow_WhenStageContractDisallowsShadow()
+    {
+        var registry = new FlowRegistry();
+        registry.Register(
+            "HomeFeed",
+            FlowBlueprint.Define<int, int>("TestFlow")
+                .Stage(
+                    "s1",
+                    contract => contract.AllowDynamicModules().DisallowShadowModules(),
+                    stage =>
+                        stage.Join<int>(
+                            "final",
+                            _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0))))
+                .Build());
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<EmptyArgs, int>("test.ok", _ => new OkModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[" +
+            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{},\"shadow\":{\"sample\":1}}" +
+            "]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_STAGE_SHADOW_FORBIDDEN");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].shadow", finding.Path);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldError_WhenShadowModulesExceedStageHardLimit()
+    {
+        var registry = new FlowRegistry();
+        registry.Register(
+            "HomeFeed",
+            FlowBlueprint.Define<int, int>("TestFlow")
+                .Stage(
+                    "s1",
+                    contract => contract.AllowDynamicModules().MaxShadowModules(1),
+                    stage =>
+                        stage.Join<int>(
+                            "final",
+                            _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0))))
+                .Build());
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<EmptyArgs, int>("test.ok", _ => new OkModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[" +
+            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{},\"shadow\":{\"sample\":1}}," +
+            "{\"id\":\"m2\",\"use\":\"test.ok\",\"with\":{},\"shadow\":{\"sample\":1}}" +
+            "]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_STAGE_SHADOW_MODULE_COUNT_HARD_EXCEEDED");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules", finding.Path);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldRejectShadowSampleBps_WhenExceedingStageContractMax()
+    {
+        var registry = new FlowRegistry();
+        registry.Register(
+            "HomeFeed",
+            FlowBlueprint.Define<int, int>("TestFlow")
+                .Stage(
+                    "s1",
+                    contract => contract.AllowDynamicModules().MaxShadowSampleBps(5000),
+                    stage =>
+                        stage.Join<int>(
+                            "final",
+                            _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0))))
+                .Build());
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<EmptyArgs, int>("test.ok", _ => new OkModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[" +
+            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{},\"shadow\":{\"sample\":1}}" +
+            "]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_STAGE_SHADOW_SAMPLE_BPS_EXCEEDED");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.modules[0].shadow.sample", finding.Path);
+    }
+
+    [Fact]
+    public void ValidatePatchJson_ShouldRejectFanoutMax_WhenOutsideStageContractRange()
+    {
+        var registry = new FlowRegistry();
+        registry.Register(
+            "HomeFeed",
+            FlowBlueprint.Define<int, int>("TestFlow")
+                .Stage(
+                    "s1",
+                    contract => contract.AllowDynamicModules().FanoutMaxRange(min: 2, max: 4),
+                    stage =>
+                        stage.Join<int>(
+                            "final",
+                            _ => new ValueTask<Outcome<int>>(Outcome<int>.Ok(0))))
+                .Build());
+
+        var catalog = new ModuleCatalog();
+        catalog.Register<EmptyArgs, int>("test.ok", _ => new OkModule());
+
+        var validator = new ConfigValidator(registry, catalog);
+
+        var report = validator.ValidatePatchJson(
+            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
+            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{}}" +
+            "]}}}}}");
+
+        var finding = GetSingleFinding(report, "CFG_STAGE_FANOUT_MAX_OUT_OF_RANGE");
+        Assert.Equal(ValidationSeverity.Error, finding.Severity);
+        Assert.Equal("$.flows.HomeFeed.stages.s1.fanoutMax", finding.Path);
+    }
+
+    [Fact]
     public void ValidatePatchJson_ShouldAllowEmergencyPatchParams_AndValidateBinding()
     {
         var registry = new FlowRegistry();
@@ -391,4 +516,3 @@ public sealed class StageContractAndValidationTests
         }
     }
 }
-

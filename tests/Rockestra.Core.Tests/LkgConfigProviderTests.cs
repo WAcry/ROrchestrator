@@ -22,8 +22,8 @@ public sealed class LkgConfigProviderTests
         var invalidPatch = "{\"flows\":{}}";
 
         var configProvider = new SequenceConfigProvider(
-            new ConfigSnapshot(configVersion: 1, validPatch),
-            new ConfigSnapshot(configVersion: 2, invalidPatch));
+            new ConfigSnapshot(configVersion: 1, validPatch, meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow)),
+            new ConfigSnapshot(configVersion: 2, invalidPatch, meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow)));
 
         var host = new FlowHost(registry, catalog, configProvider);
 
@@ -38,6 +38,14 @@ public sealed class LkgConfigProviderTests
 
         Assert.True(contextB.TryGetConfigVersion(out var configVersion));
         Assert.Equal((ulong)1, configVersion);
+
+        Assert.True(contextB.TryGetConfigSnapshot(out var snapshotB));
+        Assert.Equal("lkg", snapshotB.Meta.Source);
+        Assert.True(snapshotB.Meta.TryGetLkgFallbackEvidence(out var evidence));
+        Assert.True(evidence.Fallback);
+        Assert.True(evidence.HasCandidateConfigVersion);
+        Assert.Equal((ulong)2, evidence.CandidateConfigVersion);
+        Assert.Equal((ulong)1, evidence.LastGoodConfigVersion);
 
         Assert.True(explainSink.TryGet("config_lkg_fallback", out var fallback));
         Assert.Equal("true", fallback);
@@ -58,8 +66,8 @@ public sealed class LkgConfigProviderTests
         var patchWithoutFlows = "{\"schemaVersion\":\"v1\"}";
 
         var configProvider = new SequenceConfigProvider(
-            new ConfigSnapshot(configVersion: 1, patchWithFlows),
-            new ConfigSnapshot(configVersion: 2, patchWithoutFlows));
+            new ConfigSnapshot(configVersion: 1, patchWithFlows, meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow)),
+            new ConfigSnapshot(configVersion: 2, patchWithoutFlows, meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow)));
 
         var host = new FlowHost(registry, catalog, configProvider);
 
@@ -74,6 +82,10 @@ public sealed class LkgConfigProviderTests
 
         Assert.True(contextB.TryGetConfigVersion(out var configVersion));
         Assert.Equal((ulong)2, configVersion);
+
+        Assert.True(contextB.TryGetConfigSnapshot(out var snapshotB));
+        Assert.Equal("static", snapshotB.Meta.Source);
+        Assert.False(snapshotB.Meta.TryGetLkgFallbackEvidence(out _));
 
         Assert.False(explainSink.TryGet("config_lkg_fallback", out _));
     }
@@ -174,7 +186,11 @@ public sealed class LkgConfigProviderTests
         {
             _ = context;
             Interlocked.Increment(ref _callCount);
-            return new ValueTask<ConfigSnapshot>(new ConfigSnapshot(_configVersion, new string(_patchJson.AsSpan())));
+            return new ValueTask<ConfigSnapshot>(
+                new ConfigSnapshot(
+                    _configVersion,
+                    new string(_patchJson.AsSpan()),
+                    meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow)));
         }
     }
 

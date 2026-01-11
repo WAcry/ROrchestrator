@@ -162,8 +162,8 @@ public sealed class FlowHostTests
         registry.Register<int, int>("test_flow", CreateTestFlowBlueprint());
 
         var configProvider = new SequenceConfigProvider(
-            new ConfigSnapshot(configVersion: 1, patchJson: string.Empty),
-            new ConfigSnapshot(configVersion: 2, patchJson: string.Empty));
+            new ConfigSnapshot(configVersion: 1, patchJson: string.Empty, meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow)),
+            new ConfigSnapshot(configVersion: 2, patchJson: string.Empty, meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow)));
         var compiler = new CountingPlanCompiler();
 
         var host = new FlowHost(registry, catalog, configProvider, compiler);
@@ -297,7 +297,10 @@ public sealed class FlowHostTests
 
         public StaticConfigProvider(ulong configVersion, string patchJson)
         {
-            _snapshot = new ConfigSnapshot(configVersion, patchJson);
+            _snapshot = new ConfigSnapshot(
+                configVersion,
+                patchJson,
+                new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow));
         }
 
         public ValueTask<ConfigSnapshot> GetSnapshotAsync(FlowContext context)
@@ -348,7 +351,11 @@ public sealed class FlowHostTests
         public ValueTask<ConfigSnapshot> GetSnapshotAsync(FlowContext context)
         {
             var version = (ulong)Interlocked.Increment(ref _callCount);
-            return new ValueTask<ConfigSnapshot>(new ConfigSnapshot(version, patchJson: string.Empty));
+            return new ValueTask<ConfigSnapshot>(
+                new ConfigSnapshot(
+                    version,
+                    patchJson: string.Empty,
+                    meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow)));
         }
     }
 

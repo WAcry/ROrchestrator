@@ -213,6 +213,7 @@ public static class RockestraCliApp
         string? bootstrapperAssemblyPath = null;
         string? bootstrapperTypeName = null;
         var includeMermaid = false;
+        var rich = false;
         var qosTier = QosTier.Full;
 
         for (var i = 1; i < args.Length; i++)
@@ -298,6 +299,12 @@ public static class RockestraCliApp
                 continue;
             }
 
+            if (a == "--rich")
+            {
+                rich = true;
+                continue;
+            }
+
             return CreateCliErrorResult("CLI_USAGE_INVALID", $"Unknown argument: '{a}'.");
         }
 
@@ -316,6 +323,27 @@ public static class RockestraCliApp
             variants: variants.Count == 0 ? null : variants,
             userId: userId,
             requestAttributes: requestAttributes.Count == 0 ? null : requestAttributes);
+
+        if (rich)
+        {
+            if (string.IsNullOrEmpty(bootstrapperTypeName))
+            {
+                return CreateCliErrorResult(
+                    "CLI_USAGE_INVALID",
+                    "Missing required option: --bootstrapper-type <type>.");
+            }
+
+            var registry = new FlowRegistry();
+            var catalog = new ModuleCatalog();
+            var richSelectors = new SelectorRegistry();
+
+            if (!TryInvokeBootstrapper(bootstrapperAssemblyPath, bootstrapperTypeName, registry, catalog, richSelectors, out var bootstrapError))
+            {
+                return CreateCliErrorResult("CLI_BOOTSTRAP_FAILED", bootstrapError);
+            }
+
+            return ExplainPatchRichJsonV1.ExplainPatchJson(flowName, resolvedPatchJson, registry, catalog, richSelectors, options, qosTier);
+        }
 
         SelectorRegistry? selectors = null;
 
@@ -874,7 +902,7 @@ public static class RockestraCliApp
                 "explain-flow" =>
                     "rock explain-flow --bootstrapper <path> --bootstrapper-type <type> --flow <name> [--include-mermaid]",
                 "explain-patch" =>
-                    "rock explain-patch --flow <name> (--patch <path> | --patch-json <json>) [--variant <k=v> ...] [--user-id <value>] [--request-attr <k=v> ...] [--qos-tier <tier>] [--include-mermaid] [--bootstrapper <path>] [--bootstrapper-type <type>]",
+                    "rock explain-patch --flow <name> (--patch <path> | --patch-json <json>) [--variant <k=v> ...] [--user-id <value>] [--request-attr <k=v> ...] [--qos-tier <tier>] [--include-mermaid] [--rich] [--bootstrapper <path>] [--bootstrapper-type <type>]",
                 "diff-patch" =>
                     "rock diff-patch (--old <path> | --old-json <json>) (--new <path> | --new-json <json>)",
                 "preview-matrix" =>

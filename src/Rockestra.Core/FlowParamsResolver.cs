@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace Rockestra.Core;
 
-internal static class FlowParamsResolver
+public static class FlowParamsResolver
 {
     private const ulong OffsetBasis = 14695981039346656037ul;
     private const ulong Prime = 1099511628211ul;
@@ -547,4 +547,3 @@ internal static class FlowParamsResolver
         }
     }
 }
-
