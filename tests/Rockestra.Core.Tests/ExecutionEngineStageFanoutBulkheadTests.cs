@@ -13,12 +13,29 @@ public sealed class ExecutionEngineStageFanoutBulkheadTests
     [Fact]
     public async Task ExecuteAsync_Template_ShouldSkipPrimaryAndShadow_WhenBulkheadQuotaIsUnavailable()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"limits\":{\"moduleConcurrency\":{\"maxInFlight\":{\"depA\":1}}},\"flows\":{\"BulkheadFlow\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
-            "{\"id\":\"m_primary\",\"use\":\"test.primary\",\"with\":{},\"limitKey\":\"depA\"}," +
-            "{\"id\":\"m_shadow\",\"use\":\"test.shadow\",\"with\":{},\"limitKey\":\"depA\",\"shadow\":{\"sample\":1}}" +
-            "]}}}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "limits": {
+                "moduleConcurrency": {
+                  "maxInFlight": { "depA": 1 }
+                }
+              },
+              "flows": {
+                "BulkheadFlow": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 1,
+                      "modules": [
+                        { "id": "m_primary", "use": "test.primary", "with": {}, "limitKey": "depA" },
+                        { "id": "m_shadow", "use": "test.shadow", "with": {}, "limitKey": "depA", "shadow": { "sample": 1 } }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var services = new DummyServiceProvider();
 

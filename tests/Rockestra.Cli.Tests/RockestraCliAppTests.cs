@@ -47,7 +47,7 @@ public sealed class RockestraCliAppTests
     public void Validate_ShouldReturnJsonAndExitCode0_WhenPatchValid()
     {
         const string patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}}";
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"fanoutMax":1,"modules":[{"id":"m1","use":"test.module","with":{}}]}}}}}""";
 
         using var stdout = new StringWriter();
         using var stderr = new StringWriter();
@@ -76,7 +76,7 @@ public sealed class RockestraCliAppTests
     public void Validate_ShouldReturnJsonAndExitCode0_WhenSelectorGateIsValid()
     {
         const string patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"selector\":\"is_allowed\"}}]}}}}}";
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"fanoutMax":1,"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"selector":"is_allowed"}}]}}}}}""";
 
         using var stdout = new StringWriter();
         using var stderr = new StringWriter();
@@ -105,7 +105,7 @@ public sealed class RockestraCliAppTests
     public void Validate_ShouldReturnJsonErrorAndNonZeroExitCode_WhenSelectorNotRegistered()
     {
         const string patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"selector\":\"is_allowed\"}}]}}}}}";
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"fanoutMax":1,"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"selector":"is_allowed"}}]}}}}}""";
 
         using var stdout = new StringWriter();
         using var stderr = new StringWriter();
@@ -145,7 +145,7 @@ public sealed class RockestraCliAppTests
     public void Validate_ShouldSupportBootstrapperAssemblyPath()
     {
         const string patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"fixture.module\",\"with\":{},\"gate\":{\"selector\":\"is_allowed\"}}]}}}}}";
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"fanoutMax":1,"modules":[{"id":"m1","use":"fixture.module","with":{},"gate":{"selector":"is_allowed"}}]}}}}}""";
 
         using var stdout = new StringWriter();
         using var stderr = new StringWriter();
@@ -179,7 +179,7 @@ public sealed class RockestraCliAppTests
     public void Validate_ShouldReturnJsonErrorAndExitCode2_WhenBootstrapperAssemblyMissing()
     {
         const string patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"fixture.module\",\"with\":{},\"gate\":{\"selector\":\"is_allowed\"}}]}}}}}";
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"fanoutMax":1,"modules":[{"id":"m1","use":"fixture.module","with":{},"gate":{"selector":"is_allowed"}}]}}}}}""";
 
         using var stdout = new StringWriter();
         using var stderr = new StringWriter();
@@ -217,7 +217,7 @@ public sealed class RockestraCliAppTests
     public void Validate_ShouldReturnJsonErrorAndExitCode2_WhenBootstrapperTypeNotFound()
     {
         const string patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"fixture.module\",\"with\":{},\"gate\":{\"selector\":\"is_allowed\"}}]}}}}}";
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"fanoutMax":1,"modules":[{"id":"m1","use":"fixture.module","with":{},"gate":{"selector":"is_allowed"}}]}}}}}""";
 
         using var stdout = new StringWriter();
         using var stderr = new StringWriter();
@@ -253,7 +253,7 @@ public sealed class RockestraCliAppTests
     public void Validate_ShouldReturnJsonErrorAndExitCode2_WhenBootstrapperSignatureMismatch()
     {
         const string patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"fixture.module\",\"with\":{},\"gate\":{\"selector\":\"is_allowed\"}}]}}}}}";
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"fanoutMax":1,"modules":[{"id":"m1","use":"fixture.module","with":{},"gate":{"selector":"is_allowed"}}]}}}}}""";
 
         using var stdout = new StringWriter();
         using var stderr = new StringWriter();
@@ -315,7 +315,7 @@ public sealed class RockestraCliAppTests
     public void ExplainPatch_ShouldSupportBootstrapperAssemblyPath()
     {
         const string patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"fixture.module\",\"with\":{},\"gate\":{\"selector\":\"is_allowed\"}}]}}}}}";
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"fanoutMax":1,"modules":[{"id":"m1","use":"fixture.module","with":{},"gate":{"selector":"is_allowed"}}]}}}}}""";
 
         using var stdout = new StringWriter();
         using var stderr = new StringWriter();
@@ -357,7 +357,7 @@ public sealed class RockestraCliAppTests
     public void ExplainPatch_ShouldReturnJsonAndExitCode0()
     {
         const string patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}}";
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"fanoutMax":1,"modules":[{"id":"m1","use":"test.module","with":{}}]}}}}}""";
 
         using var stdout = new StringWriter();
         using var stderr = new StringWriter();
@@ -384,15 +384,47 @@ public sealed class RockestraCliAppTests
     [Fact]
     public void ExplainPatch_ShouldUseUserIdRequestAttributesAndQosTier()
     {
-        const string patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":10,\"modules\":[" +
-            "{\"id\":\"m_rollout\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"rollout\":{\"percent\":100,\"salt\":\"m_rollout\"}}}," +
-            "{\"id\":\"m_region\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"request\":{\"field\":\"region\",\"in\":[\"US\"]}}}" +
-            "]}},\"qos\":{\"tiers\":{\"emergency\":{\"patch\":{\"stages\":{\"s1\":{\"modules\":[" +
-            "{\"id\":\"m_region\",\"enabled\":false}" +
-            "]}}}}}}" +
-            "}}}";
+        const string patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 10,
+                      "modules": [
+                        {
+                          "id": "m_rollout",
+                          "use": "test.module",
+                          "with": {},
+                          "gate": { "rollout": { "percent": 100, "salt": "m_rollout" } }
+                        },
+                        {
+                          "id": "m_region",
+                          "use": "test.module",
+                          "with": {},
+                          "gate": { "request": { "field": "region", "in": [ "US" ] } }
+                        }
+                      ]
+                    }
+                  },
+                  "qos": {
+                    "tiers": {
+                      "emergency": {
+                        "patch": {
+                          "stages": {
+                            "s1": {
+                              "modules": [ { "id": "m_region", "enabled": false } ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         using var stdoutFull = new StringWriter();
         using var stderrFull = new StringWriter();
@@ -507,10 +539,10 @@ public sealed class RockestraCliAppTests
     public void DiffPatch_ShouldReturnJsonAndExitCode0()
     {
         const string oldPatchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}}";
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{}}]}}}}}""";
 
         const string newPatchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}},{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}]}}}}}";
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{}},{"id":"m2","use":"test.module","with":{}}]}}}}}""";
 
         using var stdout = new StringWriter();
         using var stderr = new StringWriter();
@@ -538,9 +570,9 @@ public sealed class RockestraCliAppTests
     public void PreviewMatrix_ShouldReturnJsonAndExitCode0()
     {
         const string patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}}";
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"fanoutMax":1,"modules":[{"id":"m1","use":"test.module","with":{}}]}}}}}""";
 
-        const string matrixJson = "[{\"l1\":\"A\"},{\"l1\":\"B\"}]";
+        const string matrixJson = """[{"l1":"A"},{"l1":"B"}]""";
 
         using var stdout = new StringWriter();
         using var stderr = new StringWriter();
@@ -571,7 +603,7 @@ public sealed class RockestraCliAppTests
     public void PreviewMatrix_ShouldSupportBootstrapperAssemblyPath()
     {
         const string patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"fixture.module\",\"with\":{},\"priority\":0,\"gate\":{\"selector\":\"is_allowed\"}}]}}}}}";
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"fanoutMax":1,"modules":[{"id":"m1","use":"fixture.module","with":{},"priority":0,"gate":{"selector":"is_allowed"}}]}}}}}""";
 
         const string matrixJson = "[{}]";
 
@@ -616,16 +648,50 @@ public sealed class RockestraCliAppTests
     [Fact]
     public void PreviewMatrix_ShouldUseUserIdRequestAttributesAndQosTier()
     {
-        const string patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
-            "{\"id\":\"m_default\",\"use\":\"test.module\",\"with\":{},\"priority\":0}," +
-            "{\"id\":\"m_user\",\"use\":\"test.module\",\"with\":{},\"priority\":10,\"gate\":{\"rollout\":{\"percent\":100,\"salt\":\"m_user\"}}}," +
-            "{\"id\":\"m_region\",\"use\":\"test.module\",\"with\":{},\"priority\":20,\"gate\":{\"request\":{\"field\":\"region\",\"in\":[\"US\"]}}}" +
-            "]}},\"qos\":{\"tiers\":{\"emergency\":{\"patch\":{\"stages\":{\"s1\":{\"modules\":[" +
-            "{\"id\":\"m_region\",\"enabled\":false}" +
-            "]}}}}}}" +
-            "}}}";
+        const string patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 1,
+                      "modules": [
+                        { "id": "m_default", "use": "test.module", "with": {}, "priority": 0 },
+                        {
+                          "id": "m_user",
+                          "use": "test.module",
+                          "with": {},
+                          "priority": 10,
+                          "gate": { "rollout": { "percent": 100, "salt": "m_user" } }
+                        },
+                        {
+                          "id": "m_region",
+                          "use": "test.module",
+                          "with": {},
+                          "priority": 20,
+                          "gate": { "request": { "field": "region", "in": [ "US" ] } }
+                        }
+                      ]
+                    }
+                  },
+                  "qos": {
+                    "tiers": {
+                      "emergency": {
+                        "patch": {
+                          "stages": {
+                            "s1": {
+                              "modules": [ { "id": "m_region", "enabled": false } ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         const string matrixJson = "[{}]";
 

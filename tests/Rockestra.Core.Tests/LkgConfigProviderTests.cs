@@ -18,8 +18,8 @@ public sealed class LkgConfigProviderTests
         var registry = new FlowRegistry();
         registry.Register<int, int>("test_flow", CreateTestFlowBlueprint());
 
-        var validPatch = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
-        var invalidPatch = "{\"flows\":{}}";
+        var validPatch = """{"schemaVersion":"v1","flows":{}}""";
+        var invalidPatch = """{"flows":{}}""";
 
         var configProvider = new SequenceConfigProvider(
             new ConfigSnapshot(configVersion: 1, validPatch, meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow)),
@@ -62,8 +62,8 @@ public sealed class LkgConfigProviderTests
         var registry = new FlowRegistry();
         registry.Register<int, int>("test_flow", CreateTestFlowBlueprint());
 
-        var patchWithFlows = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
-        var patchWithoutFlows = "{\"schemaVersion\":\"v1\"}";
+        var patchWithFlows = """{"schemaVersion":"v1","flows":{}}""";
+        var patchWithoutFlows = """{"schemaVersion":"v1"}""";
 
         var configProvider = new SequenceConfigProvider(
             new ConfigSnapshot(configVersion: 1, patchWithFlows, meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow)),
@@ -97,7 +97,7 @@ public sealed class LkgConfigProviderTests
         var catalog = new ModuleCatalog();
         var validator = new ConfigValidator(registry, catalog);
 
-        var innerProvider = new CountingConfigProvider(configVersion: 10, patchJson: "{\"schemaVersion\":\"v1\",\"flows\":{}}");
+        var innerProvider = new CountingConfigProvider(configVersion: 10, patchJson: """{"schemaVersion":"v1","flows":{}}""");
         var provider = new LkgConfigProvider(innerProvider, validator);
 
         var services = new DummyServiceProvider();

@@ -10,13 +10,26 @@ public sealed class ExecutionEngineStageFanoutTests
     [Fact]
     public async Task ExecuteAsync_Template_ShouldSkipDisabledGateFalseAndFanoutTrim_AndRecordExecExplain()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"FanoutFlow\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
-            "{\"id\":\"m_disabled\",\"use\":\"test.ok\",\"with\":{},\"enabled\":false}," +
-            "{\"id\":\"m_gate_false\",\"use\":\"test.ok\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"l1\",\"in\":[\"B\"]}}}," +
-            "{\"id\":\"m_high\",\"use\":\"test.ok\",\"with\":{},\"priority\":10}," +
-            "{\"id\":\"m_low\",\"use\":\"test.ok\",\"with\":{},\"priority\":0}" +
-            "]}}}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "FanoutFlow": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 1,
+                      "modules": [
+                        { "id": "m_disabled", "use": "test.ok", "with": {}, "enabled": false },
+                        { "id": "m_gate_false", "use": "test.ok", "with": {}, "gate": { "experiment": { "layer": "l1", "in": [ "B" ] } } },
+                        { "id": "m_high", "use": "test.ok", "with": {}, "priority": 10 },
+                        { "id": "m_low", "use": "test.ok", "with": {}, "priority": 0 }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(
@@ -88,10 +101,23 @@ public sealed class ExecutionEngineStageFanoutTests
     [Fact]
     public async Task ExecuteAsync_Template_WhenStageContractForbidsModuleType_ShouldSkipWithoutExecuting_AndRecordExplain()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"FanoutFlow\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{}}" +
-            "]}}}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "FanoutFlow": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 1,
+                      "modules": [
+                        { "id": "m1", "use": "test.ok", "with": {} }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
@@ -140,11 +166,24 @@ public sealed class ExecutionEngineStageFanoutTests
     [Fact]
     public async Task ExecuteAsync_Template_WhenStageContractHardLimitIsExceeded_ShouldCullAndRecordExplain()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"FanoutFlow\":{\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[" +
-            "{\"id\":\"m_high\",\"use\":\"test.ok\",\"with\":{},\"priority\":10}," +
-            "{\"id\":\"m_low\",\"use\":\"test.ok\",\"with\":{},\"priority\":0}" +
-            "]}}}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "FanoutFlow": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 2,
+                      "modules": [
+                        { "id": "m_high", "use": "test.ok", "with": {}, "priority": 10 },
+                        { "id": "m_low", "use": "test.ok", "with": {}, "priority": 0 }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
@@ -197,11 +236,24 @@ public sealed class ExecutionEngineStageFanoutTests
     [Fact]
     public async Task ExecuteAsync_Template_WhenStageContractFanoutMaxIsExceeded_ShouldClampAndTrim()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"FanoutFlow\":{\"stages\":{\"s1\":{\"fanoutMax\":3,\"modules\":[" +
-            "{\"id\":\"m_high\",\"use\":\"test.ok\",\"with\":{},\"priority\":10}," +
-            "{\"id\":\"m_low\",\"use\":\"test.ok\",\"with\":{},\"priority\":0}" +
-            "]}}}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "FanoutFlow": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 3,
+                      "modules": [
+                        { "id": "m_high", "use": "test.ok", "with": {}, "priority": 10 },
+                        { "id": "m_low", "use": "test.ok", "with": {}, "priority": 0 }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
@@ -253,11 +305,24 @@ public sealed class ExecutionEngineStageFanoutTests
     [Fact]
     public async Task ExecuteAsync_Template_ShouldExecuteFanoutModulesConcurrently()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"FanoutFlow\":{\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.barrier\",\"with\":{}}," +
-            "{\"id\":\"m2\",\"use\":\"test.barrier\",\"with\":{}}" +
-            "]}}}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "FanoutFlow": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 2,
+                      "modules": [
+                        { "id": "m1", "use": "test.barrier", "with": {} },
+                        { "id": "m2", "use": "test.barrier", "with": {} }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
@@ -296,10 +361,23 @@ public sealed class ExecutionEngineStageFanoutTests
     [Fact]
     public async Task ExecuteAsync_Template_WhenCanceledDuringFanout_ShouldReturnCanceled_AndRecordModuleOutcome()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"FanoutFlow\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
-            "{\"id\":\"m_cancel\",\"use\":\"test.wait_cancel\",\"with\":{}}" +
-            "]}}}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "FanoutFlow": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 1,
+                      "modules": [
+                        { "id": "m_cancel", "use": "test.wait_cancel", "with": {} }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         using var cts = new CancellationTokenSource();
 

@@ -12,12 +12,25 @@ public sealed class ExecutionEngineSelectorGateTests
     [Fact]
     public async Task ExecuteAsync_Template_ShouldEvaluateSelectorGate_AndRecordExecExplain()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"FanoutFlow.SelectorGate\":{\"stages\":{\"s1\":{\"fanoutMax\":10,\"modules\":[" +
-            "{\"id\":\"m_allow\",\"use\":\"test.ok\",\"with\":{},\"gate\":{\"selector\":\"allow\"}}," +
-            "{\"id\":\"m_deny\",\"use\":\"test.ok\",\"with\":{},\"gate\":{\"selector\":\"deny\"}}," +
-            "{\"id\":\"m_no_gate\",\"use\":\"test.ok\",\"with\":{}}" +
-            "]}}}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "FanoutFlow.SelectorGate": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 10,
+                      "modules": [
+                        { "id": "m_allow", "use": "test.ok", "with": {}, "gate": { "selector": "allow" } },
+                        { "id": "m_deny", "use": "test.ok", "with": {}, "gate": { "selector": "deny" } },
+                        { "id": "m_no_gate", "use": "test.ok", "with": {} }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var selectors = new SelectorRegistry();
         selectors.Register("allow", _ => true);

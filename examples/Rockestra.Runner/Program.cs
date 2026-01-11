@@ -108,35 +108,128 @@ public static class RunnerApp
 
     private static string BuildPatchJson()
     {
-        return
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"RunnerFlow\":{" +
-            "\"params\":{\"Addend\":10}," +
-            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
-            "{\"id\":\"m_disabled\",\"use\":\"test.ok\",\"with\":{},\"enabled\":false}," +
-            "{\"id\":\"m_gate_false\",\"use\":\"test.ok\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"l1\",\"in\":[\"A\"]}}}," +
-            "{\"id\":\"m_high\",\"use\":\"test.ok\",\"with\":{},\"priority\":10}," +
-            "{\"id\":\"m_low\",\"use\":\"test.ok\",\"with\":{},\"priority\":0}" +
-            "]}}," +
-            "\"experiments\":[{\"layer\":\"l1\",\"variant\":\"B\",\"patch\":{" +
-            "\"params\":{\"Addend\":20}," +
-            "\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m_exp\",\"use\":\"test.ok\",\"with\":{},\"priority\":5}]}}" +
-            "}}]," +
-            "\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{" +
-            "\"params\":{\"Addend\":30}," +
-            "\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m_low\",\"enabled\":false}]}}" +
-            "}}" +
-            "}}}";
+        return """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "RunnerFlow": {
+                  "params": {
+                    "Addend": 10
+                  },
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 1,
+                      "modules": [
+                        {
+                          "id": "m_disabled",
+                          "use": "test.ok",
+                          "with": {},
+                          "enabled": false
+                        },
+                        {
+                          "id": "m_gate_false",
+                          "use": "test.ok",
+                          "with": {},
+                          "gate": {
+                            "experiment": {
+                              "layer": "l1",
+                              "in": [
+                                "A"
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "id": "m_high",
+                          "use": "test.ok",
+                          "with": {},
+                          "priority": 10
+                        },
+                        {
+                          "id": "m_low",
+                          "use": "test.ok",
+                          "with": {},
+                          "priority": 0
+                        }
+                      ]
+                    }
+                  },
+                  "experiments": [
+                    {
+                      "layer": "l1",
+                      "variant": "B",
+                      "patch": {
+                        "params": {
+                          "Addend": 20
+                        },
+                        "stages": {
+                          "s1": {
+                            "modules": [
+                              {
+                                "id": "m_exp",
+                                "use": "test.ok",
+                                "with": {},
+                                "priority": 5
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "emergency": {
+                    "reason": "r",
+                    "operator": "op",
+                    "ttl_minutes": 30,
+                    "patch": {
+                      "params": {
+                        "Addend": 30
+                      },
+                      "stages": {
+                        "s1": {
+                          "modules": [
+                            {
+                              "id": "m_low",
+                              "enabled": false
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """;
     }
 
     private static string BuildOldPatchJson()
     {
-        return
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"RunnerFlow\":{" +
-            "\"params\":{\"Addend\":10}," +
-            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
-            "{\"id\":\"m_high\",\"use\":\"test.ok\",\"with\":{},\"priority\":10}" +
-            "]}}" +
-            "}}}";
+        return """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "RunnerFlow": {
+                  "params": {
+                    "Addend": 10
+                  },
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 1,
+                      "modules": [
+                        {
+                          "id": "m_high",
+                          "use": "test.ok",
+                          "with": {},
+                          "priority": 10
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
     }
 
     private sealed class RunnerParams

@@ -78,12 +78,23 @@ public sealed class ExecutionEngineExecExplainTests
     [Fact]
     public async Task ExecuteAsync_Template_WithExecExplainEnabled_ShouldRecordVariantsAndOverlaysApplied()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"ExplainTestFlow.Overlays\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{}}]}}," +
-            "\"experiments\":[{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{}}]," +
-            "\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{}}" +
-            "}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "ExplainTestFlow.Overlays": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 1,
+                      "modules": [ { "id": "m1", "use": "test.ok", "with": {} } ]
+                    }
+                  },
+                  "experiments": [ { "layer": "l1", "variant": "A", "patch": {} } ],
+                  "emergency": { "reason": "r", "operator": "op", "ttl_minutes": 30, "patch": {} }
+                }
+              }
+            }
+            """;
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(
@@ -139,12 +150,23 @@ public sealed class ExecutionEngineExecExplainTests
     [Fact]
     public async Task ExecuteAsync_Template_WithExecExplainEnabledMinimal_ShouldNotRecordVariantsOrOverlaysApplied()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"ExplainTestFlow.Overlays\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{}}]}}," +
-            "\"experiments\":[{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{}}]," +
-            "\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{}}" +
-            "}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "ExplainTestFlow.Overlays": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 1,
+                      "modules": [ { "id": "m1", "use": "test.ok", "with": {} } ]
+                    }
+                  },
+                  "experiments": [ { "layer": "l1", "variant": "A", "patch": {} } ],
+                  "emergency": { "reason": "r", "operator": "op", "ttl_minutes": 30, "patch": {} }
+                }
+              }
+            }
+            """;
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(

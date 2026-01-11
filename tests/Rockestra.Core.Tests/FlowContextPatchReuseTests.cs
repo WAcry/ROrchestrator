@@ -16,7 +16,7 @@ public sealed class FlowContextPatchReuseTests
 
         _ = await flowContext.GetConfigSnapshotAsync(new StaticConfigProvider(configVersion: 1, patchJson: "not json"));
 
-        var validPatchJson = "{\"schemaVersion\":\"v1\",\"flows\":{\"PatchReuseFlow\":{\"params\":{\"A\":123}}}}";
+        var validPatchJson = """{"schemaVersion":"v1","flows":{"PatchReuseFlow":{"params":{"A":123}}}}""";
 
         using var evaluation = PatchEvaluatorV1.Evaluate(flowName, validPatchJson, requestOptions: default);
 

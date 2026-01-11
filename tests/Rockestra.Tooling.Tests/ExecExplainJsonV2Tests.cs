@@ -44,19 +44,99 @@ public sealed class ExecExplainJsonV2Tests
 
         registry.Register(flowName, blueprint);
 
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"ExecExplainFlow\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":3,\"modules\":[" +
-            "{\"id\":\"m_disabled\",\"use\":\"test.ok\",\"with\":{}}," +
-            "{\"id\":\"m_gate_false\",\"use\":\"test.ok\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"l1\",\"in\":[\"B\"]}}}," +
-            "{\"id\":\"m_high\",\"use\":\"test.ok\",\"with\":{},\"limitKey\":\"depA\",\"priority\":10}," +
-            "{\"id\":\"m_low\",\"use\":\"test.ok\",\"with\":{},\"priority\":0}," +
-            "{\"id\":\"m_shadow\",\"use\":\"test.ok\",\"with\":{},\"shadow\":{\"sample\":1}}" +
-            "]}},\"experiments\":[{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[" +
-            "{\"id\":\"m_exp\",\"use\":\"test.ok\",\"with\":{},\"priority\":5}" +
-            "]}}}}]," +
-            "\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m_disabled\",\"enabled\":false}]}}}}" +
-            "}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "ExecExplainFlow": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 3,
+                      "modules": [
+                        {
+                          "id": "m_disabled",
+                          "use": "test.ok",
+                          "with": {}
+                        },
+                        {
+                          "id": "m_gate_false",
+                          "use": "test.ok",
+                          "with": {},
+                          "gate": {
+                            "experiment": {
+                              "layer": "l1",
+                              "in": [
+                                "B"
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "id": "m_high",
+                          "use": "test.ok",
+                          "with": {},
+                          "limitKey": "depA",
+                          "priority": 10
+                        },
+                        {
+                          "id": "m_low",
+                          "use": "test.ok",
+                          "with": {},
+                          "priority": 0
+                        },
+                        {
+                          "id": "m_shadow",
+                          "use": "test.ok",
+                          "with": {},
+                          "shadow": {
+                            "sample": 1
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "experiments": [
+                    {
+                      "layer": "l1",
+                      "variant": "A",
+                      "patch": {
+                        "stages": {
+                          "s1": {
+                            "modules": [
+                              {
+                                "id": "m_exp",
+                                "use": "test.ok",
+                                "with": {},
+                                "priority": 5
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "emergency": {
+                    "reason": "r",
+                    "operator": "op",
+                    "ttl_minutes": 30,
+                    "patch": {
+                      "stages": {
+                        "s1": {
+                          "fanoutMax": 1,
+                          "modules": [
+                            {
+                              "id": "m_disabled",
+                              "enabled": false
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var host = new FlowHost(registry, catalog, new StaticConfigProvider(configVersion: 42, patchJson));
 

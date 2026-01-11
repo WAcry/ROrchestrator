@@ -90,8 +90,8 @@ public sealed class FlowMetricsQosAndLkgTests
         var registry = new FlowRegistry();
         registry.Register<int, int>(flowName, CreateBlueprint(flowName));
 
-        var validPatch = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
-        var invalidPatch = "{\"flows\":{}}";
+        var validPatch = """{"schemaVersion":"v1","flows":{}}""";
+        var invalidPatch = """{"flows":{}}""";
 
         var configProvider = new SequenceConfigProvider(
             new ConfigSnapshot(configVersion: 1, validPatch, meta: new ConfigSnapshotMeta(source: "static", timestampUtc: DateTimeOffset.UtcNow)),

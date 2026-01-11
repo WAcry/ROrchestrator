@@ -7,11 +7,35 @@ public sealed class PatchEvaluatorV1Tests
     [Fact]
     public void Evaluate_WhenVariantMatches_ShouldApplyExperimentPatch()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}," +
-            "\"experiments\":[{\"layer\":\"l1\",\"variant\":\"B\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}]}}}}]" +
-            "}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 2,
+                      "modules": [ { "id": "m1", "use": "test.module", "with": {} } ]
+                    }
+                  },
+                  "experiments": [
+                    {
+                      "layer": "l1",
+                      "variant": "B",
+                      "patch": {
+                        "stages": {
+                          "s1": {
+                            "fanoutMax": 1,
+                            "modules": [ { "id": "m2", "use": "test.module", "with": {} } ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+            """;
 
         var requestOptions = new FlowRequestOptions(
             variants: new Dictionary<string, string>
@@ -42,11 +66,35 @@ public sealed class PatchEvaluatorV1Tests
     [Fact]
     public void Evaluate_WhenVariantDoesNotMatch_ShouldNotApplyExperimentPatch()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}," +
-            "\"experiments\":[{\"layer\":\"l1\",\"variant\":\"B\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}]}}}}]" +
-            "}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 2,
+                      "modules": [ { "id": "m1", "use": "test.module", "with": {} } ]
+                    }
+                  },
+                  "experiments": [
+                    {
+                      "layer": "l1",
+                      "variant": "B",
+                      "patch": {
+                        "stages": {
+                          "s1": {
+                            "fanoutMax": 1,
+                            "modules": [ { "id": "m2", "use": "test.module", "with": {} } ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+            """;
 
         var requestOptions = new FlowRequestOptions(
             variants: new Dictionary<string, string>
@@ -73,16 +121,52 @@ public sealed class PatchEvaluatorV1Tests
     [Fact]
     public void Evaluate_ShouldApplyEmergencyPatch_LastAndOverrideEnabled()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":4,\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":true}," +
-            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{},\"enabled\":true}" +
-            "]}},\"experiments\":[{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":true}" +
-            "]}}}}]," +
-            "\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m2\",\"enabled\":false}]}}}}" +
-            "}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 4,
+                      "modules": [
+                        { "id": "m1", "use": "test.module", "with": {}, "enabled": true },
+                        { "id": "m2", "use": "test.module", "with": {}, "enabled": true }
+                      ]
+                    }
+                  },
+                  "experiments": [
+                    {
+                      "layer": "l1",
+                      "variant": "A",
+                      "patch": {
+                        "stages": {
+                          "s1": {
+                            "modules": [
+                              { "id": "m1", "use": "test.module", "with": {}, "enabled": true }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "emergency": {
+                    "reason": "r",
+                    "operator": "op",
+                    "ttl_minutes": 30,
+                    "patch": {
+                      "stages": {
+                        "s1": {
+                          "fanoutMax": 1,
+                          "modules": [ { "id": "m2", "enabled": false } ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var requestOptions = new FlowRequestOptions(
             variants: new Dictionary<string, string>
@@ -113,15 +197,54 @@ public sealed class PatchEvaluatorV1Tests
     [Fact]
     public void Evaluate_WhenQosTierIsSelected_ShouldApplyQosPatch_BeforeEmergency()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":4,\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":true}," +
-            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{},\"enabled\":true}" +
-            "]}},\"experiments\":[{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":3}}}}]," +
-            "\"qos\":{\"tiers\":{\"emergency\":{\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[{\"id\":\"m2\",\"enabled\":false}]}}}}}}," +
-            "\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"enabled\":false}]}}}}" +
-            "}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 4,
+                      "modules": [
+                        { "id": "m1", "use": "test.module", "with": {}, "enabled": true },
+                        { "id": "m2", "use": "test.module", "with": {}, "enabled": true }
+                      ]
+                    }
+                  },
+                  "experiments": [
+                    { "layer": "l1", "variant": "A", "patch": { "stages": { "s1": { "fanoutMax": 3 } } } }
+                  ],
+                  "qos": {
+                    "tiers": {
+                      "emergency": {
+                        "patch": {
+                          "stages": {
+                            "s1": {
+                              "fanoutMax": 2,
+                              "modules": [ { "id": "m2", "enabled": false } ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "emergency": {
+                    "reason": "r",
+                    "operator": "op",
+                    "ttl_minutes": 30,
+                    "patch": {
+                      "stages": {
+                        "s1": {
+                          "fanoutMax": 1,
+                          "modules": [ { "id": "m1", "enabled": false } ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var requestOptions = new FlowRequestOptions(
             variants: new Dictionary<string, string>
@@ -154,13 +277,37 @@ public sealed class PatchEvaluatorV1Tests
     [Fact]
     public void Evaluate_WhenEmergencyTtlExpired_ShouldIgnoreEmergencyOverlay()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":4,\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":true}," +
-            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{},\"enabled\":true}" +
-            "]}},\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m2\",\"enabled\":false}]}}}}" +
-            "}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 4,
+                      "modules": [
+                        { "id": "m1", "use": "test.module", "with": {}, "enabled": true },
+                        { "id": "m2", "use": "test.module", "with": {}, "enabled": true }
+                      ]
+                    }
+                  },
+                  "emergency": {
+                    "reason": "r",
+                    "operator": "op",
+                    "ttl_minutes": 30,
+                    "patch": {
+                      "stages": {
+                        "s1": {
+                          "fanoutMax": 1,
+                          "modules": [ { "id": "m2", "enabled": false } ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var expiredTimestampUtc = new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
@@ -194,13 +341,37 @@ public sealed class PatchEvaluatorV1Tests
     [Fact]
     public void Evaluate_WhenEmergencyTtlNotExpired_ShouldApplyEmergencyOverlay()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":4,\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":true}," +
-            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{},\"enabled\":true}" +
-            "]}},\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m2\",\"enabled\":false}]}}}}" +
-            "}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 4,
+                      "modules": [
+                        { "id": "m1", "use": "test.module", "with": {}, "enabled": true },
+                        { "id": "m2", "use": "test.module", "with": {}, "enabled": true }
+                      ]
+                    }
+                  },
+                  "emergency": {
+                    "reason": "r",
+                    "operator": "op",
+                    "ttl_minutes": 30,
+                    "patch": {
+                      "stages": {
+                        "s1": {
+                          "fanoutMax": 1,
+                          "modules": [ { "id": "m2", "enabled": false } ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var freshTimestampUtc = new DateTimeOffset(2100, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
@@ -235,13 +406,24 @@ public sealed class PatchEvaluatorV1Tests
     [Fact]
     public void Evaluate_ShouldSeparateShadowModules()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[" +
-            "{\"id\":\"m_primary\",\"use\":\"test.module\",\"with\":{}}," +
-            "{\"id\":\"m_shadow\",\"use\":\"test.module\",\"with\":{},\"shadow\":{\"sample\":0.5}}" +
-            "]}}" +
-            "}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 2,
+                      "modules": [
+                        { "id": "m_primary", "use": "test.module", "with": {} },
+                        { "id": "m_shadow", "use": "test.module", "with": {}, "shadow": { "sample": 0.5 } }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         using var evaluation = PatchEvaluatorV1.Evaluate("HomeFeed", patchJson, requestOptions: new FlowRequestOptions());
 
@@ -260,13 +442,24 @@ public sealed class PatchEvaluatorV1Tests
     [Fact]
     public async Task Evaluate_ShouldReuseParsedPatchDocument_ByConfigVersion_Concurrently()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}," +
-            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}" +
-            "]}}" +
-            "}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 2,
+                      "modules": [
+                        { "id": "m1", "use": "test.module", "with": {} },
+                        { "id": "m2", "use": "test.module", "with": {} }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         const ulong configVersion = 0x1234_5678_9ABC_DEF0;
         const int taskCount = 32;

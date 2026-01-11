@@ -122,12 +122,24 @@ public sealed class ExecutionEngineTracingTests
     [Fact]
     public async Task ExecuteAsync_Template_WithListener_ShouldCreateStageFanoutModuleActivities_WithExpectedTags()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"TracingTestFlow.Fanout\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{}}," +
-            "{\"id\":\"m2\",\"use\":\"test.ok\",\"with\":{}}" +
-            "]}}}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "TracingTestFlow.Fanout": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 2,
+                      "modules": [
+                        { "id": "m1", "use": "test.ok", "with": {} },
+                        { "id": "m2", "use": "test.ok", "with": {} }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
@@ -190,12 +202,24 @@ public sealed class ExecutionEngineTracingTests
     [Fact]
     public async Task ExecuteAsync_Template_WithListener_ShouldTagShadowStageFanoutModuleActivities()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"TracingTestFlow.FanoutShadow\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
-            "{\"id\":\"m_primary\",\"use\":\"test.ok\",\"with\":{}}," +
-            "{\"id\":\"m_shadow\",\"use\":\"test.ok\",\"with\":{},\"shadow\":{\"sample\":1}}" +
-            "]}}}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "TracingTestFlow.FanoutShadow": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 1,
+                      "modules": [
+                        { "id": "m_primary", "use": "test.ok", "with": {} },
+                        { "id": "m_shadow", "use": "test.ok", "with": {}, "shadow": { "sample": 1 } }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);

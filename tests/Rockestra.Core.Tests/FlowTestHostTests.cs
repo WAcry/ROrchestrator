@@ -160,13 +160,45 @@ public sealed class FlowTestHostTests
                                 }))
                 .Build());
 
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"test_flow\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
-            "{\"id\":\"m_base\",\"use\":\"m.ok\",\"with\":{},\"priority\":0}," +
-            "{\"id\":\"m_user\",\"use\":\"m.ok\",\"with\":{},\"priority\":10,\"gate\":{\"rollout\":{\"percent\":100,\"salt\":\"s\"}}}" +
-            "]}},\"experiments\":[{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[" +
-            "{\"id\":\"m_exp\",\"use\":\"m.ok\",\"with\":{},\"priority\":20}" +
-            "]}}}}]}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "test_flow": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 1,
+                      "modules": [
+                        { "id": "m_base", "use": "m.ok", "with": {}, "priority": 0 },
+                        {
+                          "id": "m_user",
+                          "use": "m.ok",
+                          "with": {},
+                          "priority": 10,
+                          "gate": { "rollout": { "percent": 100, "salt": "s" } }
+                        }
+                      ]
+                    }
+                  },
+                  "experiments": [
+                    {
+                      "layer": "l1",
+                      "variant": "A",
+                      "patch": {
+                        "stages": {
+                          "s1": {
+                            "modules": [
+                              { "id": "m_exp", "use": "m.ok", "with": {}, "priority": 20 }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+            """;
 
         var snapshot = new ConfigSnapshot(
             configVersion: 123,

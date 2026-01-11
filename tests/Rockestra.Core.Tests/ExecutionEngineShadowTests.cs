@@ -10,12 +10,24 @@ public sealed class ExecutionEngineShadowTests
     [Fact]
     public async Task ExecuteAsync_Template_ShouldExecuteShadowModule_WithoutAffectingPrimaryResult_AndRecordExecExplain()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"ShadowFlow\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
-            "{\"id\":\"m_primary\",\"use\":\"test.value\",\"with\":{}}," +
-            "{\"id\":\"m_shadow\",\"use\":\"test.value\",\"with\":{},\"shadow\":{\"sample\":1}}" +
-            "]}}}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "ShadowFlow": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 1,
+                      "modules": [
+                        { "id": "m_primary", "use": "test.value", "with": {} },
+                        { "id": "m_shadow", "use": "test.value", "with": {}, "shadow": { "sample": 1 } }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
@@ -75,11 +87,23 @@ public sealed class ExecutionEngineShadowTests
     [Fact]
     public async Task ExecuteAsync_Template_WhenStageContractDisallowsShadow_ShouldSkipShadowModuleWithoutExecuting()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"ShadowFlow\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
-            "{\"id\":\"m_shadow\",\"use\":\"test.counter\",\"with\":{},\"shadow\":{\"sample\":1}}" +
-            "]}}}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "ShadowFlow": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 1,
+                      "modules": [
+                        { "id": "m_shadow", "use": "test.counter", "with": {}, "shadow": { "sample": 1 } }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var state = new CounterState();
 
@@ -118,12 +142,24 @@ public sealed class ExecutionEngineShadowTests
     [Fact]
     public async Task ExecuteAsync_Template_WhenStageContractShadowHardLimitIsExceeded_ShouldTrimByPriority()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"ShadowFlow\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
-            "{\"id\":\"m_high\",\"use\":\"test.counter\",\"with\":{},\"priority\":10,\"shadow\":{\"sample\":1}}," +
-            "{\"id\":\"m_low\",\"use\":\"test.counter\",\"with\":{},\"priority\":0,\"shadow\":{\"sample\":1}}" +
-            "]}}}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "ShadowFlow": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 1,
+                      "modules": [
+                        { "id": "m_high", "use": "test.counter", "with": {}, "priority": 10, "shadow": { "sample": 1 } },
+                        { "id": "m_low", "use": "test.counter", "with": {}, "priority": 0, "shadow": { "sample": 1 } }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var state = new CounterState();
 
@@ -163,11 +199,23 @@ public sealed class ExecutionEngineShadowTests
     [Fact]
     public async Task ExecuteAsync_Template_WhenStageContractMaxShadowSampleBpsIsExceeded_ShouldClampAndSkipWhenNotSampled()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"ShadowFlow\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
-            "{\"id\":\"m_shadow\",\"use\":\"test.counter\",\"with\":{},\"shadow\":{\"sample\":1}}" +
-            "]}}}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "ShadowFlow": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 1,
+                      "modules": [
+                        { "id": "m_shadow", "use": "test.counter", "with": {}, "shadow": { "sample": 1 } }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var state = new CounterState();
 

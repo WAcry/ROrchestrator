@@ -395,8 +395,8 @@ public sealed class ExecExplainJsonV3Tests
 
         registry.Register<int, int>(flowName, blueprint);
 
-        var validPatch = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
-        var invalidPatch = "{\"flows\":{}}";
+        var validPatch = """{"schemaVersion":"v1","flows":{}}""";
+        var invalidPatch = """{"flows":{}}""";
 
         var configProvider = new SequenceConfigProvider(
             new ConfigSnapshot(configVersion: 1, validPatch, meta: new ConfigSnapshotMeta(source: "static", timestampUtc: SnapshotTimestampUtc)),

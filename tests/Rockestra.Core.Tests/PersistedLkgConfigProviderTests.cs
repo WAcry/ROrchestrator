@@ -9,7 +9,7 @@ public sealed class PersistedLkgConfigProviderTests
     [Fact]
     public async Task GetSnapshotAsync_WhenInnerThrowsAndStoreHasLkg_ShouldFallbackToStoreSnapshot()
     {
-        var validPatch = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
+        var validPatch = """{"schemaVersion":"v1","flows":{}}""";
 
         var store = new FakeLkgSnapshotStore(
             loadResult: LkgSnapshotLoadResultKind.Loaded,
@@ -37,7 +37,7 @@ public sealed class PersistedLkgConfigProviderTests
     [Fact]
     public async Task GetSnapshotAsync_WhenStoreCorrupt_ShouldNotCrash()
     {
-        var validPatch = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
+        var validPatch = """{"schemaVersion":"v1","flows":{}}""";
 
         var store = new FakeLkgSnapshotStore(loadResult: LkgSnapshotLoadResultKind.Corrupt, loadedSnapshot: default);
         var validator = new ConfigValidator(new FlowRegistry(), new ModuleCatalog());
@@ -52,8 +52,8 @@ public sealed class PersistedLkgConfigProviderTests
     [Fact]
     public async Task GetSnapshotAsync_ShouldPersistOnlyWhenCandidateIsAccepted()
     {
-        var validPatch = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
-        var invalidPatch = "{\"flows\":{}}";
+        var validPatch = """{"schemaVersion":"v1","flows":{}}""";
+        var invalidPatch = """{"flows":{}}""";
 
         var store = new FakeLkgSnapshotStore(loadResult: LkgSnapshotLoadResultKind.NotFound, loadedSnapshot: default);
         var validator = new ConfigValidator(new FlowRegistry(), new ModuleCatalog());

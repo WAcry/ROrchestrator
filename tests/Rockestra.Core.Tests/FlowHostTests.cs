@@ -51,7 +51,7 @@ public sealed class FlowHostTests
         var registry = new FlowRegistry();
         registry.Register<int, int>("test_flow", CreateTestFlowBlueprint());
 
-        var patchJson = "{\"schemaVersion\":\"v1\",\"flows\":{}}";
+        var patchJson = """{"schemaVersion":"v1","flows":{}}""";
         var configProvider = new StaticConfigProvider(configVersion: 456, patchJson);
         var host = new FlowHost(registry, catalog, configProvider);
 

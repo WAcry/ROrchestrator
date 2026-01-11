@@ -30,7 +30,7 @@ public sealed class ConfigValidatorTests
         var catalog = new ModuleCatalog();
         var validator = new ConfigValidator(registry, catalog);
 
-        var report = validator.ValidatePatchJson("{\"flows\":{}}");
+        var report = validator.ValidatePatchJson("""{"flows":{}}""");
 
         var finding = GetSingleFinding(report, "CFG_SCHEMA_VERSION_UNSUPPORTED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -44,7 +44,7 @@ public sealed class ConfigValidatorTests
         var catalog = new ModuleCatalog();
         var validator = new ConfigValidator(registry, catalog);
 
-        var report = validator.ValidatePatchJson("{\"schemaVersion\":\"v1\",\"flows\":{},\"unknown\":123}");
+        var report = validator.ValidatePatchJson("""{"schemaVersion":"v1","flows":{},"unknown":123}""");
 
         var finding = GetSingleFinding(report, "CFG_UNKNOWN_FIELD");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -58,7 +58,7 @@ public sealed class ConfigValidatorTests
         var catalog = new ModuleCatalog();
         var validator = new ConfigValidator(registry, catalog);
 
-        var report = validator.ValidatePatchJson("{\"schemaVersion\":\"v1\",\"flows\":123}");
+        var report = validator.ValidatePatchJson("""{"schemaVersion":"v1","flows":123}""");
 
         var finding = GetSingleFinding(report, "CFG_FLOWS_NOT_OBJECT");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -74,7 +74,7 @@ public sealed class ConfigValidatorTests
         var catalog = new ModuleCatalog();
         var validator = new ConfigValidator(registry, catalog);
 
-        var report = validator.ValidatePatchJson("{\"schemaVersion\":\"v1\",\"flows\":{\"NotAFlow\":{}}}");
+        var report = validator.ValidatePatchJson("""{"schemaVersion":"v1","flows":{"NotAFlow":{}}}""");
 
         var finding = GetSingleFinding(report, "CFG_FLOW_NOT_REGISTERED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -90,7 +90,7 @@ public sealed class ConfigValidatorTests
         var catalog = new ModuleCatalog();
         var validator = new ConfigValidator(registry, catalog);
 
-        var report = validator.ValidatePatchJson("{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":123}}");
+        var report = validator.ValidatePatchJson("""{"schemaVersion":"v1","flows":{"HomeFeed":123}}""");
 
         var finding = GetSingleFinding(report, "CFG_FLOW_PATCH_NOT_OBJECT");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -107,7 +107,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s2\":{}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s2":{}}}}}""");
 
         Assert.Single(report.Findings);
 
@@ -125,7 +125,7 @@ public sealed class ConfigValidatorTests
         var catalog = new ModuleCatalog();
         var validator = new ConfigValidator(registry, catalog);
 
-        var report = validator.ValidatePatchJson("{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":123}}}");
+        var report = validator.ValidatePatchJson("""{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":123}}}""");
 
         var finding = GetSingleFinding(report, "CFG_STAGES_NOT_OBJECT");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -141,7 +141,7 @@ public sealed class ConfigValidatorTests
         var catalog = new ModuleCatalog();
         var validator = new ConfigValidator(registry, catalog);
 
-        var report = validator.ValidatePatchJson("{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":123}}}}");
+        var report = validator.ValidatePatchJson("""{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":123}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_STAGE_PATCH_NOT_OBJECT");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -157,7 +157,7 @@ public sealed class ConfigValidatorTests
         var catalog = new ModuleCatalog();
         var validator = new ConfigValidator(registry, catalog);
 
-        var report = validator.ValidatePatchJson("{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"unknown\":123}}}}}");
+        var report = validator.ValidatePatchJson("""{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"unknown":123}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_UNKNOWN_FIELD");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -174,7 +174,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":8}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"fanoutMax":8}}}}}""");
 
         Assert.True(report.IsValid);
     }
@@ -191,12 +191,27 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}," +
-            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}," +
-            "{\"id\":\"m3\",\"use\":\"test.module\",\"with\":{}}," +
-            "{\"id\":\"m4\",\"use\":\"test.module\",\"with\":{}}," +
-            "{\"id\":\"m5\",\"use\":\"test.module\",\"with\":{}}]}}}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 2,
+                      "modules": [
+                        { "id": "m1", "use": "test.module", "with": {} },
+                        { "id": "m2", "use": "test.module", "with": {} },
+                        { "id": "m3", "use": "test.module", "with": {} },
+                        { "id": "m4", "use": "test.module", "with": {} },
+                        { "id": "m5", "use": "test.module", "with": {} }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """);
 
         Assert.True(report.IsValid);
         Assert.Single(report.Findings);
@@ -219,10 +234,25 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}," +
-            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}," +
-            "{\"id\":\"m3\",\"use\":\"test.module\",\"with\":{},\"enabled\":false}]}}}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 2,
+                      "modules": [
+                        { "id": "m1", "use": "test.module", "with": {} },
+                        { "id": "m2", "use": "test.module", "with": {} },
+                        { "id": "m3", "use": "test.module", "with": {}, "enabled": false }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """);
 
         Assert.True(report.IsValid);
         AssertNoFinding(report, "CFG_FANOUT_TRIM_LIKELY");
@@ -240,10 +270,33 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}," +
-            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}," +
-            "{\"id\":\"m3\",\"use\":\"test.module\",\"with\":{}}]}}}}]}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "experiments": [
+                    {
+                      "layer": "l1",
+                      "variant": "v1",
+                      "patch": {
+                        "stages": {
+                          "s1": {
+                            "fanoutMax": 2,
+                            "modules": [
+                              { "id": "m1", "use": "test.module", "with": {} },
+                              { "id": "m2", "use": "test.module", "with": {} },
+                              { "id": "m3", "use": "test.module", "with": {} }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+            """);
 
         Assert.True(report.IsValid);
         Assert.Single(report.Findings);
@@ -266,11 +319,30 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"stages\":{\"s1\":{\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}," +
-            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}," +
-            "{\"id\":\"m3\",\"use\":\"test.module\",\"with\":{}}]}},\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1}}}}}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "modules": [
+                        { "id": "m1", "use": "test.module", "with": {} },
+                        { "id": "m2", "use": "test.module", "with": {} },
+                        { "id": "m3", "use": "test.module", "with": {} }
+                      ]
+                    }
+                  },
+                  "emergency": {
+                    "reason": "r",
+                    "operator": "op",
+                    "ttl_minutes": 30,
+                    "patch": { "stages": { "s1": { "fanoutMax": 1 } } }
+                  }
+                }
+              }
+            }
+            """);
 
         Assert.True(report.IsValid);
         Assert.Single(report.Findings);
@@ -293,11 +365,40 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"stages\":{\"s1\":{\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}," +
-            "{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}," +
-            "{\"id\":\"m3\",\"use\":\"test.module\",\"with\":{}}]}},\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m2\",\"enabled\":false},{\"id\":\"m3\",\"enabled\":false}]}}}}}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "modules": [
+                        { "id": "m1", "use": "test.module", "with": {} },
+                        { "id": "m2", "use": "test.module", "with": {} },
+                        { "id": "m3", "use": "test.module", "with": {} }
+                      ]
+                    }
+                  },
+                  "emergency": {
+                    "reason": "r",
+                    "operator": "op",
+                    "ttl_minutes": 30,
+                    "patch": {
+                      "stages": {
+                        "s1": {
+                          "fanoutMax": 1,
+                          "modules": [
+                            { "id": "m2", "enabled": false },
+                            { "id": "m3", "enabled": false }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
 
         Assert.True(report.IsValid);
         AssertNoFinding(report, "CFG_FANOUT_TRIM_LIKELY");
@@ -313,7 +414,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":\"8\"}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"fanoutMax":"8"}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_FANOUT_MAX_INVALID");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -331,7 +432,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":-1}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"fanoutMax":-1}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_FANOUT_MAX_INVALID");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -349,7 +450,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":9}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"fanoutMax":9}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_FANOUT_MAX_EXCEEDED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -367,7 +468,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1}}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"stages":{"s1":{"fanoutMax":1}}}}]}}}""");
 
         Assert.True(report.IsValid);
     }
@@ -382,7 +483,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":9}}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"stages":{"s1":{"fanoutMax":9}}}}]}}}""");
 
         var finding = GetSingleFinding(report, "CFG_FANOUT_MAX_EXCEEDED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -401,7 +502,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":-1}}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"stages":{"s1":{"fanoutMax":-1}}}}]}}}""");
 
         var finding = GetSingleFinding(report, "CFG_FANOUT_MAX_INVALID");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -421,7 +522,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s2\":{}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s2":{}}}}}""");
 
         Assert.Single(report.Findings);
 
@@ -439,7 +540,7 @@ public sealed class ConfigValidatorTests
         var catalog = new ModuleCatalog();
         var validator = new ConfigValidator(registry, catalog);
 
-        var report = validator.ValidatePatchJson("{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{}}}");
+        var report = validator.ValidatePatchJson("""{"schemaVersion":"v1","flows":{"HomeFeed":{}}}""");
 
         Assert.True(report.IsValid);
     }
@@ -454,7 +555,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{}}}}}""");
 
         Assert.True(report.IsValid);
     }
@@ -469,7 +570,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":123}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":123}}}""");
 
         var finding = GetSingleFinding(report, "CFG_EXPERIMENT_MAPPING_INVALID");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -487,7 +588,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[123]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[123]}}}""");
 
         var finding = GetSingleFinding(report, "CFG_EXPERIMENT_MAPPING_INVALID");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -505,7 +606,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"variant\":\"A\",\"patch\":{}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"variant":"A","patch":{}}]}}}""");
 
         var finding = GetSingleFinding(report, "CFG_EXPERIMENT_MAPPING_INVALID");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -523,7 +624,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"recall_layer\",\"variant\":\"\",\"patch\":{}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"recall_layer","variant":"","patch":{}}]}}}""");
 
         var finding = GetSingleFinding(report, "CFG_EXPERIMENT_MAPPING_INVALID");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -541,7 +642,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"recall_layer\",\"variant\":\"B\",\"patch\":{}},{\"layer\":\"recall_layer\",\"variant\":\"B\",\"patch\":{}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"recall_layer","variant":"B","patch":{}},{"layer":"recall_layer","variant":"B","patch":{}}]}}}""");
 
         var pathsFound = 0;
         var findings = report.Findings;
@@ -574,7 +675,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"recall_layer\",\"variant\":\"B\",\"patch\":null}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"recall_layer","variant":"B","patch":null}]}}}""");
 
         var finding = GetSingleFinding(report, "CFG_EXPERIMENT_PATCH_INVALID");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -592,7 +693,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"experiments\":[{\"layer\":\"l2\",\"variant\":\"v2\",\"patch\":{}}]}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"experiments":[{"layer":"l2","variant":"v2","patch":{}}]}}]}}}""");
 
         var finding = GetSingleFinding(report, "CFG_EXPERIMENT_OVERRIDE_FORBIDDEN");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -610,7 +711,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"emergency\":{}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"emergency":{}}}]}}}""");
 
         var finding = GetSingleFinding(report, "CFG_EXPERIMENT_OVERRIDE_FORBIDDEN");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -628,7 +729,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"emergency\":{\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"stages\":{}}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"emergency":{"operator":"op","ttl_minutes":30,"patch":{"stages":{}}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_EMERGENCY_AUDIT_MISSING");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -646,7 +747,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"experiments\":[]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"emergency":{"reason":"r","operator":"op","ttl_minutes":30,"patch":{"experiments":[]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_EMERGENCY_OVERRIDE_FORBIDDEN");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -666,10 +767,28 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}," +
-            "\"qos\":{\"tiers\":{\"emergency\":{\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":2}}}}}}" +
-            "}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 1,
+                      "modules": [ { "id": "m1", "use": "test.module", "with": {} } ]
+                    }
+                  },
+                  "qos": {
+                    "tiers": {
+                      "emergency": {
+                        "patch": { "stages": { "s1": { "fanoutMax": 2 } } }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
 
         var finding = GetSingleFinding(report, "CFG_QOS_FANOUT_MAX_INCREASE_FORBIDDEN");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -689,10 +808,31 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":false}]}}," +
-            "\"qos\":{\"tiers\":{\"emergency\":{\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"enabled\":true}]}}}}}}" +
-            "}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "modules": [
+                        { "id": "m1", "use": "test.module", "with": {}, "enabled": false }
+                      ]
+                    }
+                  },
+                  "qos": {
+                    "tiers": {
+                      "emergency": {
+                        "patch": {
+                          "stages": { "s1": { "modules": [ { "id": "m1", "enabled": true } ] } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
 
         var finding = GetSingleFinding(report, "CFG_QOS_MODULE_ENABLE_FORBIDDEN");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -712,10 +852,37 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m_shadow\",\"use\":\"test.module\",\"with\":{},\"shadow\":{\"sample\":0.1}}]}}," +
-            "\"qos\":{\"tiers\":{\"emergency\":{\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m_shadow\",\"shadow\":{\"sample\":0.2}}]}}}}}}" +
-            "}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "modules": [
+                        { "id": "m_shadow", "use": "test.module", "with": {}, "shadow": { "sample": 0.1 } }
+                      ]
+                    }
+                  },
+                  "qos": {
+                    "tiers": {
+                      "emergency": {
+                        "patch": {
+                          "stages": {
+                            "s1": {
+                              "modules": [
+                                { "id": "m_shadow", "shadow": { "sample": 0.2 } }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
 
         var finding = GetSingleFinding(report, "CFG_QOS_SHADOW_SAMPLE_INCREASE_FORBIDDEN");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -734,7 +901,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"recall_layer\",\"variant\":\"B\",\"patch\":{\"params\":{\"MaxCandidate\":10}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"recall_layer","variant":"B","patch":{"params":{"MaxCandidate":10}}}]}}}""");
 
         var finding = GetSingleFinding(report, "CFG_PARAMS_UNKNOWN_FIELD");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -757,7 +924,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"params\":{\"MaxCandidate\":1}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"params":{"MaxCandidate":1}}}]}}}""");
 
         var finding = GetSingleFinding(report, "CFG_LAYER_PARAM_LEAK");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -781,7 +948,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}]}}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"stages":{"s1":{"modules":[{"id":"m2","use":"test.module","with":{}}]}}}}]}}}""");
 
         var finding = GetSingleFinding(report, "CFG_LAYER_PARAM_LEAK");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -807,7 +974,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, new ModuleCatalog());
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l2\",\"variant\":\"v1\",\"patch\":{\"params\":{\"MaxCandidate\":1}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l2","variant":"v1","patch":{"params":{"MaxCandidate":1}}}]}}}""");
 
         var finding = GetSingleFinding(report, "CFG_LAYER_PARAM_LEAK");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -826,10 +993,19 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[" +
-            "{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{\"params\":{\"MaxCandidate\":1}}}," +
-            "{\"layer\":\"l2\",\"variant\":\"B\",\"patch\":{\"params\":{\"MaxCandidate\":2}}}" +
-            "]}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "experiments": [
+                    { "layer": "l1", "variant": "A", "patch": { "params": { "MaxCandidate": 1 } } },
+                    { "layer": "l2", "variant": "B", "patch": { "params": { "MaxCandidate": 2 } } }
+                  ]
+                }
+              }
+            }
+            """);
 
         Assert.False(report.IsValid);
 
@@ -875,10 +1051,19 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[" +
-            "{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1}}}}," +
-            "{\"layer\":\"l2\",\"variant\":\"B\",\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":2}}}}" +
-            "]}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "experiments": [
+                    { "layer": "l1", "variant": "A", "patch": { "stages": { "s1": { "fanoutMax": 1 } } } },
+                    { "layer": "l2", "variant": "B", "patch": { "stages": { "s1": { "fanoutMax": 2 } } } }
+                  ]
+                }
+              }
+            }
+            """);
 
         Assert.False(report.IsValid);
 
@@ -926,10 +1111,27 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[" +
-            "{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}," +
-            "{\"layer\":\"l2\",\"variant\":\"B\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}" +
-            "]}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "experiments": [
+                    {
+                      "layer": "l1",
+                      "variant": "A",
+                      "patch": { "stages": { "s1": { "modules": [ { "id": "m1", "use": "test.module", "with": {} } ] } } }
+                    },
+                    {
+                      "layer": "l2",
+                      "variant": "B",
+                      "patch": { "stages": { "s1": { "modules": [ { "id": "m1", "use": "test.module", "with": {} } ] } } }
+                    }
+                  ]
+                }
+              }
+            }
+            """);
 
         Assert.False(report.IsValid);
 
@@ -976,7 +1178,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":10}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"params":{"MaxCandidate":10}}}}""");
 
         Assert.True(report.IsValid);
     }
@@ -992,7 +1194,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":10}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"params":{"MaxCandidate":10}}}}""");
 
         Assert.True(report.IsValid);
     }
@@ -1008,7 +1210,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":\"oops\"}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"params":{"MaxCandidate":"oops"}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_PARAMS_BIND_FAILED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1027,7 +1229,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":10}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"params":{"MaxCandidate":10}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_PARAMS_UNKNOWN_FIELD");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1045,7 +1247,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":10}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"params":{"MaxCandidate":10}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_PARAMS_BIND_FAILED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1064,7 +1266,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":10}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"params":{"MaxCandidate":10}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_PARAMS_BIND_FAILED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1084,7 +1286,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{}}]}}}}}""");
 
         Assert.True(report.IsValid);
     }
@@ -1101,7 +1303,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":false,\"priority\":10}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"enabled":false,"priority":10}]}}}}}""");
 
         Assert.True(report.IsValid);
         Assert.Empty(report.Findings);
@@ -1119,7 +1321,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":\"false\"}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"enabled":"false"}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_MODULE_ENABLED_INVALID");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1139,7 +1341,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":true,\"priority\":-5}]}}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"enabled":true,"priority":-5}]}}}}]}}}""");
 
         Assert.True(report.IsValid);
         Assert.Empty(report.Findings);
@@ -1157,7 +1359,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"priority\":1001}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"priority":1001}]}}}}}""");
 
         Assert.True(report.IsValid);
 
@@ -1179,7 +1381,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"priority\":1001}]}}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"priority":1001}]}}}}]}}}""");
 
         Assert.True(report.IsValid);
 
@@ -1201,7 +1403,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":false,\"gate\":{\"experiment\":{\"layer\":\"recall_layer\",\"in\":[\"B\"]}}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"enabled":false,"gate":{"experiment":{"layer":"recall_layer","in":["B"]}}}]}}}}}""");
 
         Assert.True(report.IsValid);
 
@@ -1223,7 +1425,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"enabled\":false,\"gate\":{\"experiment\":{\"layer\":\"recall_layer\",\"in\":[\"B\"]}}}]}}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"enabled":false,"gate":{"experiment":{"layer":"recall_layer","in":["B"]}}}]}}}}]}}}""");
 
         Assert.True(report.IsValid);
 
@@ -1245,7 +1447,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\"}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module"}]}}}}}""");
 
         Assert.False(report.IsValid);
         Assert.Single(report.Findings);
@@ -1268,7 +1470,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":null}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":null}]}}}}}""");
 
         Assert.False(report.IsValid);
         Assert.Single(report.Findings);
@@ -1291,7 +1493,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{\"MaxCandidate\":\"oops\"}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{"MaxCandidate":"oops"}}]}}}}}""");
 
         Assert.False(report.IsValid);
         Assert.Single(report.Findings);
@@ -1317,7 +1519,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{\"MaxCandidate\":0}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{"MaxCandidate":0}}]}}}}}""");
 
         Assert.False(report.IsValid);
         Assert.Single(report.Findings);
@@ -1343,7 +1545,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{\"MaxCandidate\":0}}]}}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{"MaxCandidate":0}}]}}}}]}}}""");
 
         Assert.False(report.IsValid);
         Assert.Single(report.Findings);
@@ -1366,7 +1568,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{\"MaxCandidate\":10,\"Unknown\":123}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{"MaxCandidate":10,"Unknown":123}}]}}}}}""");
 
         Assert.False(report.IsValid);
         Assert.Single(report.Findings);
@@ -1389,7 +1591,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{\"Unknown\":123}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{"Unknown":123}}]}}}}}""");
 
         Assert.True(report.IsValid);
         AssertNoFinding(report, "CFG_MODULE_ARGS_UNKNOWN_FIELD");
@@ -1407,7 +1609,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{\"Unknown\":123}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{"Unknown":123}}]}}}}}""");
 
         Assert.True(report.IsValid);
         AssertNoFinding(report, "CFG_MODULE_ARGS_UNKNOWN_FIELD");
@@ -1425,7 +1627,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"M1\",\"use\":\"test.module\",\"with\":{}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"M1","use":"test.module","with":{}}]}}}}}""");
 
         Assert.True(report.IsValid);
         Assert.Single(report.Findings);
@@ -1463,7 +1665,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{}}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_MODULE_ID_CONFLICTS_WITH_BLUEPRINT_NODE_NAME");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1483,7 +1685,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":{}}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":{}}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_MODULES_NOT_ARRAY");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1503,7 +1705,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"use\":\"test.module\",\"with\":{}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"use":"test.module","with":{}}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_MODULE_ID_MISSING");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1523,7 +1725,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}},{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{}},{"id":"m1","use":"test.module","with":{}}]}}}}}""");
 
         var pathsFound = 0;
         var findings = report.Findings;
@@ -1579,7 +1781,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]},\"s2\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{}}]},"s2":{"modules":[{"id":"m1","use":"test.module","with":{}}]}}}}}""");
 
         var pathsFound = 0;
         var findings = report.Findings;
@@ -1635,7 +1837,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{}}]},\"s2\":{\"modules\":[{\"id\":\"m2\",\"use\":\"test.module\",\"with\":{}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{}}]},"s2":{"modules":[{"id":"m2","use":"test.module","with":{}}]}}}}}""");
 
         AssertNoFinding(report, "CFG_MODULE_ID_DUPLICATE");
     }
@@ -1652,7 +1854,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"with\":{}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","with":{}}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_MODULE_TYPE_MISSING");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1672,7 +1874,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"not.registered\",\"with\":{}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"not.registered","with":{}}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_MODULE_TYPE_NOT_REGISTERED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1692,7 +1894,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"unknown\":123}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"unknown":123}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_UNKNOWN_FIELD");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1712,7 +1914,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"recall_layer\",\"in\":[\"B\"]}}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"experiment":{"layer":"recall_layer","in":["B"]}}}]}}}}}""");
 
         Assert.True(report.IsValid);
     }
@@ -1729,7 +1931,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"not\":{\"experiment\":{\"layer\":\"recall_layer\",\"in\":[\"B\"]}}}}]}}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"not":{"experiment":{"layer":"recall_layer","in":["B"]}}}}]}}}}]}}}""");
 
         Assert.True(report.IsValid);
     }
@@ -1746,7 +1948,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"rollout\":{\"percent\":5,\"salt\":\"m1\"}}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"rollout":{"percent":5,"salt":"m1"}}}]}}}}}""");
 
         Assert.True(report.IsValid);
         Assert.Empty(report.Findings);
@@ -1764,7 +1966,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"rollout\":{\"percent\":5,\"salt\":\"m1\"}}}]}}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"rollout":{"percent":5,"salt":"m1"}}}]}}}}]}}}""");
 
         Assert.True(report.IsValid);
         Assert.Empty(report.Findings);
@@ -1782,7 +1984,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"rollout\":{\"percent\":5,\"salt\":\"m1\",\"oops\":1}}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"rollout":{"percent":5,"salt":"m1","oops":1}}}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_UNKNOWN_FIELD");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1802,7 +2004,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"rollout\":{\"percent\":120,\"salt\":\"m1\"}}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"rollout":{"percent":120,"salt":"m1"}}}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_GATE_ROLLOUT_INVALID");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1822,7 +2024,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"rollout\":{\"percent\":120,\"salt\":\"m1\"}}}]}}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"rollout":{"percent":120,"salt":"m1"}}}]}}}}]}}}""");
 
         var finding = GetSingleFinding(report, "CFG_GATE_ROLLOUT_INVALID");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1842,7 +2044,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"rollout\":{\"percent\":5}}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"rollout":{"percent":5}}}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_GATE_ROLLOUT_INVALID");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1862,7 +2064,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"rollout\":{\"percent\":5}}}]}}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"rollout":{"percent":5}}}]}}}}]}}}""");
 
         var finding = GetSingleFinding(report, "CFG_GATE_ROLLOUT_INVALID");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1882,7 +2084,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"request\":{\"field\":\"region\",\"in\":[\"US\"]}}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"request":{"field":"region","in":["US"]}}}]}}}}}""");
 
         Assert.True(report.IsValid);
         Assert.Empty(report.Findings);
@@ -1900,7 +2102,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"request\":{\"field\":\"region\",\"in\":[\"US\"]}}}]}}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"request":{"field":"region","in":["US"]}}}]}}}}]}}}""");
 
         Assert.True(report.IsValid);
         Assert.Empty(report.Findings);
@@ -1921,7 +2123,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog, selectors);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"selector\":\"is_new_user\"}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"selector":"is_new_user"}}]}}}}}""");
 
         Assert.True(report.IsValid);
         Assert.Empty(report.Findings);
@@ -1940,7 +2142,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog, selectors);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"selector\":\"is_new_user\"}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"selector":"is_new_user"}}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_SELECTOR_NOT_REGISTERED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1960,7 +2162,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m_shadow\",\"use\":\"test.module\",\"with\":{},\"shadow\":{\"sample\":0.02}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m_shadow","use":"test.module","with":{},"shadow":{"sample":0.02}}]}}}}}""");
 
         Assert.True(report.IsValid);
         Assert.Empty(report.Findings);
@@ -1978,7 +2180,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m_shadow\",\"use\":\"test.module\",\"with\":{},\"shadow\":{\"sample\":1.1}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m_shadow","use":"test.module","with":{},"shadow":{"sample":1.1}}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_SHADOW_SAMPLE_INVALID");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -1998,7 +2200,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"request\":{\"field\":\"raw_query\",\"in\":[\"x\"]}}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"request":{"field":"raw_query","in":["x"]}}}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_GATE_REQUEST_FIELD_NOT_ALLOWED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -2018,7 +2220,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"request\":{\"field\":\"raw_query\",\"in\":[\"x\"]}}}]}}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"request":{"field":"raw_query","in":["x"]}}}]}}}}]}}}""");
 
         var finding = GetSingleFinding(report, "CFG_GATE_REQUEST_FIELD_NOT_ALLOWED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -2038,7 +2240,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"magicExpr\":\"x > 1\"}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"magicExpr":"x > 1"}}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_GATE_UNKNOWN_TYPE");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -2058,7 +2260,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"experiments\":[{\"layer\":\"l1\",\"variant\":\"v1\",\"patch\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"magicExpr\":\"x > 1\"}}]}}}}]}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"experiments":[{"layer":"l1","variant":"v1","patch":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"magicExpr":"x > 1"}}]}}}}]}}}""");
 
         Assert.Single(report.Findings);
 
@@ -2082,7 +2284,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"all\":[]}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"all":[]}}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_GATE_EMPTY_COMPOSITE");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -2102,7 +2304,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"\",\"in\":[\"B\"]}}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"experiment":{"layer":"","in":["B"]}}}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_GATE_EXPERIMENT_INVALID");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -2122,7 +2324,7 @@ public sealed class ConfigValidatorTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.module\",\"with\":{},\"gate\":{\"experiment\":{\"layer\":\"recall_layer\",\"in\":[]}}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.module","with":{},"gate":{"experiment":{"layer":"recall_layer","in":[]}}}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_GATE_EXPERIMENT_INVALID");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);

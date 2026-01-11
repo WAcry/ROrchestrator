@@ -7,24 +7,30 @@ public sealed class FlowParamsResolverTests
     [Fact]
     public void TryComputeParamsHash_ShouldBeStable_AcrossDifferentJsonKeyOrders()
     {
-        const string defaultJsonA = "{\"b\":2,\"a\":1,\"nested\":{\"y\":20,\"x\":10}}";
-        const string defaultJsonB = "{\"nested\":{\"x\":10,\"y\":20},\"a\":1,\"b\":2}";
+        const string defaultJsonA = """{"b":2,"a":1,"nested":{"y":20,"x":10}}""";
+        const string defaultJsonB = """{"nested":{"x":10,"y":20},"a":1,"b":2}""";
 
-        const string flowPatchJsonA =
-            "{" +
-            "\"params\":{\"a\":5,\"nested\":{\"x\":11}}," +
-            "\"experiments\":[{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{\"params\":{\"nested\":{\"y\":22},\"exp\":true}}}]," +
-            "\"qos\":{\"tiers\":{\"emergency\":{\"patch\":{\"params\":{\"qos\":true}}}}}," +
-            "\"emergency\":{\"patch\":{\"params\":{\"a\":7,\"em\":\"on\"}}}" +
-            "}";
+        const string flowPatchJsonA = """
+            {
+              "params": { "a": 5, "nested": { "x": 11 } },
+              "experiments": [
+                { "layer": "l1", "variant": "A", "patch": { "params": { "nested": { "y": 22 }, "exp": true } } }
+              ],
+              "qos": { "tiers": { "emergency": { "patch": { "params": { "qos": true } } } } },
+              "emergency": { "patch": { "params": { "a": 7, "em": "on" } } }
+            }
+            """;
 
-        const string flowPatchJsonB =
-            "{" +
-            "\"emergency\":{\"patch\":{\"params\":{\"em\":\"on\",\"a\":7}}}," +
-            "\"qos\":{\"tiers\":{\"emergency\":{\"patch\":{\"params\":{\"qos\":true}}}}}," +
-            "\"experiments\":[{\"variant\":\"A\",\"patch\":{\"params\":{\"exp\":true,\"nested\":{\"y\":22}}},\"layer\":\"l1\"}]," +
-            "\"params\":{\"nested\":{\"x\":11},\"a\":5}" +
-            "}";
+        const string flowPatchJsonB = """
+            {
+              "emergency": { "patch": { "params": { "em": "on", "a": 7 } } },
+              "qos": { "tiers": { "emergency": { "patch": { "params": { "qos": true } } } } },
+              "experiments": [
+                { "variant": "A", "patch": { "params": { "exp": true, "nested": { "y": 22 } } }, "layer": "l1" }
+              ],
+              "params": { "nested": { "x": 11 }, "a": 5 }
+            }
+            """;
 
         var variants = new Dictionary<string, string>(capacity: 1)
         {
@@ -58,22 +64,30 @@ public sealed class FlowParamsResolverTests
     [Fact]
     public void TryComputeExplainFull_ShouldTrackSources_AndHonorResetSemantics()
     {
-        const string defaultJson =
-            "{" +
-            "\"a\":1," +
-            "\"b\":1," +
-            "\"nested\":{\"x\":1,\"y\":1,\"keep\":1}," +
-            "\"reset\":{\"from_default\":true,\"will_be_removed\":\"yes\"}," +
-            "\"default_only\":123" +
-            "}";
+        const string defaultJson = """
+            {
+              "a": 1,
+              "b": 1,
+              "nested": { "x": 1, "y": 1, "keep": 1 },
+              "reset": { "from_default": true, "will_be_removed": "yes" },
+              "default_only": 123
+            }
+            """;
 
-        const string flowPatchJson =
-            "{" +
-            "\"params\":{\"a\":2,\"nested\":{\"x\":2},\"reset\":{\"from_base\":\"x\"}}," +
-            "\"experiments\":[{\"layer\":\"l1\",\"variant\":\"A\",\"patch\":{\"params\":{\"b\":3,\"nested\":{\"y\":3},\"reset\":5}}}]," +
-            "\"qos\":{\"tiers\":{\"emergency\":{\"patch\":{\"params\":{\"b\":4,\"reset\":{\"from_qos\":\"q\"},\"qos_only\":true}}}}}," +
-            "\"emergency\":{\"patch\":{\"params\":{\"b\":5}}}" +
-            "}";
+        const string flowPatchJson = """
+            {
+              "params": { "a": 2, "nested": { "x": 2 }, "reset": { "from_base": "x" } },
+              "experiments": [
+                { "layer": "l1", "variant": "A", "patch": { "params": { "b": 3, "nested": { "y": 3 }, "reset": 5 } } }
+              ],
+              "qos": {
+                "tiers": {
+                  "emergency": { "patch": { "params": { "b": 4, "reset": { "from_qos": "q" }, "qos_only": true } } }
+                }
+              },
+              "emergency": { "patch": { "params": { "b": 5 } } }
+            }
+            """;
 
         var variants = new Dictionary<string, string>(capacity: 1)
         {
@@ -140,4 +154,3 @@ public sealed class FlowParamsResolverTests
         throw new InvalidOperationException($"Missing source entry for path '{path}'.");
     }
 }
-

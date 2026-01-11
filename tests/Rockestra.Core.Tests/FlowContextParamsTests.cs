@@ -9,13 +9,36 @@ public sealed class FlowContextParamsTests
     [Fact]
     public async Task Params_ShouldMergeDefaultBaseExperimentQosEmergency_InOrder()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"params\":{\"MaxCandidate\":10,\"Nested\":{\"Mode\":\"base\"}}," +
-            "\"experiments\":[{\"layer\":\"l1\",\"variant\":\"B\",\"patch\":{\"params\":{\"MaxCandidate\":20,\"Nested\":{\"Threshold\":99}}}}]," +
-            "\"qos\":{\"tiers\":{\"emergency\":{\"patch\":{\"params\":{\"MaxCandidate\":25,\"Nested\":{\"Mode\":\"qos\",\"Threshold\":123}}}}}}," +
-            "\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"params\":{\"MaxCandidate\":30,\"Nested\":{\"Mode\":\"emergency\"}}}}" +
-            "}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "params": { "MaxCandidate": 10, "Nested": { "Mode": "base" } },
+                  "experiments": [
+                    {
+                      "layer": "l1",
+                      "variant": "B",
+                      "patch": { "params": { "MaxCandidate": 20, "Nested": { "Threshold": 99 } } }
+                    }
+                  ],
+                  "qos": {
+                    "tiers": {
+                      "emergency": {
+                        "patch": { "params": { "MaxCandidate": 25, "Nested": { "Mode": "qos", "Threshold": 123 } } }
+                      }
+                    }
+                  },
+                  "emergency": {
+                    "reason": "r",
+                    "operator": "op",
+                    "ttl_minutes": 30,
+                    "patch": { "params": { "MaxCandidate": 30, "Nested": { "Mode": "emergency" } } }
+                  }
+                }
+              }
+            }
+            """;
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(
@@ -56,13 +79,36 @@ public sealed class FlowContextParamsTests
     [Fact]
     public async Task Params_WhenEmergencyTtlExpired_ShouldIgnoreEmergencyParamsOverlay()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"params\":{\"MaxCandidate\":10,\"Nested\":{\"Mode\":\"base\"}}," +
-            "\"experiments\":[{\"layer\":\"l1\",\"variant\":\"B\",\"patch\":{\"params\":{\"MaxCandidate\":20,\"Nested\":{\"Threshold\":99}}}}]," +
-            "\"qos\":{\"tiers\":{\"emergency\":{\"patch\":{\"params\":{\"MaxCandidate\":25,\"Nested\":{\"Mode\":\"qos\",\"Threshold\":123}}}}}}," +
-            "\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30,\"patch\":{\"params\":{\"MaxCandidate\":30,\"Nested\":{\"Mode\":\"emergency\"}}}}" +
-            "}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "params": { "MaxCandidate": 10, "Nested": { "Mode": "base" } },
+                  "experiments": [
+                    {
+                      "layer": "l1",
+                      "variant": "B",
+                      "patch": { "params": { "MaxCandidate": 20, "Nested": { "Threshold": 99 } } }
+                    }
+                  ],
+                  "qos": {
+                    "tiers": {
+                      "emergency": {
+                        "patch": { "params": { "MaxCandidate": 25, "Nested": { "Mode": "qos", "Threshold": 123 } } }
+                      }
+                    }
+                  },
+                  "emergency": {
+                    "reason": "r",
+                    "operator": "op",
+                    "ttl_minutes": 30,
+                    "patch": { "params": { "MaxCandidate": 30, "Nested": { "Mode": "emergency" } } }
+                  }
+                }
+              }
+            }
+            """;
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(
@@ -104,10 +150,16 @@ public sealed class FlowContextParamsTests
     [Fact]
     public async Task Params_ShouldThrowJsonException_WhenBindingFails()
     {
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{" +
-            "\"params\":{\"MaxCandidate\":\"oops\"}" +
-            "}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "params": { "MaxCandidate": "oops" }
+                }
+              }
+            }
+            """;
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);
@@ -126,7 +178,7 @@ public sealed class FlowContextParamsTests
     [Fact]
     public async Task Params_ShouldThrowInvalidOperationException_WhenTypeDoesNotMatch()
     {
-        var patchJson = "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"MaxCandidate\":10}}}}";
+        var patchJson = """{"schemaVersion":"v1","flows":{"HomeFeed":{"params":{"MaxCandidate":10}}}}""";
 
         var services = new DummyServiceProvider();
         var flowContext = new FlowContext(services, CancellationToken.None, FutureDeadline);

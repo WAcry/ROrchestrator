@@ -26,7 +26,7 @@ public sealed class StageContractAndValidationTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.ok","with":{}}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_STAGE_DYNAMIC_MODULES_FORBIDDEN");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -56,7 +56,7 @@ public sealed class StageContractAndValidationTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{}}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"stages":{"s1":{"modules":[{"id":"m1","use":"test.ok","with":{}}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_STAGE_MODULE_TYPE_FORBIDDEN");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -85,10 +85,23 @@ public sealed class StageContractAndValidationTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{}}," +
-            "{\"id\":\"m2\",\"use\":\"test.ok\",\"with\":{}}" +
-            "]}}}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "modules": [
+                        { "id": "m1", "use": "test.ok", "with": {} },
+                        { "id": "m2", "use": "test.ok", "with": {} }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """);
 
         Assert.True(report.IsValid);
 
@@ -119,10 +132,23 @@ public sealed class StageContractAndValidationTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{}}," +
-            "{\"id\":\"m2\",\"use\":\"test.ok\",\"with\":{}}" +
-            "]}}}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "modules": [
+                        { "id": "m1", "use": "test.ok", "with": {} },
+                        { "id": "m2", "use": "test.ok", "with": {} }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """);
 
         var finding = GetSingleFinding(report, "CFG_STAGE_MODULE_COUNT_HARD_EXCEEDED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -151,9 +177,22 @@ public sealed class StageContractAndValidationTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{},\"shadow\":{\"sample\":1}}" +
-            "]}}}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "modules": [
+                        { "id": "m1", "use": "test.ok", "with": {}, "shadow": { "sample": 1 } }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """);
 
         var finding = GetSingleFinding(report, "CFG_STAGE_SHADOW_FORBIDDEN");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -182,10 +221,23 @@ public sealed class StageContractAndValidationTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{},\"shadow\":{\"sample\":1}}," +
-            "{\"id\":\"m2\",\"use\":\"test.ok\",\"with\":{},\"shadow\":{\"sample\":1}}" +
-            "]}}}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "modules": [
+                        { "id": "m1", "use": "test.ok", "with": {}, "shadow": { "sample": 1 } },
+                        { "id": "m2", "use": "test.ok", "with": {}, "shadow": { "sample": 1 } }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """);
 
         var finding = GetSingleFinding(report, "CFG_STAGE_SHADOW_MODULE_COUNT_HARD_EXCEEDED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -214,9 +266,22 @@ public sealed class StageContractAndValidationTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{},\"shadow\":{\"sample\":1}}" +
-            "]}}}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "modules": [
+                        { "id": "m1", "use": "test.ok", "with": {}, "shadow": { "sample": 1 } }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """);
 
         var finding = GetSingleFinding(report, "CFG_STAGE_SHADOW_SAMPLE_BPS_EXCEEDED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -245,9 +310,23 @@ public sealed class StageContractAndValidationTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{}}" +
-            "]}}}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 1,
+                      "modules": [
+                        { "id": "m1", "use": "test.ok", "with": {} }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """);
 
         var finding = GetSingleFinding(report, "CFG_STAGE_FANOUT_MAX_OUT_OF_RANGE");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -268,8 +347,27 @@ public sealed class StageContractAndValidationTests
         var validator = new ConfigValidator(registry, new ModuleCatalog());
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30," +
-            "\"patch\":{\"params\":{\"Sub\":{\"MaxCandidate\":1}}}}}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "emergency": {
+                    "reason": "r",
+                    "operator": "op",
+                    "ttl_minutes": 30,
+                    "patch": {
+                      "params": {
+                        "Sub": {
+                          "MaxCandidate": 1
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
 
         Assert.True(report.IsValid);
         Assert.Empty(report.Findings);
@@ -289,8 +387,27 @@ public sealed class StageContractAndValidationTests
         var validator = new ConfigValidator(registry, new ModuleCatalog());
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"emergency\":{\"reason\":\"r\",\"operator\":\"op\",\"ttl_minutes\":30," +
-            "\"patch\":{\"params\":{\"Sub\":{\"MaxCandidate\":\"oops\"}}}}}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "emergency": {
+                    "reason": "r",
+                    "operator": "op",
+                    "ttl_minutes": 30,
+                    "patch": {
+                      "params": {
+                        "Sub": {
+                          "MaxCandidate": "oops"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
 
         var finding = GetSingleFinding(report, "CFG_PARAMS_BIND_FAILED");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -311,7 +428,7 @@ public sealed class StageContractAndValidationTests
         var validator = new ConfigValidator(registry, new ModuleCatalog());
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"Sub\":{\"Items\":[{\"Name\":\"a\",\"Extra\":1}]}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"params":{"Sub":{"Items":[{"Name":"a","Extra":1}]}}}}}""");
 
         var finding = GetSingleFinding(report, "CFG_PARAMS_UNKNOWN_FIELD");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -332,7 +449,7 @@ public sealed class StageContractAndValidationTests
         var validator = new ConfigValidator(registry, new ModuleCatalog());
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"params\":{\"Bag\":{\"x\":1,\"y\":2},\"Raw\":{\"a\":{\"b\":1}}}}}}");
+            """{"schemaVersion":"v1","flows":{"HomeFeed":{"params":{"Bag":{"x":1,"y":2},"Raw":{"a":{"b":1}}}}}}""");
 
         Assert.True(report.IsValid);
         Assert.Empty(report.Findings);
@@ -360,9 +477,22 @@ public sealed class StageContractAndValidationTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{\"Sub\":{\"Items\":[{\"A\":1,\"Extra\":2}]}}}" +
-            "]}}}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "modules": [
+                        { "id": "m1", "use": "test.ok", "with": { "Sub": { "Items": [ { "A": 1, "Extra": 2 } ] } } }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """);
 
         var finding = GetSingleFinding(report, "CFG_MODULE_ARGS_UNKNOWN_FIELD");
         Assert.Equal(ValidationSeverity.Error, finding.Severity);
@@ -391,9 +521,22 @@ public sealed class StageContractAndValidationTests
         var validator = new ConfigValidator(registry, catalog);
 
         var report = validator.ValidatePatchJson(
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"HomeFeed\":{\"stages\":{\"s1\":{\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{\"Bag\":{\"any\":1,\"other\":2}}}" +
-            "]}}}}}");
+            """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "HomeFeed": {
+                  "stages": {
+                    "s1": {
+                      "modules": [
+                        { "id": "m1", "use": "test.ok", "with": { "Bag": { "any": 1, "other": 2 } } }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """);
 
         Assert.True(report.IsValid);
         Assert.Empty(report.Findings);

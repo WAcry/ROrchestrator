@@ -12,13 +12,51 @@ public sealed class QosOverlayExecutionTests
     {
         const string flowName = "QosOverlayFlow";
 
-        var patchJson =
-            "{\"schemaVersion\":\"v1\",\"flows\":{\"QosOverlayFlow\":{" +
-            "\"stages\":{\"s1\":{\"fanoutMax\":2,\"modules\":[" +
-            "{\"id\":\"m1\",\"use\":\"test.ok\",\"with\":{}}," +
-            "{\"id\":\"m2\",\"use\":\"test.ok\",\"with\":{}}" +
-            "]}},\"qos\":{\"tiers\":{\"emergency\":{\"patch\":{\"stages\":{\"s1\":{\"fanoutMax\":1,\"modules\":[{\"id\":\"m2\",\"enabled\":false}]}}}}}}" +
-            "}}}";
+        var patchJson = """
+            {
+              "schemaVersion": "v1",
+              "flows": {
+                "QosOverlayFlow": {
+                  "stages": {
+                    "s1": {
+                      "fanoutMax": 2,
+                      "modules": [
+                        {
+                          "id": "m1",
+                          "use": "test.ok",
+                          "with": {}
+                        },
+                        {
+                          "id": "m2",
+                          "use": "test.ok",
+                          "with": {}
+                        }
+                      ]
+                    }
+                  },
+                  "qos": {
+                    "tiers": {
+                      "emergency": {
+                        "patch": {
+                          "stages": {
+                            "s1": {
+                              "fanoutMax": 1,
+                              "modules": [
+                                {
+                                  "id": "m2",
+                                  "enabled": false
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """;
 
         var catalog = new ModuleCatalog();
         catalog.Register<JsonElement, int>("test.ok", _ => new OkModule());
